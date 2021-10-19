@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "curriculum-mobile-net"
+version = "0.1.0"
+description = ""
+authors = ["Christian Weihsbach <christian.weihsbach@uni-luebeck.de>"]
+readme = "README.md"
+packages = [{include = "curriculum_mobile_net"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+meidic-vtach-utils = {git = "git@github.com:MDL-UzL/meidic_vtach_utils.git", rev = "main"}
+torch = { path = "/share/data_supergrover1/weihsbach/shared_data/tmp/compile_pytorch/pytorch/dist/torch-1.9.0a0+gitdfbd030-cp39-cp39-linux_x86_64.whl"}
+torchvision = { path = "/share/data_supergrover1/weihsbach/shared_data/tmp/compile_pytorch/vision/dist/torchvision-0.10.0a0+ca1a620-cp39-cp39-linux_x86_64.whl"}
+connected-components-3d = "^3.3.0"
+mdl-seg-class = {git = "git@github.com:MDL-UzL/SegmentationClassification.git", rev = "main"}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
