@@ -1,10 +1,10 @@
 [tool.poetry]
-name = "curriculum-mobile-net"
+name = "curriculum-deeplab"
 version = "0.1.0"
 description = ""
 authors = ["Christian Weihsbach <christian.weihsbach@uni-luebeck.de>"]
 readme = "README.md"
-packages = [{include = "curriculum_mobile_net"}]
+packages = [{include = "curriculum_deeplab"}]
 
 [tool.poetry.dependencies]
 python = "^3.9"
@@ -13,6 +13,12 @@ torch = { path = "/share/data_supergrover1/weihsbach/shared_data/tmp/compile_pyt
 torchvision = { path = "/share/data_supergrover1/weihsbach/shared_data/tmp/compile_pytorch/vision/dist/torchvision-0.10.0a0+ca1a620-cp39-cp39-linux_x86_64.whl"}
 connected-components-3d = "^3.3.0"
 mdl-seg-class = {git = "git@github.com:MDL-UzL/SegmentationClassification.git", rev = "main"}
+nibabel = "^3.2.1"
+scipy = "^1.6.0"
+scikit-image = "^0.18.3"
+tqdm = "^4.62.2"
+wandb = "^0.12.2"
+jupyterlab = "^3.2.0"
 
 [build-system]
 requires = ["poetry-core"]
