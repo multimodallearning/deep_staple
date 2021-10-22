@@ -7,13 +7,11 @@ import os
 import json
 import shutil
 import random
-
+import wandb
 import torch
 import numpy as np
-from tensorboard_logger import configure, log_value, log_histogram
 
-from optimizer.sparse_sgd import SparseSGD
-
+from . import sparse_sgd
 
 class AverageMeter(object):
     """Computes and stores the average and current value."""
@@ -117,23 +115,6 @@ def generate_save_dir(args):
         os.makedirs(args.save_dir)
 
 
-def generate_log_dir(args):
-    """Generate directory to save artifacts and tensorboard log files."""
-
-    print('\nLog is going to be saved in: {}'.format(args.log_dir))
-
-    if os.path.exists(args.log_dir):
-        if args.restart:
-            print('Deleting old log found in: {}'.format(args.log_dir))
-            shutil.rmtree(args.log_dir)
-            configure(args.log_dir, flush_secs=10)
-        else:
-            error='Old log found; pass --restart flag to erase'.format(args.log_dir)
-            raise Exception(error)
-    else:
-        configure(args.log_dir, flush_secs=10)
-
-
 def set_seed(args):
     """Set seed to ensure deterministic runs.
 
@@ -170,7 +151,7 @@ def get_class_inst_data_params_n_optimizer(args,
                                     dtype=torch.float32,
                                     requires_grad=args.learn_class_parameters,
                                     device=device)
-    optimizer_class_param = SparseSGD([class_parameters],
+    optimizer_class_param = sparse_sgd.SparseSGD([class_parameters],
                                       lr=args.lr_class_param,
                                       momentum=0.9,
                                       skip_update_zero_grad=True)
@@ -184,7 +165,7 @@ def get_class_inst_data_params_n_optimizer(args,
                                    dtype=torch.float32,
                                    requires_grad=args.learn_inst_parameters,
                                    device=device)
-    optimizer_inst_param = SparseSGD([inst_parameters],
+    optimizer_inst_param = sparse_sgd.SparseSGD([inst_parameters],
                                      lr=args.lr_inst_param,
                                      momentum=0.9,
                                      skip_update_zero_grad=True)
@@ -289,22 +270,24 @@ def log_stats(data, name, step):
         name (str): name under which stats for the tensor should be logged.
         step (int): step used for logging
     """
-    log_value('{}/highest'.format(name), torch.max(data).item(), step=step)
-    log_value('{}/lowest'.format(name), torch.min(data).item(),  step=step)
-    log_value('{}/mean'.format(name), torch.mean(data).item(),   step=step)
-    log_value('{}/std'.format(name), torch.std(data).item(),     step=step)
-    log_histogram('{}'.format(name), data.data.cpu().numpy(),    step=step)
+    wandb.log('{}/highest'.format(name), torch.max(data).item(), step=step)
+    wandb.log('{}/lowest'.format(name), torch.min(data).item(),  step=step)
+    wandb.log('{}/mean'.format(name), torch.mean(data).item(),   step=step)
+    wandb.log('{}/std'.format(name), torch.std(data).item(),     step=step)
+    wandb.log('{}'.format(name), wandb.histogram(data.data.cpu().numpy()),
+        step=step
+    )
 
 
 def log_intermediate_iteration_stats(args, class_parameters, epoch, global_iter,
                                      inst_parameters, losses, top1=None, top5=None):
     """Log stats for data parameters and loss on tensorboard."""
     if top5 is not None:
-        log_value('train_iteration_stats/accuracy_top5', top5.avg, step=global_iter)
+        wandb.log('train_iteration_stats/accuracy_top5', top5.avg, step=global_iter)
     if top1 is not None:
-        log_value('train_iteration_stats/accuracy_top1', top1.avg, step=global_iter)
-    log_value('train_iteration_stats/loss', losses.avg, step=global_iter)
-    log_value('train_iteration_stats/epoch', epoch, step=global_iter)
+        wandb.log('train_iteration_stats/accuracy_top1', top1.avg, step=global_iter)
+    wandb.log('train_iteration_stats/loss', losses.avg, step=global_iter)
+    wandb.log('train_iteration_stats/epoch', epoch, step=global_iter)
 
     # Log temperature stats
     if args.learn_class_parameters:
@@ -315,4 +298,3 @@ def log_intermediate_iteration_stats(args, class_parameters, epoch, global_iter,
         log_stats(data=torch.exp(inst_parameters),
                   name='iter_stats_inst_parameter',
                   step=global_iter)
-
