@@ -209,7 +209,10 @@ def get_data_param_for_minibatch(learn_class_parameters, learn_inst_parameters,
     return effective_data_param_minibatch
 
 
-def apply_weight_decay_data_parameters(args, loss, class_parameter_minibatch, inst_parameter_minibatch):
+def apply_weight_decay_data_parameters(
+    learn_inst_parameters, wd_inst_param,
+    learn_class_parameters, wd_class_param,
+    loss, class_parameter_minibatch, inst_parameter_minibatch):
     """Applies weight decay on class and instance level data parameters.
 
     We apply weight decay on only those data parameters which participate in a mini-batch.
@@ -229,18 +232,21 @@ def apply_weight_decay_data_parameters(args, loss, class_parameter_minibatch, in
     """
 
     # Loss due to weight decay on instance-parameters
-    if args.learn_inst_parameters and args.wd_inst_param > 0.0:
-        loss = loss + 0.5 * args.wd_inst_param * (inst_parameter_minibatch ** 2).sum()
+    if learn_inst_parameters and wd_inst_param > 0.0:
+        loss = loss + 0.5 * wd_inst_param * (inst_parameter_minibatch ** 2).sum()
 
     # Loss due to weight decay on class-parameters
-    if args.learn_class_parameters and args.wd_class_param > 0.0:
+    if learn_class_parameters and wd_class_param > 0.0:
         # (We apply weight-decay to only those classes which are present in the mini-batch)
-        loss = loss + 0.5 * args.wd_class_param * (class_parameter_minibatch ** 2).sum()
+        loss = loss + 0.5 * wd_class_param * (class_parameter_minibatch ** 2).sum()
 
     return loss
 
 
-def clamp_data_parameters(args, class_parameters, config, inst_parameters):
+def clamp_data_parameters(
+    skip_clamp_data_param, learn_inst_parameters, learn_class_parameters,
+    class_parameters, inst_parameters,
+    clamp_inst_sigma_config, clamp_cls_sigma_config):
     """Clamps class and instance level parameters within specified range.
 
     Args:
@@ -249,17 +255,17 @@ def clamp_data_parameters(args, class_parameters, config, inst_parameters):
         inst_parameters (torch.Tensor): instance level parameters.
         config (dict): config file for the experiment.
     """
-    if args.skip_clamp_data_param is False:
-        if args.learn_inst_parameters:
+    if skip_clamp_data_param is False:
+        if learn_inst_parameters:
             # Project the sigma's to be within certain range
             inst_parameters.data = inst_parameters.data.clamp_(
-                min=config['clamp_inst_sigma']['min'],
-                max=config['clamp_inst_sigma']['max'])
-        if args.learn_class_parameters:
+                min=clamp_inst_sigma_config['min'],
+                max=clamp_inst_sigma_config['max'])
+        if learn_class_parameters:
             # Project the sigma's to be within certain range
             class_parameters.data = class_parameters.data.clamp_(
-                min=config['clamp_cls_sigma']['min'],
-                max=config['clamp_cls_sigma']['max'])
+                min=clamp_cls_sigma_config['min'],
+                max=clamp_cls_sigma_config['max'])
 
 
 def log_stats(data, name, step):
@@ -279,22 +285,20 @@ def log_stats(data, name, step):
     )
 
 
-def log_intermediate_iteration_stats(args, class_parameters, epoch, global_iter,
-                                     inst_parameters, losses, top1=None, top5=None):
+def log_intermediate_iteration_stats(epx, learn_class_parameters, learn_inst_parameters,
+                                     class_parameters, inst_parameters, top1=None, top5=None):
     """Log stats for data parameters and loss on tensorboard."""
     if top5 is not None:
-        wandb.log('train_iteration_stats/accuracy_top5', top5.avg, step=global_iter)
+        wandb.log('train_iteration_stats/accuracy_top5', top5.avg, step=epx)
     if top1 is not None:
-        wandb.log('train_iteration_stats/accuracy_top1', top1.avg, step=global_iter)
-    wandb.log('train_iteration_stats/loss', losses.avg, step=global_iter)
-    wandb.log('train_iteration_stats/epoch', epoch, step=global_iter)
+        wandb.log('train_iteration_stats/accuracy_top1', top1.avg, step=epx)
 
     # Log temperature stats
-    if args.learn_class_parameters:
+    if learn_class_parameters:
         log_stats(data=torch.exp(class_parameters),
                   name='iter_stats_class_parameter',
-                  step=global_iter)
-    if args.learn_inst_parameters:
+                  step=epx)
+    if learn_inst_parameters:
         log_stats(data=torch.exp(inst_parameters),
                   name='iter_stats_inst_parameter',
-                  step=global_iter)
+                  step=epx)
