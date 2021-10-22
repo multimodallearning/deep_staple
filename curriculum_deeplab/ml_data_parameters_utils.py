@@ -178,9 +178,8 @@ def get_class_inst_data_params_n_optimizer(
     return class_parameters, inst_parameters, optimizer_class_param, optimizer_inst_param
 
 
-def get_data_param_for_minibatch(args,
-                                 class_param_minibatch,
-                                 inst_param_minibatch):
+def get_data_param_for_minibatch(learn_class_parameters, learn_inst_parameters,
+                                 class_param_minibatch, inst_param_minibatch):
     """Returns the effective data parameter for instances in a minibatch as per the specified curriculum.
 
     Args:
@@ -194,13 +193,13 @@ def get_data_param_for_minibatch(args,
     sigma_class_minibatch = torch.exp(class_param_minibatch).view(-1, 1)
     sigma_inst_minibatch = torch.exp(inst_param_minibatch).view(-1, 1)
 
-    if args.learn_class_parameters and args.learn_inst_parameters:
+    if learn_class_parameters and learn_inst_parameters:
         # Joint curriculum
         effective_data_param_minibatch = sigma_class_minibatch + sigma_inst_minibatch
-    elif args.learn_class_parameters:
+    elif learn_class_parameters:
         # Class level curriculum
         effective_data_param_minibatch = sigma_class_minibatch
-    elif args.learn_inst_parameters:
+    elif learn_inst_parameters:
         # Instance level curriculum
         effective_data_param_minibatch = sigma_inst_minibatch
     else:
