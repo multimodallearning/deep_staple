@@ -9,8 +9,8 @@ packages = [{include = "curriculum_deeplab"}]
 [tool.poetry.dependencies]
 python = "^3.9"
 meidic-vtach-utils = {git = "git@github.com:MDL-UzL/meidic_vtach_utils.git", rev = "main"}
-torch = { path = "/share/data_supergrover1/weihsbach/shared_data/tmp/compile_pytorch/pytorch/dist/torch-1.9.0a0+gitdfbd030-cp39-cp39-linux_x86_64.whl"}
-torchvision = { path = "/share/data_supergrover1/weihsbach/shared_data/tmp/compile_pytorch/vision/dist/torchvision-0.10.0a0+ca1a620-cp39-cp39-linux_x86_64.whl"}
+torch = "^1.9.1"
+torchvision = "^0.10.1"
 connected-components-3d = "^3.3.0"
 mdl-seg-class = {git = "git@github.com:MDL-UzL/SegmentationClassification.git", rev = "main"}
 nibabel = "^3.2.1"
