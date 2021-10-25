@@ -280,9 +280,7 @@ def log_stats(data, name, step):
     wandb.log({'{}/lowest'.format(name): torch.min(data).item()},  step=step)
     wandb.log({'{}/mean'.format(name): torch.mean(data).item()},   step=step)
     wandb.log({'{}/std'.format(name): torch.std(data).item()},     step=step)
-    wandb.log({'{}'.format(name): wandb.histogram(data.data.cpu().numpy())},
-        step=step
-    )
+    # wandb.log({'{}'.format(name): wandb.histogram(data.data.cpu().numpy())}, step=step)
 
 
 def log_intermediate_iteration_stats(epx, learn_class_parameters, learn_inst_parameters,
