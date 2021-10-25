@@ -276,11 +276,11 @@ def log_stats(data, name, step):
         name (str): name under which stats for the tensor should be logged.
         step (int): step used for logging
     """
-    wandb.log('{}/highest'.format(name), torch.max(data).item(), step=step)
-    wandb.log('{}/lowest'.format(name), torch.min(data).item(),  step=step)
-    wandb.log('{}/mean'.format(name), torch.mean(data).item(),   step=step)
-    wandb.log('{}/std'.format(name), torch.std(data).item(),     step=step)
-    wandb.log('{}'.format(name), wandb.histogram(data.data.cpu().numpy()),
+    wandb.log({'{}/highest'.format(name): torch.max(data).item()}, step=step)
+    wandb.log({'{}/lowest'.format(name): torch.min(data).item()},  step=step)
+    wandb.log({'{}/mean'.format(name): torch.mean(data).item()},   step=step)
+    wandb.log({'{}/std'.format(name): torch.std(data).item()},     step=step)
+    wandb.log({'{}'.format(name): wandb.histogram(data.data.cpu().numpy())},
         step=step
     )
 
@@ -289,9 +289,9 @@ def log_intermediate_iteration_stats(epx, learn_class_parameters, learn_inst_par
                                      class_parameters, inst_parameters, top1=None, top5=None):
     """Log stats for data parameters and loss on tensorboard."""
     if top5 is not None:
-        wandb.log('train_iteration_stats/accuracy_top5', top5.avg, step=epx)
+        wandb.log({'train_iteration_stats/accuracy_top5': top5.avg}, step=epx)
     if top1 is not None:
-        wandb.log('train_iteration_stats/accuracy_top1', top1.avg, step=epx)
+        wandb.log({'train_iteration_stats/accuracy_top1': top1.avg}, step=epx)
 
     # Log temperature stats
     if learn_class_parameters:
