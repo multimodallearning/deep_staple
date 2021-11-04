@@ -283,20 +283,20 @@ def log_stats(data, name, step):
     # wandb.log({'{}'.format(name): wandb.histogram(data.data.cpu().numpy())}, step=step)
 
 
-def log_intermediate_iteration_stats(log_path_postfix, epx, learn_class_parameters, learn_inst_parameters,
+def log_intermediate_iteration_stats(log_path_prefix, log_path_postfix, epx, learn_class_parameters, learn_inst_parameters,
                                      class_parameters, inst_parameters, top1=None, top5=None):
     """Log stats for data parameters and loss on tensorboard."""
     if top5 is not None:
-        wandb.log({'train_iteration_stats/accuracy_top5' + log_path_postfix: top5.avg}, step=epx)
+        wandb.log({'scores/accuracy_top5' + log_path_postfix: top5.avg}, step=epx)
     if top1 is not None:
-        wandb.log({'train_iteration_stats/accuracy_top1' + log_path_postfix: top1.avg}, step=epx)
+        wandb.log({'scores/accuracy_top1' + log_path_postfix: top1.avg}, step=epx)
 
     # Log temperature stats
     if learn_class_parameters:
         log_stats(data=torch.exp(class_parameters),
-                  name='iter_stats_class_parameter' + log_path_postfix,
+                  name=log_path_prefix + 'class_parameters' + log_path_postfix,
                   step=epx)
     if learn_inst_parameters:
         log_stats(data=torch.exp(inst_parameters),
-                  name='iter_stats_inst_parameter' + log_path_postfix,
+                  name=log_path_prefix + 'inst_parameters' + log_path_postfix,
                   step=epx)
