@@ -128,7 +128,7 @@ def set_seed(args):
     torch.backends.cudnn.benchmark = False
 
 
-def get_class_inst_data_params_n_optimizer(
+def get_class_inst_data_params_n_optimizer(config,
     init_class_param, learn_class_parameters, lr_class_param,
     init_inst_param, learn_inst_parameters, lr_inst_param,
     nr_classes, nr_instances,
@@ -154,7 +154,7 @@ def get_class_inst_data_params_n_optimizer(
                                     device=device)
     optimizer_class_param = sparse_sgd.SparseSGD([class_parameters],
                                       lr=lr_class_param,
-                                      momentum=0.9,
+                                      momentum=config.data_param_optim_momentum,
                                       skip_update_zero_grad=True)
     if learn_class_parameters:
         print('Initialized class_parameters with: {}'.format(init_class_param))
@@ -168,7 +168,7 @@ def get_class_inst_data_params_n_optimizer(
                                    device=device)
     optimizer_inst_param = sparse_sgd.SparseSGD([inst_parameters],
                                      lr=lr_inst_param,
-                                     momentum=0.9,
+                                     momentum=config.data_param_optim_momentum,
                                      skip_update_zero_grad=True)
     if learn_inst_parameters:
         print('Initialized inst_parameters with: {}'.format(init_inst_param))
