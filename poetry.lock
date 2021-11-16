@@ -692,7 +692,7 @@ torch = "^1.8.1"
 type = "git"
 url = "git@github.com:MDL-UzL/SegmentationClassification.git"
 reference = "main"
-resolved_reference = "5c08cdea31bcd6b4fcc71b3e74a16b7be89b713d"
+resolved_reference = "59ca66b3ce5f89b63fc8772c1648acd8da521c00"
 
 [[package]]
 name = "meidic-vtach-utils"
