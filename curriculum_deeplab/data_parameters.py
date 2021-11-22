@@ -1,7 +1,7 @@
-from enum import Enum, auto
+from enum import IntEnum, auto
 import torch
 
-import sparse_sgd
+from curriculum_deeplab import sparse_sgd
 
 class DotDict(dict):
     """dot.notation access to dictionary attributes"""
@@ -9,14 +9,14 @@ class DotDict(dict):
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
 
-class DataParamMode(Enum):
+class DataParamMode(IntEnum):
     ONLY_INSTANCE_PARAMS = auto()
     ONLY_CLASS_PARAMS = auto()
     COMBINED_INSTANCE_CLASS_PARAMS = auto()
     SEPARATE_INSTANCE_CLASS_PARAMS = auto()
     DISABLED = auto()
 
-class DataParamOptim(Enum):
+class DataParamOptim(IntEnum):
     ADAM = auto()
     SGD = auto()
     SPARSE_SGD = auto()
@@ -24,6 +24,9 @@ class DataParamOptim(Enum):
 class DataParameterManager():
 
     def __init__(self, instance_keys, class_keys, config=None, device='cpu'):
+
+        # Make settings available via .property accessor
+        config = DotDict(config)
 
         self.data_param_mode = config.data_param_mode
         self.disabled = False or self.data_param_mode == DataParamMode.DISABLED
@@ -86,8 +89,8 @@ class DataParameterManager():
         elif self.data_param_mode == DataParamMode.ONLY_INSTANCE_PARAMS:
             # Create nr_instances data parameters
             for pinst_idx, inst_key in enumerate(self.instance_keys):
-                param = torch.ones(1) * self.init_inst_param
-                param = torch.nn.parameter.Parameter(param, requires_grad=True).to(device=device)
+                param = torch.ones(1, requires_grad=True, device=device) * self.init_inst_param
+                param = torch.nn.parameter.Parameter(param)
                 data_parameters_dict[inst_key] = param
 
             print(f"Initialized instance data parameters with: {self.init_inst_param}")
@@ -95,10 +98,10 @@ class DataParameterManager():
         elif self.data_param_mode == DataParamMode.ONLY_CLASS_PARAMS:
             # Create nr_classes data parameters
             for pcls_idx, class_key in enumerate(self.class_keys):
-                param = torch.ones(1) * self.init_class_param
-                param = torch.nn.parameter.Parameter(param, requires_grad=True).to(device=device)
+                param = torch.ones(1, requires_grad=True, device=device) * self.init_class_param
+                param = torch.nn.parameter.Parameter(param)
                 data_parameters_dict[class_key] = param
-                param.stepped_on = 0
+
             print(f"Initialized class data parameters with: {self.init_class_param}")
 
         elif self.data_param_mode == DataParamMode.COMBINED_INSTANCE_CLASS_PARAMS:
@@ -106,8 +109,8 @@ class DataParameterManager():
             for pinst_idx, inst_key in enumerate(self.instance_keys):
                 cls_dict = {}
                 for pcls_idx, class_key in enumerate(self.class_keys):
-                    param = torch.ones(1) * (self.init_inst_param + self.init_class_param)
-                    param = torch.nn.parameter.Parameter(param, requires_grad=True).to(device=device)
+                    param = torch.ones(1, requires_grad=True, device=device) * (self.init_inst_param + self.init_class_param)
+                    param = torch.nn.parameter.Parameter(param)
                     cls_dict[class_key] = param
 
                 data_parameters_dict[inst_key] = cls_dict.copy()
@@ -123,15 +126,15 @@ class DataParameterManager():
                 init_val = self.init_inst_param \
                     if p_idx < nr_instances else self.init_class_param
 
-                param = torch.ones(1) * init_val
-                param = torch.nn.parameter.Parameter(param, requires_grad=True).to(device=device)
+                param = torch.ones(1, requires_grad=True, device=device) * init_val
+                param = torch.nn.parameter.Parameter(param)
                 data_parameters_dict[key_prefix+str(dp_key)] = param
 
             print(f"Initialized instance data parameters with: {self.init_inst_param}")
             print(f"Initialized class data parameters with: {self.init_class_param}")
 
         else:
-            raise ValueError
+            raise(ValueError(f"Specified mode '{self.data_param_mode}' is not implemented."))
 
         # Setup torch.nn.parameter.Parameters
         self.data_parameters_dict = data_parameters_dict
@@ -163,7 +166,7 @@ class DataParameterManager():
             dp_optimizer = torch.optim.SGD(param_groups, **self.optim_options)
 
         else:
-            raise(ValueError)
+            raise(ValueError(f"Specified optimizer algorithm '{self.optim_algorithm}' is not implemented."))
 
         return data_parameters_dict, dp_optimizer
 
@@ -349,7 +352,7 @@ class DataParameterManager():
 
             dp_logits = self.parametrify_logits(logits, inst_keys, reduced_onehot_targets)
 
-            loss = loss_fn(dp_logits, target.float())
+            loss = loss_fn(dp_logits.float(), target.float())
             loss = self.apply_weight_decay(loss, inst_keys)
 
             if scaler:
