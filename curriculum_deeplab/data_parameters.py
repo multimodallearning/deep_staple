@@ -330,7 +330,7 @@ class DataParameterManager():
                 loss.backward()
                 optimizer.step()
 
-            return loss.item()
+            return logits, loss.item()
 
         else:
             if self.optim_algorithm == DataParamOptim.ADAM:
@@ -365,7 +365,7 @@ class DataParameterManager():
 
             self.clamp()
 
-        return loss.item()
+        return dp_logits, loss.item()
 
 
 
@@ -507,43 +507,42 @@ class DataParameterManager():
 
 def get_basic_config_adam():
     config = DotDict({
-    'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
-    'init_class_param': 0.01,
-    'lr_class_param': 0.1,
-    'init_inst_param': 1.0,
-    'lr_inst_param': 0.1,
-    'wd_inst_param': 0.0,
-    'wd_class_param': 0.0,
+        'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
+        'init_class_param': 0.01,
+        'lr_class_param': 0.1,
+        'init_inst_param': 1.0,
+        'lr_inst_param': 0.1,
+        'wd_inst_param': 0.0,
+        'wd_class_param': 0.0,
 
-    'skip_clamp_data_param': False,
-    'clamp_sigma_min': np.log(1/20),
-    'clamp_sigma_max': np.log(20),
-    'optim_algorithm': DataParamOptim.ADAM,
-    'optim_options': dict(
-        # momentum=.9
-        betas=(0.9, 0.999)
-    )
+        'skip_clamp_data_param': False,
+        'clamp_sigma_min': np.log(1/20),
+        'clamp_sigma_max': np.log(20),
+        'optim_algorithm': DataParamOptim.ADAM,
+        'optim_options': dict(
+                betas=(0.9, 0.999)
+            )
+    })
     return config
-})
 
 
 
 def get_basic_config_sgd():
     config = DotDict({
-    'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
-    'init_class_param': 0.01,
-    'lr_class_param': 0.1,
-    'init_inst_param': 1.0,
-    'lr_inst_param': 0.1,
-    'wd_inst_param': 0.0,
-    'wd_class_param': 0.0,
+        'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
+        'init_class_param': 0.01,
+        'lr_class_param': 0.1,
+        'init_inst_param': 1.0,
+        'lr_inst_param': 0.1,
+        'wd_inst_param': 0.0,
+        'wd_class_param': 0.0,
 
-    'skip_clamp_data_param': False,
-    'clamp_sigma_min': np.log(1/20),
-    'clamp_sigma_max': np.log(20),
-    'optim_algorithm': DataParamOptim.SGD,
-    'optim_options': dict(
-        momentum=.9
-    )
+        'skip_clamp_data_param': False,
+        'clamp_sigma_min': np.log(1/20),
+        'clamp_sigma_max': np.log(20),
+        'optim_algorithm': DataParamOptim.SGD,
+        'optim_options': dict(
+                momentum=.9
+            )
+    })
     return config
-})
