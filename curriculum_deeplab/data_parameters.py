@@ -413,7 +413,7 @@ class DataParameterManager():
             "Please specifiy class keys for 'DataParamMode.ONLY_CLASS_PARAMS'."
 
             # Initialize for sparse class tensor here
-            tens = torch.ones((c_len)) * self.init_class_param
+            tens = torch.ones((c_len), device=self.device) * self.init_class_param
             params = self.get_parameter_list(inst_keys=inst_keys, class_keys=class_keys)
             tens[select_cls_idxs] = torch.cat(params)
             return tens
@@ -428,7 +428,7 @@ class DataParameterManager():
                 tens = torch.cat(params)
             else:
                 # Initialize for sparse class tensor here
-                tens = torch.ones((c_len)) * self.init_class_param
+                tens = torch.ones((c_len), device=self.device) * self.init_class_param
                 params = self.get_parameter_list(class_keys=class_keys)
                 tens[select_cls_idxs] = torch.cat(params)
                 return tens
@@ -444,10 +444,10 @@ class DataParameterManager():
             params = self.get_parameter_list(inst_keys=inst_keys, class_keys=class_keys)
             if expand_to_full_classes:
                 params = torch.cat(params).view(i_len, -1)
-                tens = torch.ones((i_len, self.nr_classes)) * (self.init_inst_param + self.init_class_param)
+                tens = torch.ones((i_len, self.nr_classes), device=self.device) * (self.init_inst_param + self.init_class_param)
             else:
                 params = torch.cat(params).view(i_len, c_len)
-                tens = torch.ones((i_len, c_len)) * (self.init_inst_param + self.init_class_param)
+                tens = torch.ones((i_len, c_len), device=self.device) * (self.init_inst_param + self.init_class_param)
 
             tens[:,select_cls_idxs] = params
             return tens
