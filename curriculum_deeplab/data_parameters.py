@@ -9,7 +9,7 @@ class DotDict(dict):
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
 
-class DataParamMode(IntEnum):
+class DataParamMode(IntEnum): # TODO Use normal enum again and compare values with stringified version in DataParameterManagert
     ONLY_INSTANCE_PARAMS = auto()
     ONLY_CLASS_PARAMS = auto()
     COMBINED_INSTANCE_CLASS_PARAMS = auto()
