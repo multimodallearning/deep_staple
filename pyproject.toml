@@ -13,6 +13,7 @@ torch = "^1.9.1"
 torchvision = "^0.10.1"
 connected-components-3d = "^3.3.0"
 mdl-seg-class = {git = "git@github.com:MDL-UzL/SegmentationClassification.git", rev = "main"}
+medmnist = { git = "git@github.com:MedMNIST/MedMNIST.git", branch = "main" }
 nibabel = "^3.2.1"
 scipy = "^1.6.0"
 scikit-image = "^0.18.3"
