@@ -1755,6 +1755,7 @@ def train_DL(run_name, config, training_dataset):
 
                 mean_dice = np.nanmean(dices)
                 print(f'dice_mean_wo_bg_fold{fold_idx}', f"{mean_dice*100:.2f}%")
+                wandb.log({f'scores/dice_mean_wo_bg_fold{fold_idx}': mean_dice}, step=global_idx)
 
                 log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
 
@@ -1897,7 +1898,7 @@ def train_DL(run_name, config, training_dataset):
 
 # %%
 config_dict['debug'] = False
-config_dict['wandb_mode'] = 'disabled'
+config_dict['wandb_mode'] = 'online'
 config_dict['batch_size'] = 64
 
 run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
