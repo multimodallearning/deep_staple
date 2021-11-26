@@ -1680,6 +1680,7 @@ def train_DL(run_name, config, training_dataset):
                         f"Input image for model must be 4D: BxCxHxW but is {b_img.shape}"
 
                     logits = lraspp(b_img)['out']
+                    logits = F.interpolate(logits, size=(28,28), mode='nearest')
 
                     ### Check dimensions ###
                     assert logits.dim() == 4, \
@@ -1693,7 +1694,7 @@ def train_DL(run_name, config, training_dataset):
 
                     dp_logits, loss_value = dpm.do_basic_train_step(
                         criterion, logits.permute(0,2,3,1),
-                        torch.nn.functional.one_hot(b_seg_modified.float().mean((-1,-2), keepdim=True).long(), len(config.label_tags)),
+                        torch.nn.functional.one_hot(b_seg_modified, len(config.label_tags)),
                         optimizer, inst_keys=b_idxs_dataset.tolist(), scaler=scaler)
 
                 epx_losses.append(loss_value)
@@ -1704,7 +1705,7 @@ def train_DL(run_name, config, training_dataset):
                 # Calculate dice score
                 b_dice = dice2d(
                     torch.nn.functional.one_hot(logits_for_score, len(config.label_tags)),
-                    torch.nn.functional.one_hot(b_seg.float().mean((-1,-2), keepdim=True).long(), len(config.label_tags)), # Calculate dice score with original segmentation (no disturbance)
+                    torch.nn.functional.one_hot(b_seg, len(config.label_tags)), # Calculate dice score with original segmentation (no disturbance)
                     one_hot_torch_style=True
                 )
 
@@ -1807,7 +1808,7 @@ def train_DL(run_name, config, training_dataset):
                         val_dices = []
                         val_class_dices = []
 
-                        for val_idx in val_3d_idxs:
+                        for val_idx in trained_3d_dataset_idxs:#val_3d_idxs: # TODO do not run validation on trainingsset
                             val_sample = training_dataset.get_3d_item(val_idx)
                             stack_dim = training_dataset.yield_2d_normal_to
                             # Create batch out of single val sample
@@ -1824,10 +1825,11 @@ def train_DL(run_name, config, training_dataset):
                                 b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
 
                             output_val = lraspp(b_val_img_2d)['out']
-                            with torch.no_grad(): # TODO remove
-                                output_val = F.upsample(output_val, size=(28,28))
+                            # TODO remove
+                            output_val = F.interpolate(output_val, size=(28,28), mode='nearest')
 
                             SCORE_3D = False #TODO remove
+
                             if SCORE_3D:
                                 # Prepare logits for scoring
                                 # Scoring happens in 3D again - unstack batch tensor again to stack of 3D
@@ -1856,19 +1858,20 @@ def train_DL(run_name, config, training_dataset):
                             val_class_dices.append(get_batch_dice_per_class(
                                 b_val_dice, config.label_tags, exclude_bg=False))
 
-                            if config.do_plot or True:
+                            if config.do_plot:
                                 print(f"Validation 3D image label/ground-truth {val_3d_idxs}")
-                                print(b_val_dice)
+                                print(get_batch_dice_over_all(
+                                b_val_dice, exclude_bg=False))
                                 # display_all_seg_slices(b_seg.unsqueeze(1), logits_for_score)
                                 display_seg(in_type="single_3D",
                                     reduce_dim="W",
                                     img=val_sample['image'].unsqueeze(0).cpu(),
-                                    seg=val_logits_for_score.squeeze(0).cpu(),
+                                    seg=val_logits_for_score.permute(1,2,0).squeeze(0).cpu(),
                                     ground_truth=b_val_seg.squeeze(0).cpu(),
                                     crop_to_non_zero_seg=True,
                                     crop_to_non_zero_gt=True,
-                                    alpha_seg=.4,
-                                    alpha_gt=.2
+                                    alpha_seg=.3,
+                                    alpha_gt=.0
                                 )
                         mean_val_dice = np.nanmean(val_dices)
                         print(f'val_dice_mean_wo_bg_fold{fold_idx}', f"{mean_val_dice*100:.2f}%")
