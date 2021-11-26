@@ -1,7 +1,7 @@
-from enum import IntEnum, auto
+from enum import Enum, auto
 import torch
 
-from curriculum_deeplab import sparse_sgd
+from curriculum_deeplab.sparse_sgd import SparseSGD
 
 class DotDict(dict):
     """dot.notation access to dictionary attributes"""
@@ -9,14 +9,14 @@ class DotDict(dict):
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
 
-class DataParamMode(IntEnum): # TODO Use normal enum again and compare values with stringified version in DataParameterManagert
+class DataParamMode(Enum):
     ONLY_INSTANCE_PARAMS = auto()
     ONLY_CLASS_PARAMS = auto()
     COMBINED_INSTANCE_CLASS_PARAMS = auto()
     SEPARATE_INSTANCE_CLASS_PARAMS = auto()
     DISABLED = auto()
 
-class DataParamOptim(IntEnum):
+class DataParamOptim(Enum):
     ADAM = auto()
     SGD = auto()
     SPARSE_SGD = auto()
@@ -55,7 +55,8 @@ class DataParameterManager():
         self.clamp_sigma_min = config.clamp_sigma_min
         self.clamp_sigma_max = config.clamp_sigma_max
 
-        if config.optim_algorithm == DataParamOptim.SGD:
+        if config.optim_algorithm == DataParamOptim.SGD\
+            or config.optim_algorithm == DataParamOptim.SPARSE_SGD:
             assert 'momentum' in config.optim_options, \
                 "Data parameter optimization with SGD needs momentum > 0 to be specified "\
                 "otherwise optimization will fail."
@@ -164,6 +165,9 @@ class DataParameterManager():
 
         elif self.optim_algorithm == DataParamOptim.SGD:
             dp_optimizer = torch.optim.SGD(param_groups, **self.optim_options)
+
+        elif self.optim_algorithm == DataParamOptim.SPARSE_SGD:
+            dp_optimizer = SparseSGD(param_groups, **self.optim_options, skip_update_zero_grad=True)
 
         else:
             raise(ValueError(f"Specified optimizer algorithm '{self.optim_algorithm}' is not implemented."))
@@ -336,7 +340,8 @@ class DataParameterManager():
             return logits, loss.item()
 
         else:
-            if self.optim_algorithm == DataParamOptim.ADAM:
+            if self.optim_algorithm == DataParamOptim.ADAM \
+                or self.optim_algorithm == DataParamOptim.SPARSE_SGD:
                 self.dp_optimizer.zero_grad(set_to_none=False)
 
             elif self.optim_algorithm == DataParamOptim.SGD:

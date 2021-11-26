@@ -66,7 +66,7 @@ class SparseSGD(torch.optim.SGD):
                 p_before_update = p.data.clone()
 
                 if weight_decay != 0:
-                    d_p.add_(weight_decay, p.data)
+                    d_p.add_(p.data, weight_decay)
                 if momentum != 0:
                     param_state = self.state[p]
                     if 'momentum_buffer' not in param_state:
@@ -77,13 +77,12 @@ class SparseSGD(torch.optim.SGD):
                     else:
                         buf = param_state['momentum_buffer']
                         buf_before_update = buf.data.clone()
-                        buf.mul_(momentum).add_(1 - dampening, d_p)
+                        buf.mul_(momentum).add_(d_p, alpha=1-dampening)
                     if nesterov:
                         d_p = d_p.add(momentum, buf)
                     else:
                         d_p = buf
-
-                p.data.add_(-group['lr'], d_p)
+                p.data.add_(d_p, alpha=-group['lr'])
 
                 # We need to revert back the state of parameter and momentum buffer for entries with zero-grad
                 if self.skip_update_zero_grad:
