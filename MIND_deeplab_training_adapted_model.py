@@ -717,7 +717,7 @@ class CrossMoDa_Data(Dataset):
         b_image, b_label = interpolate_sample(b_image, b_label, 2., yield_2d)
         if spatial_aug_selector < .4:
             b_image, b_label = augmentAffine(
-                b_image, b_label, strength=0.05, yield_2d=yield_2d)
+                b_image, b_label, strength=0.08, yield_2d=yield_2d)
 
         elif spatial_aug_selector <.8:
             b_image, b_label = augmentBspline(
@@ -726,7 +726,7 @@ class CrossMoDa_Data(Dataset):
             pass
         b_image, b_label = interpolate_sample(b_image, b_label, .5, yield_2d)
 
-        b_image = augmentNoise(b_image, strength=0.05)
+        b_image = augmentNoise(b_image, strength=0.1)
         b_label = b_label.long()
 
         b_label = b_label.long()
@@ -1082,22 +1082,22 @@ class WrapperOrganMNIST3D():
                 f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
 
         b_image, b_label = interpolate_sample(b_image, b_label, 2., yield_2d)
-        b_image = augmentNoise(b_image, strength=0.4)
+        b_image = augmentNoise(b_image, strength=0.05)
 
         flip_aug_selector = np.random.rand(3)
 
-        if flip_aug_selector[0] < .2:
-            b_image, b_label = b_image.flip(-1), b_label.flip(-1)
-        elif flip_aug_selector[1] < .2:
-            b_image, b_label = b_image.flip(-2), b_label.flip(-2)
-        elif yield_2d and flip_aug_selector[2] < .2:
-            b_image, b_label = b_image.flip(-3), b_label.flip(-3)
-        else:
-            pass
+        # if flip_aug_selector[0] < .2:
+        #     b_image, b_label = b_image.flip(-1), b_label.flip(-1)
+        # elif flip_aug_selector[1] < .2:
+        #     b_image, b_label = b_image.flip(-2), b_label.flip(-2)
+        # elif yield_2d and flip_aug_selector[2] < .2:
+        #     b_image, b_label = b_image.flip(-3), b_label.flip(-3)
+        # else:
+        #     pass
 
-        invert_aug_selector = np.random.rand()
-        if invert_aug_selector < .1:
-            b_image = -1*b_image
+        # invert_aug_selector = np.random.rand()
+        # if invert_aug_selector < .05:
+        #     b_image = -1*b_image
 
         spatial_aug_selector = np.random.rand()
         if spatial_aug_selector < .45:
@@ -1106,7 +1106,7 @@ class WrapperOrganMNIST3D():
 
         elif spatial_aug_selector <.9:
             b_image, b_label = augmentBspline(
-                b_image, b_label, num_ctl_points=6, strength=0.08, yield_2d=yield_2d)
+                b_image, b_label, num_ctl_points=6, strength=0.05, yield_2d=yield_2d)
         else:
             pass
         b_image, b_label = interpolate_sample(b_image, b_label, .5, yield_2d)
@@ -1192,15 +1192,15 @@ config_dict = DotDict({
     'epochs': 120,
 
     'batch_size': 64,
-    'val_batch_size': 1,
+    'val_batch_size': 64,
 
     'dataset': 'organmnist3d',
     'train_set_max_len': 100,
     'crop_w_dim_range': (24, 110),
     'yield_2d_normal_to': "W",
 
-    'lr': 0.0005,
-    'use_cosine_annealing': False,
+    'lr': 0.001,
+    'use_cosine_annealing': True,
 
     # Data parameter config
     'data_parameter_config': DotDict(
@@ -1252,7 +1252,7 @@ if config_dict['dataset'] == 'crossmoda':
 elif config_dict['dataset'] == 'organmnist3d':
     training_dataset = WrapperOrganMNIST3D(
         split='train', root='./data/medmnist', download=True, normalize=True,
-        max_load_num=200, crop_w_dim_range=None,
+        max_load_num=300, crop_w_dim_range=None,
         disturbed_idxs=None, yield_2d_normal_to='W'
     )
     print(training_dataset.mnist_set.info)
@@ -1625,7 +1625,7 @@ def train_DL(run_name, config, training_dataset):
             collate_fn=training_dataset.get_efficient_augmentation_collate_fn())
 
         training_dataset.unset_augment_at_collate()
-        val_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
+        val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
                                     sampler=val_subsampler, pin_memory=True, drop_last=False)
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
@@ -1815,41 +1815,42 @@ def train_DL(run_name, config, training_dataset):
                         val_dices = []
                         val_class_dices = []
 
-                        for val_idx in trained_3d_dataset_idxs:#val_3d_idxs: # TODO do not run validation on trainingsset
+                        # for val_idx in val_3d_idxs: # TODO do not run validation on trainingsset
                         # 2D val code
-                        # for batch in val_dataloader:
-                        #     b_val_img_2d = batch['image']
-                        #     b_val_seg = batch['label']
+                        for val_batch in val_dataloader:
 
-                        #     b_val_img_2d = b_val_img_2d.float().cuda()
+                            b_val_img_2d = val_batch['image']
+                            b_val_seg = val_batch['label']
 
-                        #     b_val_seg = b_val_seg.cuda()
-                        #     # b_img = (b_img - b_img.mean(dim=0)) / b_img.std(dim=0)
-                        #     if config.use_mind:
-                        #         b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1).unsqueeze(1)).squeeze(2)
-                        #     else:
-                        #         b_val_img_2d = b_val_img_2d.unsqueeze(1)
-                        # 3D val code
-                            val_sample = training_dataset.get_3d_item(val_idx)
-                            stack_dim = training_dataset.yield_2d_normal_to
-                            # Create batch out of single val sample
-                            b_val_img = val_sample['image'].unsqueeze(0)
-                            b_val_seg = val_sample['label'].unsqueeze(0)
+                            b_val_img_2d = b_val_img_2d.float().cuda()
 
-                            B = b_val_img.shape[0]
-
-                            b_val_img = b_val_img.unsqueeze(1).float().cuda()
                             b_val_seg = b_val_seg.cuda()
-                            b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=stack_dim)
-                            b_val_img_2d = (b_val_img_2d - b_val_img_2d.mean(dim=0)) / b_val_img_2d.std(dim=0)
+                            # b_img = (b_img - b_img.mean(dim=0)) / b_img.std(dim=0)
                             if config.use_mind:
-                                b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
+                                b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1).unsqueeze(1)).squeeze(2)
+                            else:
+                                b_val_img_2d = b_val_img_2d.unsqueeze(1)
+                        # # 3D val code
+                        #     val_sample = training_dataset.get_3d_item(val_idx)
+                        #     stack_dim = training_dataset.yield_2d_normal_to
+                        #     # Create batch out of single val sample
+                        #     b_val_img = val_sample['image'].unsqueeze(0)
+                        #     b_val_seg = val_sample['label'].unsqueeze(0)
+
+                        #     B = b_val_img.shape[0]
+
+                        #     b_val_img = b_val_img.unsqueeze(1).float().cuda()
+                        #     b_val_seg = b_val_seg.cuda()
+                        #     b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=stack_dim)
+                        #     b_val_img_2d = (b_val_img_2d - b_val_img_2d.mean(dim=0)) / b_val_img_2d.std(dim=0)
+                        #     if config.use_mind:
+                        #         b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
 
                             output_val = lraspp(b_val_img_2d)['out']
                             # TODO remove
                             output_val = F.interpolate(output_val, size=(28,28), mode='nearest')
 
-                            SCORE_3D = True #TODO remove
+                            SCORE_3D = False #TODO remove
 
                             if SCORE_3D:
                                 # Prepare logits for scoring
@@ -1920,7 +1921,7 @@ def train_DL(run_name, config, training_dataset):
 
 # %%
 config_dict['debug'] = False
-config_dict['wandb_mode'] = 'disabled'
+config_dict['wandb_mode'] = 'online'
 config_dict['batch_size'] = 64
 
 run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
