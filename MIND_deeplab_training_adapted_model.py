@@ -1546,7 +1546,7 @@ def train_DL(run_name, config, training_dataset):
     reset_determinism()
 
     # Configure folds
-    kf = KFold(n_splits=config.num_folds)
+    kf = KFold(n_splits=config.num_folds, shuffle=True)
     kf.get_n_splits(training_dataset)
 
     fold_iter = enumerate(kf.split(training_dataset))
@@ -1614,14 +1614,15 @@ def train_DL(run_name, config, training_dataset):
 
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
-        # val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
+        val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
 
         train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
             sampler=train_subsampler, pin_memory=True, drop_last=False,
             collate_fn=training_dataset.get_efficient_augmentation_collate_fn())
+
         training_dataset.unset_augment_at_collate()
-#         val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
-#                                     sampler=val_subsampler, pin_memory=True, drop_last=False)
+        val_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
+                                    sampler=val_subsampler, pin_memory=True, drop_last=False)
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
         (lraspp, optimizer, scaler) = get_model(config, len(train_dataloader), _path=None)#f"{config.mdl_save_prefix}_fold{fold_idx}") # TODO start fresh set _path None
@@ -1670,10 +1671,11 @@ def train_DL(run_name, config, training_dataset):
                 b_seg_modified = b_seg_modified.cuda()
 
                 b_seg = b_seg.cuda()
-
+                # b_img = (b_img - b_img.mean(dim=0)) / b_img.std(dim=0)
                 if config.use_mind:
                     b_img = mindssc(b_img.unsqueeze(1).unsqueeze(1)).squeeze(2)
-
+                else:
+                    b_img = b_img.unsqueeze(1)
                 ### Forward pass ###
                 with amp.autocast(enabled=True):
                     assert b_img.dim() == 4, \
@@ -1809,21 +1811,33 @@ def train_DL(run_name, config, training_dataset):
                         val_dices = []
                         val_class_dices = []
 
-                        for val_idx in trained_3d_dataset_idxs:#val_3d_idxs: # TODO do not run validation on trainingsset
-                            val_sample = training_dataset.get_3d_item(val_idx)
-                            stack_dim = training_dataset.yield_2d_normal_to
-                            # Create batch out of single val sample
-                            b_val_img = val_sample['image'].unsqueeze(0)
-                            b_val_seg = val_sample['label'].unsqueeze(0)
+                        # for val_idx in trained_3d_dataset_idxs:#val_3d_idxs: # TODO do not run validation on trainingsset
+                        for batch in val_dataloader:
+                            b_val_img_2d = batch['image']
+                            b_val_seg = batch['label']
 
-                            B = b_val_img.shape[0]
+                            b_val_img_2d = b_val_img_2d.float().cuda()
 
-                            b_val_img = b_val_img.unsqueeze(1).float().cuda()
                             b_val_seg = b_val_seg.cuda()
-                            b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=stack_dim)
-
+                            # b_img = (b_img - b_img.mean(dim=0)) / b_img.std(dim=0)
                             if config.use_mind:
-                                b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
+                                b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1).unsqueeze(1)).squeeze(2)
+                            else:
+                                b_val_img_2d = b_val_img_2d.unsqueeze(1)
+                            # val_sample = training_dataset.get_3d_item(val_idx)
+                            # stack_dim = training_dataset.yield_2d_normal_to
+                            # # Create batch out of single val sample
+                            # b_val_img = val_sample['image'].unsqueeze(0)
+                            # b_val_seg = val_sample['label'].unsqueeze(0)
+
+                            # B = b_val_img.shape[0]
+
+                            # b_val_img = b_val_img.unsqueeze(1).float().cuda()
+                            # b_val_seg = b_val_seg.cuda()
+                            # b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=stack_dim)
+                            # b_val_img_2d = (b_val_img_2d - b_val_img_2d.mean(dim=0)) / b_val_img_2d.std(dim=0)
+                            # if config.use_mind:
+                            #     b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
 
                             output_val = lraspp(b_val_img_2d)['out']
                             # TODO remove
@@ -1898,7 +1912,7 @@ def train_DL(run_name, config, training_dataset):
 
 # %%
 config_dict['debug'] = False
-config_dict['wandb_mode'] = 'online'
+config_dict['wandb_mode'] = 'disabled'
 config_dict['batch_size'] = 64
 
 run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
