@@ -1084,16 +1084,16 @@ class WrapperOrganMNIST3D():
         b_image, b_label = interpolate_sample(b_image, b_label, 2., yield_2d)
         b_image = augmentNoise(b_image, strength=0.3)
 
-        # flip_aug_selector = np.random.rand(3)
+        flip_aug_selector = np.random.rand(3)
 
-        # if flip_aug_selector[0] < .2:
-        #     b_image, b_label = b_image.flip(-1), b_label.flip(-1)
-        # elif flip_aug_selector[1] < .2:
-        #     b_image, b_label = b_image.flip(-2), b_label.flip(-2)
-        # elif yield_2d and flip_aug_selector[2] < .2:
-        #     b_image, b_label = b_image.flip(-3), b_label.flip(-3)
-        # else:
-        #     pass
+        if flip_aug_selector[0] < .2:
+            b_image, b_label = b_image.flip(-1), b_label.flip(-1)
+        elif flip_aug_selector[1] < .2:
+            b_image, b_label = b_image.flip(-2), b_label.flip(-2)
+        elif yield_2d and flip_aug_selector[2] < .2:
+            b_image, b_label = b_image.flip(-3), b_label.flip(-3)
+        else:
+            pass
 
         invert_aug_selector = np.random.rand()
         if invert_aug_selector < .1:
@@ -1106,7 +1106,7 @@ class WrapperOrganMNIST3D():
 
         elif spatial_aug_selector <.9:
             b_image, b_label = augmentBspline(
-                b_image, b_label, num_ctl_points=6, strength=0.05, yield_2d=yield_2d)
+                b_image, b_label, num_ctl_points=6, strength=0.1, yield_2d=yield_2d)
         else:
             pass
         b_image, b_label = interpolate_sample(b_image, b_label, .5, yield_2d)
@@ -1199,7 +1199,7 @@ config_dict = DotDict({
     'crop_w_dim_range': (24, 110),
     'yield_2d_normal_to': "W",
 
-    'lr': 0.001,
+    'lr': 0.0005,
     'use_cosine_annealing': False,
 
     # Data parameter config
@@ -1547,9 +1547,11 @@ def train_DL(run_name, config, training_dataset):
 
     # Configure folds
     kf = KFold(n_splits=config.num_folds, shuffle=True)
+
+    _3d_imgs_range = range(training_dataset.__len__(yield_2d_override=False))
     kf.get_n_splits(training_dataset)
 
-    fold_iter = enumerate(kf.split(training_dataset))
+    fold_iter = enumerate(kf.split(_3d_imgs_range))
 
     if config.only_first_fold:
         fold_iter = list(fold_iter)[0:1]
@@ -1563,17 +1565,19 @@ def train_DL(run_name, config, training_dataset):
 
     fold_means_no_bg = []
 
-    for fold_idx, (train_idxs, val_idxs) in fold_iter:
-        train_idxs = torch.tensor(train_idxs)
-        val_idxs = torch.tensor(val_idxs)
-
+    for fold_idx, (trained_3d_dataset_idxs, val_3d_idxs) in fold_iter:
         # Training happens in 2D, validation happens in 3D:
-        # Read 2D dataset idxs which are used for training,
-        # get their 3D super-ids by 3d dataset length
-        # and substract these from all 3D ids to get val_3d_idxs
-        trained_3d_dataset_idxs = {dct['3d_dataset_idx'] \
-             for dct in training_dataset.get_id_dicts() if dct['2d_dataset_idx'] in train_idxs.tolist()}
-        val_3d_idxs = set(range(training_dataset.__len__(yield_2d_override=False))) - trained_3d_dataset_idxs
+        # Read 3D dataset idxs which are used for training,
+        # get their 2D sub-ids by 2d dataset length
+        # and substract these from all 2D ids to get val_2d_idxs
+
+        train_idxs = {dct['2d_dataset_idx'] \
+             for dct in training_dataset.get_id_dicts() if dct['3d_dataset_idx'] in trained_3d_dataset_idxs.tolist()}
+        val_idxs = set(range(training_dataset.__len__(yield_2d_override=True))) - train_idxs
+
+        train_idxs = torch.tensor(list(train_idxs))
+        val_idxs = torch.tensor(list(val_idxs))
+
         print("Will run validation with these 3D samples:", val_3d_idxs)
 
         ### Disturb dataset ###
@@ -1811,33 +1815,35 @@ def train_DL(run_name, config, training_dataset):
                         val_dices = []
                         val_class_dices = []
 
-                        # for val_idx in trained_3d_dataset_idxs:#val_3d_idxs: # TODO do not run validation on trainingsset
-                        for batch in val_dataloader:
-                            b_val_img_2d = batch['image']
-                            b_val_seg = batch['label']
+                        for val_idx in trained_3d_dataset_idxs:#val_3d_idxs: # TODO do not run validation on trainingsset
+                        # 2D val code
+                        # for batch in val_dataloader:
+                        #     b_val_img_2d = batch['image']
+                        #     b_val_seg = batch['label']
 
-                            b_val_img_2d = b_val_img_2d.float().cuda()
+                        #     b_val_img_2d = b_val_img_2d.float().cuda()
 
+                        #     b_val_seg = b_val_seg.cuda()
+                        #     # b_img = (b_img - b_img.mean(dim=0)) / b_img.std(dim=0)
+                        #     if config.use_mind:
+                        #         b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1).unsqueeze(1)).squeeze(2)
+                        #     else:
+                        #         b_val_img_2d = b_val_img_2d.unsqueeze(1)
+                        # 3D val code
+                            val_sample = training_dataset.get_3d_item(val_idx)
+                            stack_dim = training_dataset.yield_2d_normal_to
+                            # Create batch out of single val sample
+                            b_val_img = val_sample['image'].unsqueeze(0)
+                            b_val_seg = val_sample['label'].unsqueeze(0)
+
+                            B = b_val_img.shape[0]
+
+                            b_val_img = b_val_img.unsqueeze(1).float().cuda()
                             b_val_seg = b_val_seg.cuda()
-                            # b_img = (b_img - b_img.mean(dim=0)) / b_img.std(dim=0)
+                            b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=stack_dim)
+                            b_val_img_2d = (b_val_img_2d - b_val_img_2d.mean(dim=0)) / b_val_img_2d.std(dim=0)
                             if config.use_mind:
-                                b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1).unsqueeze(1)).squeeze(2)
-                            else:
-                                b_val_img_2d = b_val_img_2d.unsqueeze(1)
-                            # val_sample = training_dataset.get_3d_item(val_idx)
-                            # stack_dim = training_dataset.yield_2d_normal_to
-                            # # Create batch out of single val sample
-                            # b_val_img = val_sample['image'].unsqueeze(0)
-                            # b_val_seg = val_sample['label'].unsqueeze(0)
-
-                            # B = b_val_img.shape[0]
-
-                            # b_val_img = b_val_img.unsqueeze(1).float().cuda()
-                            # b_val_seg = b_val_seg.cuda()
-                            # b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=stack_dim)
-                            # b_val_img_2d = (b_val_img_2d - b_val_img_2d.mean(dim=0)) / b_val_img_2d.std(dim=0)
-                            # if config.use_mind:
-                            #     b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
+                                b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
 
                             output_val = lraspp(b_val_img_2d)['out']
                             # TODO remove
