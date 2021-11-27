@@ -1082,7 +1082,7 @@ class WrapperOrganMNIST3D():
                 f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
 
         b_image, b_label = interpolate_sample(b_image, b_label, 2., yield_2d)
-        b_image = augmentNoise(b_image, strength=0.3)
+        b_image = augmentNoise(b_image, strength=0.4)
 
         flip_aug_selector = np.random.rand(3)
 
@@ -1106,7 +1106,7 @@ class WrapperOrganMNIST3D():
 
         elif spatial_aug_selector <.9:
             b_image, b_label = augmentBspline(
-                b_image, b_label, num_ctl_points=6, strength=0.1, yield_2d=yield_2d)
+                b_image, b_label, num_ctl_points=6, strength=0.08, yield_2d=yield_2d)
         else:
             pass
         b_image, b_label = interpolate_sample(b_image, b_label, .5, yield_2d)
@@ -1184,7 +1184,7 @@ class DotDict(dict):
     __delattr__ = dict.__delitem__
 
 config_dict = DotDict({
-    'num_folds': 3,
+    'num_folds': 5,
     'only_first_fold': True,
 
     'label_tags': [],
@@ -1252,7 +1252,7 @@ if config_dict['dataset'] == 'crossmoda':
 elif config_dict['dataset'] == 'organmnist3d':
     training_dataset = WrapperOrganMNIST3D(
         split='train', root='./data/medmnist', download=True, normalize=True,
-        max_load_num=100, crop_w_dim_range=None,
+        max_load_num=200, crop_w_dim_range=None,
         disturbed_idxs=None, yield_2d_normal_to='W'
     )
     print(training_dataset.mnist_set.info)
@@ -1849,25 +1849,27 @@ def train_DL(run_name, config, training_dataset):
                             # TODO remove
                             output_val = F.interpolate(output_val, size=(28,28), mode='nearest')
 
-                            SCORE_3D = False #TODO remove
+                            SCORE_3D = True #TODO remove
 
                             if SCORE_3D:
                                 # Prepare logits for scoring
                                 # Scoring happens in 3D again - unstack batch tensor again to stack of 3D
-                                val_logits_for_score = make_3d_from_2d_stack(output_val, stack_dim, B)
-                                val_logits_for_score = val_logits_for_score.argmax(1)
+                                val_logits_for_score = output_val.argmax(1)
+                                val_logits_for_score_3d = make_3d_from_2d_stack(
+                                    val_logits_for_score.unsqueeze(1), stack_dim, B
+                                ).squeeze(1)
 
                                 b_val_dice = dice3d(
-                                    torch.nn.functional.one_hot(val_logits_for_score, len(config.label_tags)),
+                                    torch.nn.functional.one_hot(val_logits_for_score_3d, len(config.label_tags)),
                                     torch.nn.functional.one_hot(b_val_seg, len(config.label_tags)),
                                     one_hot_torch_style=True
                                 )
                             else:
-                                val_logits_for_score = output_val.argmax(1) # TODO Check logits ok or dp_logits instead?
+                                val_logits_for_score_2d = output_val.argmax(1) # TODO Check logits ok or dp_logits instead?
 
                                 # Calculate dice score
                                 b_val_dice = dice2d(
-                                    torch.nn.functional.one_hot(val_logits_for_score, len(config.label_tags)),
+                                    torch.nn.functional.one_hot(val_logits_for_score_2d, len(config.label_tags)),
                                     torch.nn.functional.one_hot(b_val_seg.squeeze(0), len(config.label_tags)), # Calculate dice score with original segmentation (no disturbance)
                                     one_hot_torch_style=True
                                 )
@@ -1887,7 +1889,7 @@ def train_DL(run_name, config, training_dataset):
                                 display_seg(in_type="single_3D",
                                     reduce_dim="W",
                                     img=val_sample['image'].unsqueeze(0).cpu(),
-                                    seg=val_logits_for_score.permute(1,2,0).squeeze(0).cpu(),
+                                    seg=val_logits_for_score_3d.permute(1,2,0).squeeze(0).cpu(),
                                     ground_truth=b_val_seg.squeeze(0).cpu(),
                                     crop_to_non_zero_seg=True,
                                     crop_to_non_zero_gt=True,
