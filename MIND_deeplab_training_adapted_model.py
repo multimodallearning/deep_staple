@@ -833,12 +833,12 @@ class WrapperOrganMNIST3D():
         self.img_data_2d = {}
         self.label_data_2d = {}
 
-        if max_load_num:
-            effective_len = min(len(self.mnist_set), max_load_num)
-        else:
-            effective_len = len(self.mnist_set)
+        allowed_labels = {int(cls_num):label_tag for cls_num, label_tag in self.mnist_set.info['label'].items() \
+            if not "right" in label_tag}
+        new_labels = {new_num: label_tag for new_num, label_tag in enumerate(allowed_labels.values())}
+        filtered_ids = [_id for _id in range(len(self.mnist_set)) if self.mnist_set[_id][1].item() in allowed_labels.keys()]
 
-        used_mnist_idxs = np.random.permutation(effective_len).tolist()
+        used_mnist_idxs = np.random.permutation(filtered_ids).tolist()[:max_load_num]
 
         # TODO delete test image
 #         TEST_IMAGE = 128*torch.ones(self.mnist_set.imgs[0].shape)
@@ -853,14 +853,21 @@ class WrapperOrganMNIST3D():
 #                 TEST_IMAGE[:, h_idx, :] = 255
 #                 TEST_IMAGE[d_idx, :, :] = 255
 
+        label_keys = [int(key) for key, label_tag in self.mnist_set.info['label'].items()]
+
         for medmnist_id in sorted(used_mnist_idxs):
             # Reference data from super class
             img = torch.tensor(self.mnist_set.imgs[medmnist_id], dtype=torch.float)
-            self.label_data_3d[medmnist_id] = torch.tensor(self.mnist_set.labels[medmnist_id]).expand_as(img).long()
+            lbl_val = torch.tensor(self.mnist_set.labels[medmnist_id]).item()
+            new_val = list(allowed_labels.keys()).index(lbl_val)
+            self.label_data_3d[medmnist_id] = torch.tensor([new_val]).expand_as(img).long()
 
             if normalize: #normalize image to zero mean and unit std
                 img = (img - img.mean()) / img.std()
             self.img_data_3d[medmnist_id] = img
+
+
+        self.mnist_set.info['label'] = new_labels
 
         #check for consistency
         print("Equal image and label numbers: {}".format(set(self.img_data_3d)==set(self.label_data_3d)))
@@ -1082,22 +1089,22 @@ class WrapperOrganMNIST3D():
                 f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
 
         b_image, b_label = interpolate_sample(b_image, b_label, 2., yield_2d)
-        b_image = augmentNoise(b_image, strength=0.05)
+        b_image = augmentNoise(b_image, strength=0.1)
 
         flip_aug_selector = np.random.rand(3)
 
-        # if flip_aug_selector[0] < .2:
-        #     b_image, b_label = b_image.flip(-1), b_label.flip(-1)
-        # elif flip_aug_selector[1] < .2:
-        #     b_image, b_label = b_image.flip(-2), b_label.flip(-2)
-        # elif yield_2d and flip_aug_selector[2] < .2:
-        #     b_image, b_label = b_image.flip(-3), b_label.flip(-3)
-        # else:
-        #     pass
+        if flip_aug_selector[0] < .2:
+            b_image, b_label = b_image.flip(-1), b_label.flip(-1)
+        elif flip_aug_selector[1] < .2:
+            b_image, b_label = b_image.flip(-2), b_label.flip(-2)
+        elif yield_2d and flip_aug_selector[2] < .2:
+            b_image, b_label = b_image.flip(-3), b_label.flip(-3)
+        else:
+            pass
 
-        # invert_aug_selector = np.random.rand()
-        # if invert_aug_selector < .05:
-        #     b_image = -1*b_image
+        invert_aug_selector = np.random.rand()
+        if invert_aug_selector < .05:
+            b_image = -1*b_image
 
         spatial_aug_selector = np.random.rand()
         if spatial_aug_selector < .45:
@@ -1106,7 +1113,7 @@ class WrapperOrganMNIST3D():
 
         elif spatial_aug_selector <.9:
             b_image, b_label = augmentBspline(
-                b_image, b_label, num_ctl_points=6, strength=0.05, yield_2d=yield_2d)
+                b_image, b_label, num_ctl_points=6, strength=0.06, yield_2d=yield_2d)
         else:
             pass
         b_image, b_label = interpolate_sample(b_image, b_label, .5, yield_2d)
@@ -1200,7 +1207,7 @@ config_dict = DotDict({
     'yield_2d_normal_to': "W",
 
     'lr': 0.001,
-    'use_cosine_annealing': True,
+    'use_cosine_annealing': False,
 
     # Data parameter config
     'data_parameter_config': DotDict(
@@ -1252,7 +1259,7 @@ if config_dict['dataset'] == 'crossmoda':
 elif config_dict['dataset'] == 'organmnist3d':
     training_dataset = WrapperOrganMNIST3D(
         split='train', root='./data/medmnist', download=True, normalize=True,
-        max_load_num=300, crop_w_dim_range=None,
+        max_load_num=250, crop_w_dim_range=None,
         disturbed_idxs=None, yield_2d_normal_to='W'
     )
     print(training_dataset.mnist_set.info)
