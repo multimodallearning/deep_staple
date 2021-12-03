@@ -12,6 +12,7 @@ torch = "^1.9.1"
 torchvision = "^0.10.1"
 mdl-seg-class = {git = "git@github.com:MDL-UzL/SegmentationClassification.git", rev = "main"}
 meidic-vtach-utils = {git = "git@github.com:MDL-UzL/meidic_vtach_utils.git", rev = "main"}
+medmnist = { git = "git@github.com:MedMNIST/MedMNIST.git", branch = "main" }
 nibabel = "^3.2.1"
 scipy = "^1.6.0"
 scikit-image = "^0.18.3"
@@ -20,6 +21,7 @@ wandb = "^0.12.2"
 jupyterlab = "^3.2.0"
 ipywidgets = "^7.6.5"
 torchio = "^0.18.63"
+jupytext = "^1.13.1"
 
 [build-system]
 requires = ["poetry-core"]
