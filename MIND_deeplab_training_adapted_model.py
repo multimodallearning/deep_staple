@@ -1261,7 +1261,7 @@ if config_dict['dataset'] == 'crossmoda':
     training_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
         domain="source", state="l4", size=(128, 128, 128),
         ensure_labeled_pairs=True,
-        max_load_num=config_dict['train_set_max_len'],
+        # max_load_num=config_dict['train_set_max_len'],
         crop_w_dim_range=config_dict['crop_w_dim_range'],
         yield_2d_normal_to=config_dict['yield_2d_normal_to'],
         dilate_kernel_sz=config_dict['start_dilate_kernel_sz'],
