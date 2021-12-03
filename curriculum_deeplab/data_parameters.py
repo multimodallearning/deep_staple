@@ -89,10 +89,13 @@ class DataParameterManager():
 
         elif self.data_param_mode == DataParamMode.ONLY_INSTANCE_PARAMS:
             # Create nr_instances data parameters
-            for pinst_idx, inst_key in enumerate(self.instance_keys):
-                param = torch.ones(1, requires_grad=True, device=device) * self.init_inst_param
-                param = torch.nn.parameter.Parameter(param)
-                data_parameters_dict[inst_key] = param
+            params = torch.nn.Embedding(len(self.instance_keys), 1, sparse=True)
+            params.weight = self.init_inst_param
+
+            # for pinst_idx, inst_key in enumerate(self.instance_keys):
+            #     # param = torch.ones(1, requires_grad=True, device=device) * self.init_inst_param
+            #     # param = torch.nn.parameter.Parameter(param)
+            data_parameters_dict = {pinst_idx: par for pinst_idx, par in zip(self.instance_keys, params)}
 
             print(f"Initialized instance data parameters with: {self.init_inst_param}")
 
