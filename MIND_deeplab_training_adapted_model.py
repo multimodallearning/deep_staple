@@ -638,7 +638,7 @@ class CrossMoDa_Data(Dataset):
             #     yield_2d=yield_2d, kernel_sz=self.dilate_kernel_sz
             # ).squeeze(0)
             modified_label = label.detach().clone()
-            
+
             if self.disturbed_idxs != None and dataset_idx in self.disturbed_idxs:
                 if yield_2d:
                     modified_label = \
@@ -1209,7 +1209,7 @@ class DotDict(dict):
 config_dict = DotDict({
     'num_folds': 5,
     'only_first_fold': True,
-    
+
     'num_classes': 2,
     'use_mind': True,
     'epochs': 120,
@@ -1218,30 +1218,30 @@ config_dict = DotDict({
     'val_batch_size': 64,
 
     'dataset': 'crossmoda',
-    'train_set_max_len': 100,
+    # 'train_set_max_len': 100,
     'crop_w_dim_range': (24, 110),
     'yield_2d_normal_to': "W",
 
     'lr': 0.001,
-    'use_cosine_annealing': True,
+    'use_cosine_annealing': False,
 
     # Data parameter config
-    'data_parameter_config': DotDict(
-        data_param_mode=DataParamMode.DISABLED,
-        init_class_param=0.01,
-        lr_class_param=0.1,
-        init_inst_param=1.0,
-        lr_inst_param=0.1,
-        wd_inst_param=0.0,
-        wd_class_param=0.0,
-        skip_clamp_data_param=False,
-        clamp_sigma_min=np.log(1/20),
-        clamp_sigma_max=np.log(20),
-        optim_algorithm=DataParamOptim.ADAM,
-        optim_options=dict(
-            betas=(0.9, 0.999)
-        )
-    ),
+    # 'data_parameter_config': DotDict(
+    #     data_param_mode=DataParamMode.DISABLED,
+    #     init_class_param=0.01,
+    #     lr_class_param=0.1,
+    #     init_inst_param=1.0,
+    #     lr_inst_param=0.1,
+    #     wd_inst_param=0.0,
+    #     wd_class_param=0.0,
+    #     skip_clamp_data_param=False,
+    #     clamp_sigma_min=np.log(1/20),
+    #     clamp_sigma_max=np.log(20),
+    #     optim_algorithm=DataParamOptim.ADAM,
+    #     optim_options=dict(
+    #         betas=(0.9, 0.999)
+    #     )
+    # ),
 
     'log_every': 1,
     'mdl_save_prefix': 'data/models',
@@ -1251,7 +1251,7 @@ config_dict = DotDict({
     'wandb_mode': "online",
 
     'disturbed_percentage': .30,
-    'start_disturbing_after_ep': 0,
+    'start_disturbing_after_ep': 100,
 
     'start_dilate_kernel_sz': 1
 })
@@ -1606,7 +1606,7 @@ def train_DL(run_name, config, training_dataset):
         ### Disturb dataset ###
         disturbed_idxs = np.random.choice(train_idxs, size=int(len(train_idxs)*config.disturbed_percentage), replace=False)
         disturbed_idxs = torch.tensor(disturbed_idxs)
-        
+
         disturbed_bool_vect = torch.zeros(len(training_dataset))
         disturbed_bool_vect[disturbed_idxs] = 1.
 
@@ -1661,9 +1661,9 @@ def train_DL(run_name, config, training_dataset):
             optimizer, T_0=200, T_mult=2, eta_min=config.lr*.1, last_epoch=- 1, verbose=False)
 
         lraspp.cuda()
-        # dpm = DataParameterManager(train_idxs.tolist(), ['background', 'tumour', 'cochlea'], 
+        # dpm = DataParameterManager(train_idxs.tolist(), ['background', 'tumour', 'cochlea'],
         #     config=config.data_parameter_config, device='cuda')
-        
+
         criterion = nn.CrossEntropyLoss(class_weights)
         # criterion = nn.BCEWithLogitsLoss(weight=class_weights)
 
@@ -1697,7 +1697,7 @@ def train_DL(run_name, config, training_dataset):
 
                 optimizer.zero_grad()
                 optimizer_dp.zero_grad()
-                
+
                 b_img = batch['image']
                 b_seg = batch['label']
                 b_seg_modified = batch['modified_label']
@@ -1744,7 +1744,7 @@ def train_DL(run_name, config, training_dataset):
                     ).mean((-1,-2))
 
                     loss = (loss*weight).sum()
-                    
+
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
                     scaler.step(optimizer_dp)
@@ -1764,9 +1764,9 @@ def train_DL(run_name, config, training_dataset):
                 )
 
                 dices.append(get_batch_dice_over_all(
-                    b_dice, exclude_bg=False))
+                    b_dice, exclude_bg=True))
                 class_dices.append(get_batch_dice_per_class(
-                    b_dice, config.label_tags, exclude_bg=False))
+                    b_dice, config.label_tags, exclude_bg=True))
 
                 if config.do_plot:
                     print("Training 2D stack image label/ground-truth")
@@ -1933,10 +1933,10 @@ def train_DL(run_name, config, training_dataset):
 
                             # Get mean score over batch
                             val_dices.append(get_batch_dice_over_all(
-                                b_val_dice, exclude_bg=False))
+                                b_val_dice, exclude_bg=True))
 
                             val_class_dices.append(get_batch_dice_per_class(
-                                b_val_dice, config.label_tags, exclude_bg=False))
+                                b_val_dice, config.label_tags, exclude_bg=True))
 
                             if config.do_plot:
                                 print(f"Validation 3D image label/ground-truth {val_3d_idxs}")
@@ -1976,7 +1976,7 @@ def train_DL(run_name, config, training_dataset):
 
 
 # %%
-config_dict['wandb_mode'] = 'disabled'
+config_dict['wandb_mode'] = 'online'
 config_dict['debug'] = False
 
 run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
