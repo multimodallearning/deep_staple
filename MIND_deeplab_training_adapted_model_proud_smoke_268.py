@@ -1295,7 +1295,7 @@ def train_DL(run_name, config, training_dataset):
                     if config.data_parameter_config['data_param_mode'] == str(DataParamMode.ONLY_INSTANCE_PARAMS):
                         weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
                         weight = weight/weight.mean()
-                        dp_logits = logits*weight
+                        dp_logits = logits*weight.view(-1,1,1,1)
                         loss = nn.CrossEntropyLoss()(
                             dp_logits,
                             b_seg_modified
@@ -1377,7 +1377,7 @@ def train_DL(run_name, config, training_dataset):
 
                 log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
 
-
+                log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
                 # Log data parameters of disturbed samples
                 if len(training_dataset.disturbed_idxs) > 0:
                     corr_coeff = np.corrcoef(
