@@ -239,7 +239,7 @@ def spatial_augment(b_image, b_label,
 
             affine_disp = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
                                     align_corners=False)
-            grid += affine_disp
+            grid += (affine_disp-id_grid)
 
     else:
         assert b_image.dim() == b_label.dim() == 4, \
@@ -280,7 +280,7 @@ def spatial_augment(b_image, b_label,
             affine_disp = F.affine_grid(affine_matrix,torch.Size((B,1,D,H,W)),
                                     align_corners=False)
 
-            grid += affine_disp
+            grid += (affine_disp-id_grid)
 
     b_image_out = F.grid_sample(
         b_image.unsqueeze(1).float(), grid,
@@ -652,28 +652,29 @@ class CrossMoDa_Data(Dataset):
             modified_label = label.detach().clone()
 
             if self.disturbed_idxs != None and dataset_idx in self.disturbed_idxs:
-                ROLL_FACT = 10
-                if yield_2d:
-                    modified_label = \
-                        torch.roll(
-                            modified_label.transpose(-2,-1),
-                            (
-                                int(torch.randn(1)*ROLL_FACT),
-                                int(torch.randn(1)*ROLL_FACT)
-                            ),(-2,-1)
-                        )
-                        # torch.flip(modified_label, dims=(-2,-1))
-                else:
-                    modified_label = \
-                        torch.roll(
-                            modified_label.permute(1,2,0),
-                            (
-                                int(torch.randn(1)*ROLL_FACT),
-                                int(torch.randn(1)*ROLL_FACT),
-                                int(torch.randn(1)*ROLL_FACT)
-                            ),(-3,-2,-1)
-                        )
-                        # torch.flip(modified_label, dims=(-3,-2,-1))
+                with torch_manual_seeded(dataset_idx):
+                    ROLL_FACT = 10
+                    if yield_2d:
+                        modified_label = \
+                            torch.roll(
+                                modified_label.transpose(-2,-1),
+                                (
+                                    int(torch.randn(1)*ROLL_FACT),
+                                    int(torch.randn(1)*ROLL_FACT)
+                                ),(-2,-1)
+                            )
+                            # torch.flip(modified_label, dims=(-2,-1))
+                    else:
+                        modified_label = \
+                            torch.roll(
+                                modified_label.permute(1,2,0),
+                                (
+                                    int(torch.randn(1)*ROLL_FACT),
+                                    int(torch.randn(1)*ROLL_FACT),
+                                    int(torch.randn(1)*ROLL_FACT)
+                                ),(-3,-2,-1)
+                            )
+                            # torch.flip(modified_label, dims=(-3,-2,-1))
 
         if yield_2d:
             assert image.dim() == label.dim() == 2
@@ -936,7 +937,7 @@ plt.ylabel("ground truth>0")
 plt.plot(sum_over_w);
 
 # %%
-if config_dict['do_plot']:
+if config_dict['do_plot'] or True:
     # Print bare 2D data
     # print("Displaying 2D bare sample")
     # for img, label in zip(training_dataset.img_data_2d.values(),
@@ -1151,6 +1152,16 @@ def reset_determinism():
     random.seed(0)
     np.random.seed(0)
     # torch.use_deterministic_algorithms(True)
+    
+from contextlib import contextmanager
+
+@contextmanager
+def torch_manual_seeded(seed):
+    saved_state = torch.get_rng_state()
+    torch.manual_seed(seed)
+    yield
+    torch.set_rng_state(saved_state)
+
 
 
 
@@ -1315,6 +1326,22 @@ def train_DL(run_name, config, training_dataset):
                 b_seg_modified = b_seg_modified.cuda()
                 b_idxs_dataset = b_idxs_dataset.cuda()
                 b_seg = b_seg.cuda()
+
+                # if True:
+                #     print(f"Input 2D stack label/ground-truth")
+
+                #     # display_all_seg_slices(b_seg.unsqueeze(1), logits_for_score)
+                #     print(b_seg.unique())
+                #     print(b_img.shape)
+                #     display_seg(in_type="batch_2D",
+                #         img=b_img.unsqueeze(1).cpu(),
+                #         seg=b_seg_modified.cpu(),
+                #         ground_truth=b_seg.cpu(),
+                #         crop_to_non_zero_seg=True,
+                #         crop_to_non_zero_gt=True,
+                #         alpha_seg=.2,
+                #         alpha_gt=.4
+                #     )
 
                 if config.use_mind:
                     b_img = mindssc(b_img.unsqueeze(1).unsqueeze(1)).squeeze(2)
