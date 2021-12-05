@@ -912,12 +912,12 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "1"))),
+    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "0"))),
     'wandb_mode': os.environ.get('WANDB_MODE', "online"),
-    'wandb_name_override': 'my-name',
+    # 'wandb_name_override': 'my-name',
 
-    'disturbed_percentage': .3,
-    'start_disturbing_after_ep': 0,
+    'disturbed_percentage': .0,
+    'start_disturbing_after_ep': 100000,
 
     'start_dilate_kernel_sz': 1
 })
@@ -1214,7 +1214,7 @@ def log_class_dices(log_prefix, log_postfix, class_dices, log_idx):
 # %%
 def train_DL(run_name, config, training_dataset):
     reset_determinism()
-
+    print(config.label_tags)
     # Configure folds
     kf = KFold(n_splits=config.num_folds)
     kf.get_n_splits(training_dataset)
@@ -1544,7 +1544,7 @@ def train_DL(run_name, config, training_dataset):
                             torch.nn.functional.one_hot(b_val_seg, len(config.label_tags)),
                             one_hot_torch_style=True
                         )
-                        print(b_val_dice)
+
                         # Get mean score over batch
                         val_dices.append(get_batch_dice_over_all(
                             b_val_dice, exclude_bg=True))
@@ -1583,8 +1583,8 @@ def train_DL(run_name, config, training_dataset):
 
 
 # %%
-config_dict['wandb_mode'] = 'disabled'
-config_dict['debug'] = False
+# config_dict['wandb_mode'] = 'disabled'
+# config_dict['debug'] = False
 # Model loading
 # config_dict['wandb_name_override'] = 'dummy-oDbynkD4q8KBTHU5CRKt4Q'
 # config_dict['fold_override'] = 0
