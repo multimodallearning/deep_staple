@@ -25,7 +25,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.cuda.amp as amp
 import torchvision
-
+from curriculum_deeplab.data_parameters import DataParamMode
 import torchio as tio
 
 import matplotlib.pyplot as plt
@@ -830,25 +830,22 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    # 'data_param_optim_momentum': .5,
-    # 'init_class_param': 1.0,
-    # 'learn_class_parameters': False,
-    # 'lr_class_param': 0.1,
-    # 'init_inst_param': 1.0,
-    # 'learn_inst_parameters': False,
-    # 'lr_inst_param': 0.1,
-    # 'wd_inst_param': 0.0,
-    # 'wd_class_param': 0.0,
-
-    # 'skip_clamp_data_param': False,
-    # 'clamp_inst_sigma_config': {
-    #     'min': np.log(1/20),
-    #     'max': np.log(20)
-    # },
-    # 'clamp_cls_sigma_config': {
-    #     'min': np.log(1/20),
-    #     'max': np.log(20)
-    # },
+    'data_parameter_config': DotDict(
+        data_param_mode=DataParamMode.ONLY_INSTANCE_PARAMS,
+        # init_class_param=0.01,
+        # lr_class_param=0.1,
+        init_inst_param=1.0,
+        lr_inst_param=0.1,
+        # wd_inst_param=0.0,
+        # wd_class_param=0.0,
+        # skip_clamp_data_param=False,
+        # clamp_sigma_min=np.log(1/20),
+        # clamp_sigma_max=np.log(20),
+        # optim_algorithm=DataParamOptim.ADAM,
+        # optim_options=dict(
+        #     betas=(0.9, 0.999)
+        # )
+    ),
 
     'log_every': 1,
     'mdl_save_prefix': 'data/models',
@@ -1228,7 +1225,12 @@ def train_DL(run_name, config, training_dataset):
 
         criterion = nn.CrossEntropyLoss()
         embedding = nn.Embedding(len(training_dataset), 1, sparse=True)
-        optimizer_dp = torch.optim.SparseAdam(embedding.parameters(), lr=0.1, betas=(0.9, 0.999), eps=1e-08)
+        # with torch.no_grad():
+        torch.nn.init.constant_(embedding.weight.data, 1)
+
+        optimizer_dp = torch.optim.SparseAdam(
+            embedding.parameters(), lr=config.data_parameter_config['lr_inst_param'],
+            betas=(0.9, 0.999), eps=1e-08)
 
         t0 = time.time()
 
@@ -1288,14 +1290,25 @@ def train_DL(run_name, config, training_dataset):
                     assert b_seg_modified.dim() == 3, \
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
-                    weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
-                    weight = weight/weight.mean()
+                    if config.data_parameter_config['data_param_mode'] == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+                        weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
+                        weight = weight/weight.mean()
 
-                    loss = criterion(logits, b_seg_modified)
+                        loss = nn.CrossEntropyLoss(reduction='none')(
+                            logits,
+                            b_seg_modified
+                        ).mean((-1,-2))
+                        loss = (loss*weight).sum()
+                        # print("Embedding std", embedding.weight.data.std())
+
+                    else:
+                        loss = nn.CrossEntropyLoss()(logits, b_seg_modified)
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
-                # scaler.step(optimizer_dp)
+
+                if config.data_parameter_config['data_param_mode'] == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+                    scaler.step(optimizer_dp)
 
                 scaler.update()
 
