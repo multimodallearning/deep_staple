@@ -449,8 +449,9 @@ class CrossMoDa_Data(Dataset):
 
 
         # Populate data
-        self.img_data = {}
-        self.label_data = {}
+        self.img_data_3d = {}
+        self.label_data_3d = {}
+
         self.img_data_2d = {}
         self.label_data_2d = {}
 
@@ -461,10 +462,10 @@ class CrossMoDa_Data(Dataset):
 
         description = f"{len(self.img_paths)} images, {len(self.label_paths)} labels"
 
-        for crossmoda_id, f in tqdm(id_paths_to_load, desc=description):
+        for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
             # tqdm.write(f"Loading {f}")
-            if "Label" in f:
-                tmp = torch.from_numpy(nib.load(f).get_fdata())
+            if "Label" in _file:
+                tmp = torch.from_numpy(nib.load(_file).get_fdata())
                 if resample: #resample image to specified size
                     tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
 
@@ -478,10 +479,10 @@ class CrossMoDa_Data(Dataset):
 
                 # Only use tumour class, remove TODO
                 tmp[tmp==2] = 0
-                self.label_data[crossmoda_id] = tmp.long()
+                self.label_data_3d[_3d_id] = tmp.long()
 
-            elif domain in f:
-                tmp = torch.from_numpy(nib.load(f).get_fdata())
+            elif domain in _file:
+                tmp = torch.from_numpy(nib.load(_file).get_fdata())
                 if resample: #resample image to specified size
                     tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='trilinear',align_corners=False).squeeze()
 
@@ -496,35 +497,35 @@ class CrossMoDa_Data(Dataset):
                 if normalize: #normalize image to zero mean and unit std
                     tmp = (tmp - tmp.mean()) / tmp.std()
 
-                self.img_data[crossmoda_id] = tmp
+                self.img_data_3d[_3d_id] = tmp
 
         # Postprocessing
-        for crossmoda_id in list(self.label_data.keys()):
-            if self.label_data[crossmoda_id].unique().numel() != 2: #TODO use 3 classes again
-                del self.img_data[crossmoda_id]
-                del self.label_data[crossmoda_id]
-            elif "r" in crossmoda_id:
-                self.img_data[crossmoda_id] = self.img_data[crossmoda_id].flip(dims=(1,))
-                self.label_data[crossmoda_id] = self.label_data[crossmoda_id].flip(dims=(1,))
+        for _3d_id in list(self.label_data_3d.keys()):
+            if self.label_data_3d[_3d_id].unique().numel() != 2: #TODO use 3 classes again
+                del self.img_data_3d[_3d_id]
+                del self.label_data_3d[_3d_id]
+            elif "r" in _3d_id:
+                self.img_data_3d[_3d_id] = self.img_data_3d[_3d_id].flip(dims=(1,))
+                self.label_data_3d[_3d_id] = self.label_data_3d[_3d_id].flip(dims=(1,))
 
         if max_load_num and ensure_labeled_pairs:
-            for crossmoda_id in list(self.label_data.keys())[max_load_num:]:
-                del self.img_data[crossmoda_id]
-                del self.label_data[crossmoda_id]
+            for _3d_id in list(self.label_data_3d.keys())[max_load_num:]:
+                del self.img_data_3d[_3d_id]
+                del self.label_data_3d[_3d_id]
 
         elif max_load_num:
-            for del_key in list(self.image_data.keys())[max_load_num:]:
-                del self.img_data[crossmoda_id]
-            for del_key in list(self.label_data.keys())[max_load_num:]:
-                del self.label_data[crossmoda_id]
+            for del_key in list(self.img_data_3d.keys())[max_load_num:]:
+                del self.img_data_3d[del_key]
+            for del_key in list(self.label_data_3d.keys())[max_load_num:]:
+                del self.label_data_3d[del_key]
 
         #check for consistency
-        print("Equal image and label numbers: {}".format(set(self.img_data)==set(self.label_data)))
+        print("Equal image and label numbers: {}".format(set(self.img_data_3d)==set(self.label_data_3d)))
 
-        img_stack = torch.stack(list(self.img_data.values()), dim=0)
+        img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
         img_mean, img_std = img_stack.mean(), img_stack.std()
 
-        label_stack = torch.stack(list(self.label_data.values()), dim=0)
+        label_stack = torch.stack(list(self.label_data_3d.values()), dim=0)
 
         print("Image shape: {}, mean.: {:.2f}, std.: {:.2f}".format(img_stack.shape, img_mean, img_std))
         print("Label shape: {}, max.: {}".format(label_stack.shape,torch.max(label_stack)))
@@ -537,46 +538,46 @@ class CrossMoDa_Data(Dataset):
             if yield_2d_normal_to == "W":
                 slice_dim = -1
 
-            for crossmoda_id, image in self.img_data.items():
+            for _3d_id, image in self.img_data_3d.items():
                 for idx, img_slc in [(slice_idx, image.select(slice_dim, slice_idx)) \
                                      for slice_idx in range(image.shape[slice_dim])]:
                     # Set data view for crossmoda id like "003rW100"
-                    self.img_data_2d[f"{crossmoda_id}{yield_2d_normal_to}{idx:03d}"] = img_slc
+                    self.img_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = img_slc
 
-            for crossmoda_id, label in self.label_data.items():
+            for _3d_id, label in self.label_data_3d.items():
                 for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
                                      for slice_idx in range(label.shape[slice_dim])]:
                     # Set data view for crossmoda id like "003rW100"
-                    self.label_data_2d[f"{crossmoda_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
+                    self.label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
 
-        print("Data import finished. Elapsed time: {:.1f} s".format(time.time()-t0 ))
+        print("Data import finished.")
         print(f"CrossMoDa loader will yield {'2D' if self.yield_2d_normal_to else '3D'} samples")
 
-    def get_crossmoda_ids(self):
+    def get_3d_ids(self):
         return sorted(list(
-            set(self.img_data.keys())
-            .union(set(self.label_data.keys()))
+            set(self.img_data_3d.keys())
+            .union(set(self.label_data_3d.keys()))
         ))
 
-    def get_2d_crossmoda_ids(self):
+    def get_2d_ids(self):
         return sorted(list(
             set(self.img_data_2d.keys())
             .union(set(self.label_data_2d.keys()))
         ))
 
-    def get_crossmoda_id_dicts(self):
+    def get_id_dicts(self):
 
-        all_crossmoda_ids = self.get_crossmoda_ids()
+        all_3d_ids = self.get_3d_ids()
         id_dicts = []
 
-        for twod_dataset_idx, twod_crossmoda_id in enumerate(self.get_2d_crossmoda_ids()):
-            crossmoda_id = twod_crossmoda_id[:-4]
+        for _2d_dataset_idx, _2d_id in enumerate(self.get_2d_ids()):
+            _3d_id = _2d_id[:-4]
             id_dicts.append(
                 {
-                    '2d_crossmoda_id': twod_crossmoda_id,
-                    '2d_dataset_idx': twod_dataset_idx,
-                    'crossmoda_id': crossmoda_id,
-                    'dataset_idx': all_crossmoda_ids.index(crossmoda_id),
+                    '2d_id': _2d_id,
+                    '2d_dataset_idx': _2d_dataset_idx,
+                    '3d_id': _3d_id,
+                    '3d_dataset_idx': all_3d_ids.index(_3d_id),
                 }
             )
 
@@ -592,7 +593,7 @@ class CrossMoDa_Data(Dataset):
         if yield_2d:
             return len(self.img_data_2d)
 
-        return len(self.img_data)
+        return len(self.img_data_3d)
 
     def __getitem__(self, dataset_idx, yield_2d_override=None):
 
@@ -605,23 +606,23 @@ class CrossMoDa_Data(Dataset):
         modified_label = []
 
         if yield_2d:
-            all_crossmoda_ids = self.get_2d_crossmoda_ids()
-            c_id = all_crossmoda_ids[dataset_idx]
-            image = self.img_data_2d.get(c_id, torch.tensor([]))
-            label = self.label_data_2d.get(c_id, torch.tensor([]))
+            all_ids = self.get_2d_ids()
+            _id = all_ids[dataset_idx]
+            image = self.img_data_2d.get(_id, torch.tensor([]))
+            label = self.label_data_2d.get(_id, torch.tensor([]))
 
             # For 2D crossmoda id cut last 4 "003rW100"
-            image_path = self.img_paths[c_id[:-4]]
-            label_path = self.label_paths[c_id[:-4]]
+            image_path = self.img_paths[_id[:-4]]
+            label_path = self.label_paths[_id[:-4]]
 
         else:
-            all_crossmoda_ids = self.get_crossmoda_ids()
-            c_id = all_crossmoda_ids[dataset_idx]
-            image = self.img_data.get(c_id, torch.tensor([]))
-            label = self.label_data.get(c_id, torch.tensor([]))
+            all_ids = self.get_3d_ids()
+            _id = all_ids[dataset_idx]
+            image = self.img_data_3d.get(_id, torch.tensor([]))
+            label = self.label_data_3d.get(_id, torch.tensor([]))
 
-            image_path = self.img_paths[c_id]
-            label_path = self.label_paths[c_id]
+            image_path = self.img_paths[_id]
+            label_path = self.label_paths[_id]
 
         if self.do_train:
             # In case of training add augmentation, modification and
@@ -661,17 +662,17 @@ class CrossMoDa_Data(Dataset):
             'label': label,
             'modified_label': modified_label,
             'dataset_idx': dataset_idx,
-            'crossmoda_id': c_id,
+            'id': _id,
             'image_path': image_path,
             'label_path': label_path
         }
 
-    def get_crossmoda_3d_item(self, dataset_idx):
-        return self.__getitem__(dataset_idx, yield_2d_override=False)
+    def get_3d_item(self, _3d_dataset_idx):
+        return self.__getitem__(_3d_dataset_idx, yield_2d_override=False)
 
     def get_data(self):
-        img_stack = torch.stack(list(self.img_data.values()), dim=0)
-        label_stack = torch.stack(list(self.label_data.values()), dim=0)
+        img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
+        label_stack = torch.stack(list(self.label_data_3d.values()), dim=0)
 
         return img_stack, label_stack
 
@@ -927,7 +928,7 @@ if config_dict['do_plot']:
 #     training_dataset.train()
 #     print("Displaying 3D training sample")
 #     leng = 1# training_dataset.__len__(yield_2d_override=False)
-#     for sample in (training_dataset.get_crossmoda_3d_item(idx) for idx in range(leng)):
+#     for sample in (training_dataset.get_3d_item(idx) for idx in range(leng)):
 #         # training_dataset.set_dilate_kernel_size(1)
 #         display_seg(in_type="single_3D", reduce_dim="W",
 #                     img=sample['image'].unsqueeze(0),
@@ -949,7 +950,7 @@ if config_dict['do_plot']:
         print(f"Sample {sidx}:")
 
         training_dataset.eval()
-        sample_eval = training_dataset.get_crossmoda_3d_item(sidx)
+        sample_eval = training_dataset.get_3d_item(sidx)
 
         display_seg(in_type="single_3D", reduce_dim="W",
                     img=sample_eval['image'].unsqueeze(0),
@@ -965,7 +966,7 @@ if config_dict['do_plot']:
 
         training_dataset.train()
         print("Train sample with ground-truth overlay")
-        sample_train = training_dataset.get_crossmoda_3d_item(sidx)
+        sample_train = training_dataset.get_3d_item(sidx)
         print(sample_train['label'].unique())
         display_seg(in_type="single_3D", reduce_dim="W",
                     img=sample_train['image'].unsqueeze(0),
@@ -983,7 +984,7 @@ if config_dict['do_plot']:
 # %%
 # train_subset = torch.utils.data.Subset(training_dataset,range(2))
 if config_dict['do_plot']:
-    train_plotset = (training_dataset.get_crossmoda_3d_item(idx) for idx in (55, 81, 63))
+    train_plotset = (training_dataset.get_3d_item(idx) for idx in (55, 81, 63))
     for sample in train_plotset:
         print(f"Sample {sample['dataset_idx']}:")
         display_seg(in_type="single_3D", reduce_dim="W",
@@ -1160,8 +1161,8 @@ def train_DL(run_name, config, training_dataset):
         # Read 2D dataset idxs which are used for training,
         # get their 3D super-ids by 3d dataset length
         # and substract these from all 3D ids to get val_3d_idxs
-        trained_3d_dataset_idxs = {dct['dataset_idx'] \
-             for dct in training_dataset.get_crossmoda_id_dicts() if dct['2d_dataset_idx'] in train_idxs.tolist()}
+        trained_3d_dataset_idxs = {dct['3d_dataset_idx'] \
+             for dct in training_dataset.get_id_dicts() if dct['2d_dataset_idx'] in train_idxs.tolist()}
         val_3d_idxs = set(range(training_dataset.__len__(yield_2d_override=False))) - trained_3d_dataset_idxs
         print("Will run validation with these 3D samples:", val_3d_idxs)
 
@@ -1387,7 +1388,7 @@ def train_DL(run_name, config, training_dataset):
                         val_class_dices = []
 
                         for val_idx in val_3d_idxs:
-                            val_sample = training_dataset.get_crossmoda_3d_item(val_idx)
+                            val_sample = training_dataset.get_3d_item(val_idx)
                             stack_dim = training_dataset.yield_2d_normal_to
                             # Create batch out of single val sample
                             b_val_img = val_sample['image'].unsqueeze(0)
