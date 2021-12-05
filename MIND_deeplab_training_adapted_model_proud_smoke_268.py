@@ -550,6 +550,13 @@ class CrossMoDa_Data(Dataset):
                     # Set data view for crossmoda id like "003rW100"
                     self.label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
 
+        # Delete empty 2D slices (but keep 3d data)
+        for key, label in list(self.label_data_2d.items()):
+            if label.unique().numel() < 2:
+                del self.label_data_2d[key]
+                del self.img_data_2d[key]
+
+
         print("Data import finished.")
         print(f"CrossMoDa loader will yield {'2D' if self.yield_2d_normal_to else '3D'} samples")
 
@@ -872,6 +879,9 @@ if config_dict['dataset'] == 'crossmoda':
         debug=config_dict['debug']
     )
     config_dict['label_tags'] = ['background', 'tumour']
+    print("Nonzero slice ratio: ",
+        sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)
+    )
     # validation_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
     #     domain="validation", state="l4", ensure_labeled_pairs=True)
     # target_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
@@ -1246,7 +1256,7 @@ def train_DL(run_name, config, training_dataset):
             training_dataset.train()
 
             ### Disturb samples ###
-            do_disturb = epx > config.start_disturbing_after_ep
+            do_disturb = epx >= config.start_disturbing_after_ep
             wandb.log({"do_disturb": float(do_disturb)}, step=global_idx)
 
             if do_disturb:
