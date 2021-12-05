@@ -1293,8 +1293,7 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
                     if config.data_parameter_config['data_param_mode'] == str(DataParamMode.ONLY_INSTANCE_PARAMS):
-                        weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
-                        weight = weight/weight.mean()
+                        weight = embedding(b_idxs_dataset).squeeze()
                         dp_logits = logits*weight.view(-1,1,1,1)
                         loss = nn.CrossEntropyLoss()(
                             dp_logits,
