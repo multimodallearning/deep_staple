@@ -1147,9 +1147,9 @@ def train_DL(run_name, config, training_dataset):
     if config.wandb_mode != 'disabled':
         # Log dataset info
         training_dataset.eval()
-        dataset_info = [[smp['dataset_idx'], smp['crossmoda_id'], smp['image_path'], smp['label_path']] \
+        dataset_info = [[smp['dataset_idx'], smp['id'], smp['image_path'], smp['label_path']] \
                         for smp in training_dataset]
-        wandb.log({'datasets/training_dataset':wandb.Table(columns=['dataset_idx', 'crossmoda_id', 'image', 'label'], data=dataset_info)}, step=0)
+        wandb.log({'datasets/training_dataset':wandb.Table(columns=['dataset_idx', 'id', 'image', 'label'], data=dataset_info)}, step=0)
 
     fold_means_no_bg = []
 
