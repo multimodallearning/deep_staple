@@ -677,9 +677,19 @@ class CrossMoDa_Data(Dataset):
     def get_3d_item(self, _3d_dataset_idx):
         return self.__getitem__(_3d_dataset_idx, yield_2d_override=False)
 
-    def get_data(self):
-        img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
-        label_stack = torch.stack(list(self.label_data_3d.values()), dim=0)
+    def get_data(self, yield_2d_override=None):
+        if yield_2d_override == None:
+            # Here getting 2D or 3D data can be overridden
+            yield_2d = True if self.yield_2d_normal_to else False
+        else:
+            yield_2d = yield_2d_override
+
+        if yield_2d:
+            img_stack = torch.stack(list(self.img_data_2d.values()), dim=0)
+            label_stack = torch.stack(list(self.label_data_2d.values()), dim=0)
+        else:
+            img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
+            label_stack = torch.stack(list(self.label_data_3d.values()), dim=0)
 
         return img_stack, label_stack
 
@@ -1235,8 +1245,12 @@ def train_DL(run_name, config, training_dataset):
 
         criterion = nn.CrossEntropyLoss()
         embedding = nn.Embedding(len(training_dataset), 1, sparse=True)
-        # with torch.no_grad():
-        torch.nn.init.constant_(embedding.weight.data, 1)
+        _, all_segs = training_dataset.get_data()
+
+        # Add inverse weighting to instances according to labeled pixels
+        instance_pixel_weight = torch.sqrt(1.0/(torch.stack([torch.bincount(seg.view(-1))[1] for seg in all_segs]).float()))
+        instance_pixel_weight = instance_pixel_weight/instance_pixel_weight.mean()
+        torch.nn.init.constant_(embedding.weight.data, config.data_parameter_config['init_inst_param'])
 
         optimizer_dp = torch.optim.SparseAdam(
             embedding.parameters(), lr=config.data_parameter_config['lr_inst_param'],
@@ -1247,6 +1261,7 @@ def train_DL(run_name, config, training_dataset):
         t0 = time.time()
 
         embedding = embedding.cuda()
+        instance_pixel_weight = instance_pixel_weight.cuda()
         lraspp.cuda()
 
         for epx in range(config.epochs):
@@ -1312,6 +1327,7 @@ def train_DL(run_name, config, training_dataset):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
                         weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
                         weight = weight/weight.mean()
+                        weight = weight*instance_pixel_weight[b_idxs_dataset]
                         loss = (loss*weight).sum()
 
                         print("Embedding std", embedding.weight.data.std().item())
