@@ -223,7 +223,7 @@ def spatial_augment(b_image, b_label,
             # Add an extra *.5 factor to dim strength to make strength fit 3D case
             dim_strength = (torch.tensor([H,W]).float()*bspline_strength*.5).to(b_image.device)
             rand_control_points = dim_strength.view(1,2,1,1) * torch.randn(
-                1, 2, bspline_num_ctl_points, bspline_num_ctl_points
+                B, 2, bspline_num_ctl_points, bspline_num_ctl_points
             ).to(b_image.device)
 
             bspline_disp = bspline(rand_control_points)
@@ -262,7 +262,7 @@ def spatial_augment(b_image, b_label,
             dim_strength = (torch.tensor([D,H,W]).float()*bspline_strength).to(b_image.device)
 
             rand_control_points = dim_strength.view(1,3,1,1,1) * torch.randn(
-                1, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points
+                B, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points
             ).to(b_image.device)
 
             bspline_disp = bspline(rand_control_points)
@@ -734,8 +734,8 @@ class CrossMoDa_Data(Dataset):
         b_image = augmentNoise(b_image, strength=0.05)
         b_image, b_label = spatial_augment(
             b_image, b_label,
-            bspline_num_ctl_points=6, bspline_strength=0.005, bspline_probability=.9,
-            affine_strengh=0.08, affine_probability=.45,
+            bspline_num_ctl_points=6, bspline_strength=0.004, bspline_probability=.95,
+            affine_strengh=0.07, affine_probability=.45,
             pre_interpolation_factor=2., yield_2d=yield_2d)
 
 
@@ -1213,9 +1213,10 @@ def train_DL(run_name, config, training_dataset):
 
         train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
             sampler=train_subsampler, pin_memory=True, drop_last=False,
-            collate_fn=training_dataset.get_efficient_augmentation_collate_fn())
-
+            # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
+        )
         training_dataset.unset_augment_at_collate()
+
 #         val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
 #                                     sampler=val_subsampler, pin_memory=True, drop_last=False)
 
@@ -1459,7 +1460,7 @@ def train_DL(run_name, config, training_dataset):
 
 
 # %%
-config_dict['wandb_mode'] = 'disabled'
+config_dict['wandb_mode'] = 'online'
 config_dict['debug'] = False
 
 run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
