@@ -60,8 +60,22 @@ print(torch.cuda.get_device_name(0))
 
 
 # %%
-def interpolate_sample(b_image, b_label, scale_factor, yield_2d):
+def in_notebook():
+    try:
+        get_ipython().__class__.__name__
+        return True
+    except NameError:
+        return False
+    
+if in_notebook:
+    THIS_SCRIPT_DIR = os.path.abspath('')
+else:    
+    THIS_SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+print(f"Running in: {THIS_SCRIPT_DIR}")
 
+
+# %%
+def interpolate_sample(b_image, b_label, scale_factor, yield_2d):
     if yield_2d:
         scale = [scale_factor]*2
         im_mode = 'bilinear'
@@ -836,6 +850,17 @@ class CrossMoDa_Data(Dataset):
         label = label.long()
 
         return image, label
+    
+
+from contextlib import contextmanager
+
+@contextmanager
+def torch_manual_seeded(seed):
+    saved_state = torch.get_rng_state()
+    torch.manual_seed(seed)
+    yield
+    torch.set_rng_state(saved_state)
+
 
 # %%
 class DotDict(dict):
@@ -847,6 +872,8 @@ class DotDict(dict):
 config_dict = DotDict({
     'num_folds': 3,
     'only_first_fold': True,
+    # 'fold_override': 0,
+    # 'epx_override': 0,
 
     'num_classes': 3,
     'use_mind': True,
@@ -881,12 +908,13 @@ config_dict = DotDict({
         # )
     ),
 
-    'log_every': 1,
+    'save_every': 60,
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "0"))),
+    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "1"))),
     'wandb_mode': os.environ.get('WANDB_MODE', "online"),
+    'wandb_name_override': 'my-name',
 
     'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
@@ -927,17 +955,15 @@ elif config_dict['dataset'] == 'organmnist3d':
     print("Samples: ", len(training_dataset))
 
 # %%
-_, all_labels = training_dataset.get_data()
+_, all_labels = training_dataset.get_data(yield_2d_override=False)
 print(all_labels.shape)
-# D_stack = make_2d_stack_from_3d(all_labels.unsqueeze(1), "D")
-# print(D_stack.shape)
 sum_over_w = torch.sum(all_labels, dim=(0,1,2))
 plt.xlabel("W")
 plt.ylabel("ground truth>0")
 plt.plot(sum_over_w);
 
 # %%
-if config_dict['do_plot'] or True:
+if config_dict['do_plot']:
     # Print bare 2D data
     # print("Displaying 2D bare sample")
     # for img, label in zip(training_dataset.img_data_2d.values(),
@@ -950,13 +976,18 @@ if config_dict['do_plot'] or True:
 
     # Print transformed 2D data
     training_dataset.train()
+    print(training_dataset.disturbed_idxs)
+    training_dataset.set_disturbed_idxs(list(range(0,40,3)))
     print("Displaying 2D training sample")
     for sample in (training_dataset[idx] for idx in range(40)):
         display_seg(in_type="single_2D",
                     img=sample['image'].unsqueeze(0),
                     ground_truth=sample['label'],
+                    seg=sample['modified_label'],
                     crop_to_non_zero_gt=True,
-                    alpha_gt = .1)
+                    crop_to_non_zero_seg=True,
+                    alpha_seg = .2,
+                    alpha_gt = .4)
 
 #     # Print transformed 3D data
 #     training_dataset.train()
@@ -1061,19 +1092,21 @@ def set_module(module, keychain, replacee):
 
 
 # %%
-def save_model(lraspp, optimizer, scaler, _path):
+def save_model(lraspp, optimizer, optimizer_dp, embedding, scaler, _path):
+    _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
+    _path.mkdir(exist_ok=True, parents=True)
+    
+    torch.save(lraspp.state_dict(), _path.joinpath('lraspp.pth'))
+    torch.save(optimizer.state_dict(), _path.joinpath('optimizer.pth'))
+    torch.save(scaler.state_dict(), _path.joinpath('grad_scaler.pth'))
+    torch.save(optimizer_dp.state_dict(), _path.joinpath('optimizer_dp.pth'))
+    torch.save(embedding.state_dict(), _path.joinpath('embedding.pth'))
+    
 
-    torch.save(lraspp.state_dict(), _path + '_lraspp.pth')
-    torch.save(optimizer.state_dict(), _path + '_optimizer.pth')
-    torch.save(scaler.state_dict(), _path + '_grad_scaler.pth')
 
-    # TODO add saving inst/class parameters again
-    # torch.save(inst_parameters, _path + '_inst_parameters.pth')
-    # torch.save(class_parameters, _path + '_class_parameters.pth')
-
-
-
-def get_model(config, dataset_len, _path=None):
+def get_model(config, dataset_len, _path=None, device='cpu'):
+    _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
+    
     if config.use_mind:
         in_channels = 12
     else:
@@ -1086,24 +1119,33 @@ def get_model(config, dataset_len, _path=None):
                torch.nn.Conv2d(in_channels, 16, kernel_size=(3, 3), stride=(2, 2),
                                padding=(1, 1), bias=False)
     )
-
+    
+    lraspp.to(device)
+    
     optimizer = torch.optim.Adam(lraspp.parameters(), lr=config.lr)
 
+    # Add data paramters
+    embedding = nn.Embedding(len(training_dataset), 1, sparse=True).to(device)
+    torch.nn.init.constant_(embedding.weight.data, config.data_parameter_config['init_inst_param'])
 
+    optimizer_dp = torch.optim.SparseAdam(
+        embedding.parameters(), lr=config.data_parameter_config['lr_inst_param'],
+        betas=(0.9, 0.999), eps=1e-08)
 
     scaler = amp.GradScaler()
 
-    if _path and os.path.isfile(_path + '_lraspp.pth'):
-        print(f"Loading lr-aspp model, optimizers and grad scalers from {_path}")
-        # TODO add loading of data parameters
-        lraspp.load_state_dict(torch.load(_path + '_lraspp.pth', map_location='cuda'))
-
-        optimizer.load_state_dict(torch.load(_path + '_optimizer.pth', map_location='cuda'))
-        scaler.load_state_dict(torch.load(_path + '_grad_scaler.pth', map_location='cuda'))
+    if _path and _path.is_dir():
+        print(f"Loading lr-aspp model, optimizers, embedding and grad scalers from {_path}")
+        lraspp.load_state_dict(torch.load(_path.joinpath('lraspp.pth'), map_location=device))
+        optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
+        optimizer_dp.load_state_dict(torch.load(_path.joinpath('optimizer_dp.pth'), map_location=device))
+        embedding.load_state_dict(torch.load(_path.joinpath('embedding.pth'), map_location=device))
+        scaler.load_state_dict(torch.load(_path.joinpath('grad_scaler.pth'), map_location=device))
+        
     else:
-        print("Generating fresh lr-aspp model, optimizer and grad scaler.")
+        print("Generating fresh lr-aspp model, optimizers, embedding and grad scaler.")
 
-    return (lraspp, optimizer, scaler)
+    return (lraspp, optimizer, optimizer_dp, embedding, scaler)
 
 
 # %%
@@ -1152,20 +1194,14 @@ def reset_determinism():
     random.seed(0)
     np.random.seed(0)
     # torch.use_deterministic_algorithms(True)
-    
-from contextlib import contextmanager
-
-@contextmanager
-def torch_manual_seeded(seed):
-    saved_state = torch.get_rng_state()
-    torch.manual_seed(seed)
-    yield
-    torch.set_rng_state(saved_state)
 
 
 
 
 def log_class_dices(log_prefix, log_postfix, class_dices, log_idx):
+    if not class_dices:
+        return
+
     for cls_name in class_dices[0].keys():
         log_path = f"{log_prefix}{cls_name}{log_postfix}"
 
@@ -1185,7 +1221,10 @@ def train_DL(run_name, config, training_dataset):
 
     fold_iter = enumerate(kf.split(training_dataset))
 
-    if config.only_first_fold:
+    if config.get('fold_override', None):
+        selected_fold = config.get('fold_override', 0)
+        fold_iter = list(fold_iter)[selected_fold:selected_fold+1]
+    elif config.only_first_fold:
         fold_iter = list(fold_iter)[0:1]
 
     if config.wandb_mode != 'disabled':
@@ -1265,13 +1304,14 @@ def train_DL(run_name, config, training_dataset):
 #                                     sampler=val_subsampler, pin_memory=True, drop_last=False)
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
-        (lraspp, optimizer, scaler) = get_model(config, len(train_dataloader), _path=None)#f"{config.mdl_save_prefix}_fold{fold_idx}") # TODO start fresh set _path None
+        epx_start = config.get('epx_override', 0)
+        _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
+        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(train_dataloader), _path=_path)
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, T_0=200, T_mult=2, eta_min=config.lr*.1, last_epoch=- 1, verbose=False)
 
         criterion = nn.CrossEntropyLoss()
-        embedding = nn.Embedding(len(training_dataset), 1, sparse=True)
         _, all_segs = training_dataset.get_data()
 
         # Add inverse weighting to instances according to labeled pixels
@@ -1279,9 +1319,6 @@ def train_DL(run_name, config, training_dataset):
         # instance_pixel_weight = instance_pixel_weight/instance_pixel_weight.mean()  TODO removce
         torch.nn.init.constant_(embedding.weight.data, config.data_parameter_config['init_inst_param'])
 
-        optimizer_dp = torch.optim.SparseAdam(
-            embedding.parameters(), lr=config.data_parameter_config['lr_inst_param'],
-            betas=(0.9, 0.999), eps=1e-08)
         scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer_dp, T_0=200, T_mult=2, eta_min=config.data_parameter_config['lr_inst_param']*.1, last_epoch=- 1, verbose=False)
 
@@ -1290,8 +1327,8 @@ def train_DL(run_name, config, training_dataset):
         embedding = embedding.cuda()
         # instance_pixel_weight = instance_pixel_weight.cuda()
         lraspp.cuda()
-
-        for epx in range(config.epochs):
+        
+        for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
 
             lraspp.train()
@@ -1373,7 +1410,6 @@ def train_DL(run_name, config, training_dataset):
                         # weight = weight/instance_pixel_weight[b_idxs_dataset] TODO removce
                         loss = (loss*weight).sum()
 
-                        print("Embedding std", embedding.weight.data.std().item())
                         # Prepare logits for scoring
                         logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
 
@@ -1432,129 +1468,132 @@ def train_DL(run_name, config, training_dataset):
                 #     print(f"Current dilate kernel size is {training_dataset.get_dilate_kernel_size()}.")
 
             ### Logging ###
-            if epx % config.log_every == 0 or (epx+1 == config.epochs):
+           
+            print(f"### Log epoch {epx} @ {time.time()-t0:.2f}s")
+            print("### Training")
+            ### Log wandb data ###
+            # Log the epoch idx per fold - so we can recover the diagram by setting
+            # ref_epoch_idx as x-axis in wandb interface
+            wandb.log({"ref_epoch_idx": epx}, step=global_idx)
 
-                print(f"### Log epoch {epx} @ {time.time()-t0:.2f}s")
-                print("### Training")
-                ### Log wandb data ###
-                # Log the epoch idx per fold - so we can recover the diagram by setting
-                # ref_epoch_idx as x-axis in wandb interface
-                wandb.log({"ref_epoch_idx": epx}, step=global_idx)
+            mean_loss = torch.tensor(epx_losses).mean()
+            wandb.log({f'losses/loss_fold{fold_idx}': mean_loss}, step=global_idx)
 
-                mean_loss = torch.tensor(epx_losses).mean()
-                wandb.log({f'losses/loss_fold{fold_idx}': mean_loss}, step=global_idx)
+            mean_dice = np.nanmean(dices)
+            print(f'dice_mean_wo_bg_fold{fold_idx}', f"{mean_dice*100:.2f}%")
+            wandb.log({f'scores/dice_mean_wo_bg_fold{fold_idx}': mean_dice}, step=global_idx)
 
-                mean_dice = np.nanmean(dices)
-                print(f'dice_mean_wo_bg_fold{fold_idx}', f"{mean_dice*100:.2f}%")
-                wandb.log({f'scores/dice_mean_wo_bg_fold{fold_idx}': mean_dice}, step=global_idx)
+            log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
 
-                log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
+            log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
+            # Log data parameters of disturbed samples
+            if len(training_dataset.disturbed_idxs) > 0:
+                corr_coeff = np.corrcoef(
+                        torch.sigmoid(embedding.weight).cpu().data.squeeze().numpy(),
+                        disturbed_bool_vect.cpu().numpy()
+                )[0,1]
+                wandb.log(
+                    {f'data_parameters/corr_coeff_fold{fold_idx}': corr_coeff},
+                    step=global_idx
+                )
+                print(f'data_parameters/corr_coeff_fold{fold_idx}', f"{corr_coeff:.2f}")
 
-                log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
-                # Log data parameters of disturbed samples
-                if len(training_dataset.disturbed_idxs) > 0:
-                    corr_coeff = np.corrcoef(
-                            torch.sigmoid(embedding.weight).cpu().data.squeeze().numpy(),
-                            disturbed_bool_vect.cpu().numpy()
-                    )[0,1]
-                    wandb.log(
-                        {f'data_parameters/corr_coeff_fold{fold_idx}': corr_coeff},
-                        step=global_idx
-                    )
-                    print(f'data_parameters/corr_coeff_fold{fold_idx}', f"{corr_coeff:.2f}")
+            if epx % config.save_every == 0 or (epx+1 == config.epochs):
+                _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx}"
+                save_model(lraspp, optimizer, optimizer_dp, embedding, scaler, _path)
+                (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(train_dataloader), _path=_path, device='cuda')
 
-                print()
-                print("### Validation")
-                lraspp.eval()
-                training_dataset.eval()
-                # TODO remove saving
-                # save_model(lraspp, inst_parameters, class_parameters,
-                #     optimizer, optimizer_inst_param, optimizer_class_param,
-                #     scaler, f"{config.mdl_save_prefix}_fold{fold_idx}")
+            print()
+            print("### Validation")
+            lraspp.eval()
+            training_dataset.eval()
+            
+            val_dices = []
+            val_class_dices = []
+            
+            with amp.autocast(enabled=True):
+                with torch.no_grad():
 
-                with amp.autocast(enabled=True):
-                    with torch.no_grad():
-                        val_dices = []
-                        val_class_dices = []
+                    for val_idx in val_3d_idxs:
+                        val_sample = training_dataset.get_3d_item(val_idx)
+                        stack_dim = training_dataset.yield_2d_normal_to
+                        # Create batch out of single val sample
+                        b_val_img = val_sample['image'].unsqueeze(0)
+                        b_val_seg = val_sample['label'].unsqueeze(0)
 
-                        for val_idx in val_3d_idxs:
-                            val_sample = training_dataset.get_3d_item(val_idx)
-                            stack_dim = training_dataset.yield_2d_normal_to
-                            # Create batch out of single val sample
-                            b_val_img = val_sample['image'].unsqueeze(0)
-                            b_val_seg = val_sample['label'].unsqueeze(0)
+                        B = b_val_img.shape[0]
 
-                            B = b_val_img.shape[0]
+                        b_val_img = b_val_img.unsqueeze(1).float().cuda()
+                        b_val_seg = b_val_seg.cuda()
+                        b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=stack_dim)
 
-                            b_val_img = b_val_img.unsqueeze(1).float().cuda()
-                            b_val_seg = b_val_seg.cuda()
-                            b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=stack_dim)
+                        if config.use_mind:
+                            b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
 
-                            if config.use_mind:
-                                b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
+                        output_val = lraspp(b_val_img_2d)['out']
 
-                            output_val = lraspp(b_val_img_2d)['out']
+                        # Prepare logits for scoring
+                        # Scoring happens in 3D again - unstack batch tensor again to stack of 3D
+                        val_logits_for_score = output_val.argmax(1)
+                        val_logits_for_score_3d = make_3d_from_2d_stack(
+                            val_logits_for_score.unsqueeze(1), stack_dim, B
+                        ).squeeze(1)
 
-                            # Prepare logits for scoring
-                            # Scoring happens in 3D again - unstack batch tensor again to stack of 3D
-                            val_logits_for_score = output_val.argmax(1)
-                            val_logits_for_score_3d = make_3d_from_2d_stack(
-                                val_logits_for_score.unsqueeze(1), stack_dim, B
-                            ).squeeze(1)
+                        b_val_dice = dice3d(
+                            torch.nn.functional.one_hot(val_logits_for_score_3d, len(config.label_tags)),
+                            torch.nn.functional.one_hot(b_val_seg, len(config.label_tags)),
+                            one_hot_torch_style=True
+                        )
+                        print(b_val_dice)
+                        # Get mean score over batch
+                        val_dices.append(get_batch_dice_over_all(
+                            b_val_dice, exclude_bg=True))
 
-                            b_val_dice = dice3d(
-                                torch.nn.functional.one_hot(val_logits_for_score_3d, len(config.label_tags)),
-                                torch.nn.functional.one_hot(b_val_seg, len(config.label_tags)),
-                                one_hot_torch_style=True
+                        val_class_dices.append(get_batch_dice_per_class(
+                            b_val_dice, config.label_tags, exclude_bg=True))
+
+                        if config.do_plot:
+                            print(f"Validation 3D image label/ground-truth {val_3d_idxs}")
+                            print(get_batch_dice_over_all(
+                            b_val_dice, exclude_bg=False))
+                            # display_all_seg_slices(b_seg.unsqueeze(1), logits_for_score)
+                            display_seg(in_type="single_3D",
+                                reduce_dim="W",
+                                img=val_sample['image'].unsqueeze(0).cpu(),
+                                seg=val_logits_for_score_3d.squeeze(0).cpu(), # CHECK TODO
+                                ground_truth=b_val_seg.squeeze(0).cpu(),
+                                crop_to_non_zero_seg=True,
+                                crop_to_non_zero_gt=True,
+                                alpha_seg=.3,
+                                alpha_gt=.0
                             )
-                            # Get mean score over batch
-                            val_dices.append(get_batch_dice_over_all(
-                                b_val_dice, exclude_bg=True))
-
-                            val_class_dices.append(get_batch_dice_per_class(
-                                b_val_dice, config.label_tags, exclude_bg=True))
-
-                            if config.do_plot:
-                                print(f"Validation 3D image label/ground-truth {val_3d_idxs}")
-                                print(get_batch_dice_over_all(
-                                b_val_dice, exclude_bg=False))
-                                # display_all_seg_slices(b_seg.unsqueeze(1), logits_for_score)
-                                display_seg(in_type="single_3D",
-                                    reduce_dim="W",
-                                    img=val_sample['image'].unsqueeze(0).cpu(),
-                                    seg=val_logits_for_score_3d.squeeze(0).cpu(), # CHECK TODO
-                                    ground_truth=b_val_seg.squeeze(0).cpu(),
-                                    crop_to_non_zero_seg=True,
-                                    crop_to_non_zero_gt=True,
-                                    alpha_seg=.3,
-                                    alpha_gt=.0
-                                )
-                        mean_val_dice = np.nanmean(val_dices)
-                        print(f'val_dice_mean_wo_bg_fold{fold_idx}', f"{mean_val_dice*100:.2f}%")
-                        wandb.log({f'scores/val_dice_mean_wo_bg_fold{fold_idx}': mean_val_dice}, step=global_idx)
-
-                        log_class_dices("scores/val_dice_mean_", f"_fold{fold_idx}", val_class_dices, global_idx)
+                            
+                    mean_val_dice = np.nanmean(val_dices)
+                    print(f'val_dice_mean_wo_bg_fold{fold_idx}', f"{mean_val_dice*100:.2f}%")
+                    wandb.log({f'scores/val_dice_mean_wo_bg_fold{fold_idx}': mean_val_dice}, step=global_idx)
+                    log_class_dices("scores/val_dice_mean_", f"_fold{fold_idx}", val_class_dices, global_idx)
 
                 print()
-                # End of logging
+                # End of training loop
 
             if config.debug:
                 break
 
         # End of fold loop
 
-        lraspp.cpu()
-
-        save_model(lraspp,optimizer, scaler, f"{config.mdl_save_prefix}_fold{fold_idx}") # TODO save data parameter manager
-
 
 # %%
-# config_dict['wandb_mode'] = 'online'
-# config_dict['debug'] = False
+config_dict['wandb_mode'] = 'disabled'
+config_dict['debug'] = False
+# Model loading
+# config_dict['wandb_name_override'] = 'dummy-oDbynkD4q8KBTHU5CRKt4Q'
+# config_dict['fold_override'] = 0
+# config_dict['epx_override'] = 60
 
 run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
+    name = config_dict.get('wandb_name_override', None),
     config=config_dict, settings=wandb.Settings(start_method="thread"),
-    mode=config_dict['wandb_mode']
+    mode=config_dict.get('wandb_mode', 'disabled')
 )
 run_name = run.name
 config = wandb.config
