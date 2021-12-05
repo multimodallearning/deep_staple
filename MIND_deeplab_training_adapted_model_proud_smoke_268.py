@@ -851,11 +851,11 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': "online",
+    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "0"))),
+    'wandb_mode': os.environ.get('WANDB_MODE', "online"),
 
-    'disturbed_percentage': .0,
-    'start_disturbing_after_ep': 1000000,
+    'disturbed_percentage': .3,
+    'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
 })
@@ -1293,15 +1293,20 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
                     if config.data_parameter_config['data_param_mode'] == str(DataParamMode.ONLY_INSTANCE_PARAMS):
-                        weight = embedding(b_idxs_dataset).squeeze()
-                        dp_logits = logits*weight.view(-1,1,1,1)
-                        loss = nn.CrossEntropyLoss()(
-                            dp_logits,
-                            b_seg_modified
-                        )
-                        # print("Embedding std", embedding.weight.data.std())
+                        # weight = embedding(b_idxs_dataset).squeeze()
+                        # dp_logits = logits*weight.view(-1,1,1,1)
+                        # loss = nn.CrossEntropyLoss()(
+                        #     dp_logits,
+                        #     b_seg_modified
+                        # )
+                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
+                        weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
+                        weight = weight/weight.mean()
+                        loss = (loss*weight).sum()
+
+                        print("Embedding std", embedding.weight.data.std().item())
                         # Prepare logits for scoring
-                        logits_for_score = dp_logits.argmax(1)
+                        logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
 
                     else:
                         loss = nn.CrossEntropyLoss()(logits, b_seg_modified)
@@ -1475,8 +1480,8 @@ def train_DL(run_name, config, training_dataset):
 
 
 # %%
-config_dict['wandb_mode'] = 'online'
-config_dict['debug'] = False
+# config_dict['wandb_mode'] = 'online'
+# config_dict['debug'] = False
 
 run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
     config=config_dict, settings=wandb.Settings(start_method="thread"),
