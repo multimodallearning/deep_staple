@@ -1295,16 +1295,19 @@ def train_DL(run_name, config, training_dataset):
                     if config.data_parameter_config['data_param_mode'] == str(DataParamMode.ONLY_INSTANCE_PARAMS):
                         weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
                         weight = weight/weight.mean()
-
-                        loss = nn.CrossEntropyLoss(reduction='none')(
-                            logits,
+                        dp_logits = logits*weight
+                        loss = nn.CrossEntropyLoss()(
+                            dp_logits,
                             b_seg_modified
-                        ).mean((-1,-2))
-                        loss = (loss*weight).sum()
+                        )
                         # print("Embedding std", embedding.weight.data.std())
+                        # Prepare logits for scoring
+                        logits_for_score = dp_logits.argmax(1)
 
                     else:
                         loss = nn.CrossEntropyLoss()(logits, b_seg_modified)
+                        # Prepare logits for scoring
+                        logits_for_score = logits.argmax(1)
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -1315,9 +1318,6 @@ def train_DL(run_name, config, training_dataset):
                 scaler.update()
 
                 epx_losses.append(loss.item())
-
-                # Prepare logits for scoring
-                logits_for_score = logits.argmax(1) # TODO Check logits ok or dp_logits instead?
 
                 # Calculate dice score
                 b_dice = dice2d(
