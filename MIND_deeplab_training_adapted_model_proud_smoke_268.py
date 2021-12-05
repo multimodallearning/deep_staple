@@ -1231,6 +1231,8 @@ def train_DL(run_name, config, training_dataset):
         optimizer_dp = torch.optim.SparseAdam(
             embedding.parameters(), lr=config.data_parameter_config['lr_inst_param'],
             betas=(0.9, 0.999), eps=1e-08)
+        scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer_dp, T_0=200, T_mult=2, eta_min=config.data_parameter_config['lr_inst_param']*.1, last_epoch=- 1, verbose=False)
 
         t0 = time.time()
 
@@ -1349,6 +1351,7 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
+                    scheduler_dp.step()
 
                 # if scheduler.T_cur == 0:
                 #     sz = training_dataset.get_dilate_kernel_size()
