@@ -652,12 +652,28 @@ class CrossMoDa_Data(Dataset):
             modified_label = label.detach().clone()
 
             if self.disturbed_idxs != None and dataset_idx in self.disturbed_idxs:
+                ROLL_FACT = 10
                 if yield_2d:
                     modified_label = \
-                        torch.flip(modified_label, dims=(-2,-1))
+                        torch.roll(
+                            modified_label.transpose(-2,-1),
+                            (
+                                int(torch.randn(1)*ROLL_FACT),
+                                int(torch.randn(1)*ROLL_FACT)
+                            ),(-2,-1)
+                        )
+                        # torch.flip(modified_label, dims=(-2,-1))
                 else:
                     modified_label = \
-                        torch.flip(modified_label, dims=(-3,-2,-1))
+                        torch.roll(
+                            modified_label.permute(1,2,0),
+                            (
+                                int(torch.randn(1)*ROLL_FACT),
+                                int(torch.randn(1)*ROLL_FACT),
+                                int(torch.randn(1)*ROLL_FACT)
+                            ),(-3,-2,-1)
+                        )
+                        # torch.flip(modified_label, dims=(-3,-2,-1))
 
         if yield_2d:
             assert image.dim() == label.dim() == 2
@@ -1248,8 +1264,8 @@ def train_DL(run_name, config, training_dataset):
         _, all_segs = training_dataset.get_data()
 
         # Add inverse weighting to instances according to labeled pixels
-        instance_pixel_weight = torch.sqrt(1.0/(torch.stack([torch.bincount(seg.view(-1))[1] for seg in all_segs]).float()))
-        instance_pixel_weight = instance_pixel_weight/instance_pixel_weight.mean()
+        # instance_pixel_weight = torch.sqrt(1.0/(torch.stack([torch.bincount(seg.view(-1))[1] for seg in all_segs]).float()))  TODO removce
+        # instance_pixel_weight = instance_pixel_weight/instance_pixel_weight.mean()  TODO removce
         torch.nn.init.constant_(embedding.weight.data, config.data_parameter_config['init_inst_param'])
 
         optimizer_dp = torch.optim.SparseAdam(
@@ -1261,7 +1277,7 @@ def train_DL(run_name, config, training_dataset):
         t0 = time.time()
 
         embedding = embedding.cuda()
-        instance_pixel_weight = instance_pixel_weight.cuda()
+        # instance_pixel_weight = instance_pixel_weight.cuda()
         lraspp.cuda()
 
         for epx in range(config.epochs):
@@ -1327,7 +1343,7 @@ def train_DL(run_name, config, training_dataset):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
                         weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
                         weight = weight/weight.mean()
-                        weight = weight/instance_pixel_weight[b_idxs_dataset]
+                        # weight = weight/instance_pixel_weight[b_idxs_dataset] TODO removce
                         loss = (loss*weight).sum()
 
                         print("Embedding std", embedding.weight.data.std().item())
