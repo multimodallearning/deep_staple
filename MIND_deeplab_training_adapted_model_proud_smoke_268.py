@@ -39,6 +39,8 @@ from mdl_seg_class.metrics import dice3d, dice2d
 from mdl_seg_class.visualization import display_seg
 from curriculum_deeplab.mindssc import mindssc
 
+from pathlib import Path
+
 import wandb
 import random
 import glob
@@ -68,11 +70,14 @@ def interpolate_sample(b_image, b_label, scale_factor, yield_2d):
         im_mode = 'trilinear'
 
     b_image = F.interpolate(
-        b_image.unsqueeze(1), scale_factor=scale, mode=im_mode, align_corners=True
+        b_image.unsqueeze(1), scale_factor=scale, mode=im_mode, align_corners=True,
+        recompute_scale_factor=False
     )
 
     b_label = F.interpolate(
-        b_label.unsqueeze(1).float(), scale_factor=scale, mode='nearest').long()
+        b_label.unsqueeze(1).float(), scale_factor=scale, mode='nearest',
+        recompute_scale_factor=False
+    ).long()
 
     return b_image.squeeze(1), b_label.squeeze(1)
 
@@ -177,13 +182,23 @@ def make_3d_from_2d_stack(b_input, stack_dim, orig_stack_size):
 
 
 # %%
-def augmentBspline(b_image, b_label, num_ctl_points=7, strength=0.05, yield_2d=False):
+def spatial_augment(b_image, b_label,
+    bspline_num_ctl_points=6, bspline_strength=0.005, bspline_probability=.9,
+    affine_strengh=0.08, affine_probability=.45,
+    pre_interpolation_factor=None,
+    yield_2d=False):
     """
     2D/3D b-spline augmentation on image and segmentation mini-batch on GPU.
     :input: b_image batch (torch.cuda.FloatTensor), b_label batch (torch.cuda.LongTensor)
     :return: augmented Bx(D)xHxW image batch (torch.cuda.FloatTensor),
     augmented Bx(D)xHxW seg batch (torch.cuda.LongTensor)
     """
+
+    do_bspline = (np.random.rand() < bspline_probability)
+    do_affine = (np.random.rand() < affine_probability)
+
+    if pre_interpolation_factor:
+        b_image, b_label = interpolate_sample(b_image, b_label, pre_interpolation_factor, yield_2d)
 
     KERNEL_SIZE = 3
 
@@ -193,102 +208,96 @@ def augmentBspline(b_image, b_label, num_ctl_points=7, strength=0.05, yield_2d=F
             f"label should be BxHxW but are {b_image.shape} and {b_label.shape}"
         B,H,W = b_image.shape
 
-        bspline = torch.nn.Sequential(
-            nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-            nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-            nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
-        )
-        # Add an extra *.5 factor to dim strength to make strength fit 3D case
-        dim_strength = (torch.tensor([H,W]).float()*strength*.5).to(b_image.device)
-        rand_control_points = dim_strength.view(1,2,1,1) * torch.randn(
-            1, 2, num_ctl_points, num_ctl_points
-        ).to(b_image.device)
-
-        bspline_disp = bspline(rand_control_points)
-        bspline_disp = torch.nn.functional.interpolate(
-            bspline_disp, size=(H,W), mode='bilinear', align_corners=True
-        ).permute(0,2,3,1)
-
         identity = torch.eye(2,3).expand(B,2,3).to(b_image.device)
-
         id_grid = F.affine_grid(identity, torch.Size((B,2,H,W)),
             align_corners=False)
 
+        grid = id_grid
+
+        if do_bspline:
+            bspline = torch.nn.Sequential(
+                nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
+            ).to(b_image.device)
+            # Add an extra *.5 factor to dim strength to make strength fit 3D case
+            dim_strength = (torch.tensor([H,W]).float()*bspline_strength*.5).to(b_image.device)
+            rand_control_points = dim_strength.view(1,2,1,1) * torch.randn(
+                1, 2, bspline_num_ctl_points, bspline_num_ctl_points
+            ).to(b_image.device)
+
+            bspline_disp = bspline(rand_control_points)
+            bspline_disp = torch.nn.functional.interpolate(
+                bspline_disp, size=(H,W), mode='bilinear', align_corners=True
+            ).permute(0,2,3,1)
+
+            grid += bspline_disp
+
+        if do_affine:
+            affine_matrix = (torch.eye(2,3).unsqueeze(0) + torch.randn(B,2,3) \
+                            * affine_strengh).to(b_image.device)
+
+            affine_disp = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
+                                    align_corners=False)
+            grid += affine_disp
+
     else:
         assert b_image.dim() == b_label.dim() == 4, \
             f"Augmenting 3D. Input batch of image and " \
             f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
         B,D,H,W = b_image.shape
 
-        bspline = torch.nn.Sequential(
-            nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-            nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-            nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
-        )
-        dim_strength = (torch.tensor([D,H,W]).float()*strength).to(b_image.device)
-        rand_control_points = dim_strength.view(1,3,1,1,1) * torch.randn(
-            1, 3, num_ctl_points, num_ctl_points, num_ctl_points
-        ).to(b_image.device)
-
-        bspline_disp = bspline(rand_control_points)
-
-        bspline_disp = torch.nn.functional.interpolate(
-            bspline_disp, size=(D,H,W), mode='trilinear', align_corners=True
-        ).permute(0,2,3,4,1)
-
         identity = torch.eye(3,4).expand(B,3,4).to(b_image.device)
-
         id_grid = F.affine_grid(identity, torch.Size((B,3,D,H,W)),
             align_corners=False)
 
+        grid = id_grid
+
+        if do_bspline:
+            bspline = torch.nn.Sequential(
+                nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
+            ).to(b_image.device)
+            dim_strength = (torch.tensor([D,H,W]).float()*bspline_strength).to(b_image.device)
+
+            rand_control_points = dim_strength.view(1,3,1,1,1) * torch.randn(
+                1, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points
+            ).to(b_image.device)
+
+            bspline_disp = bspline(rand_control_points)
+
+            bspline_disp = torch.nn.functional.interpolate(
+                bspline_disp, size=(D,H,W), mode='trilinear', align_corners=True
+            ).permute(0,2,3,4,1)
+
+            grid += bspline_disp
+
+        if do_affine:
+            affine_matrix = (torch.eye(3,4).unsqueeze(0) + torch.randn(B,3,4) \
+                    * affine_strengh).to(b_image.device)
+
+            affine_disp = F.affine_grid(affine_matrix,torch.Size((B,1,D,H,W)),
+                                    align_corners=False)
+
+            grid += affine_disp
+
     b_image_out = F.grid_sample(
-        b_image.unsqueeze(1).float(), id_grid + bspline_disp,
+        b_image.unsqueeze(1).float(), grid,
         padding_mode='border', align_corners=False)
     b_label_out = F.grid_sample(
-        b_label.unsqueeze(1).float(), id_grid + bspline_disp,
+        b_label.unsqueeze(1).float(), grid,
         mode='nearest', align_corners=False)
 
-    return b_image_out.squeeze(1), b_label_out.squeeze(1).long()
+    b_image_out, b_label_out = b_image_out.squeeze(1), b_label_out.squeeze(1).long()
 
+    if pre_interpolation_factor:
+        b_image_out, b_label_out = interpolate_sample(
+            b_image_out, b_label_out,
+            1/pre_interpolation_factor, yield_2d
+        )
 
-
-def augmentAffine(b_image, b_label, strength=0.05, yield_2d=False):
-    """
-    2D/3D affine augmentation on image and segmentation mini-batch on GPU.
-    (affine transf. is centered: trilinear interpolation and zero-padding used for sampling)
-    :input: b_image batch (torch.cuda.FloatTensor), b_label batch (torch.cuda.LongTensor)
-    :return: augmented Bx(D)xHxW image batch (torch.cuda.FloatTensor),
-    augmented Bx(D)xHxW seg batch (torch.cuda.LongTensor)
-    """
-    if yield_2d:
-        assert b_image.dim() == b_label.dim() == 3, \
-            f"Augmenting 2D. Input batch of image and " \
-            f"label should be BxHxW but are {b_image.shape} and {b_label.shape}"
-        B,H,W = b_image.shape
-
-        affine_matrix = (torch.eye(2,3).unsqueeze(0) + torch.randn(B,2,3) \
-                         * strength).to(b_image.device)
-
-        meshgrid = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
-                                 align_corners=False)
-    else:
-        assert b_image.dim() == b_label.dim() == 4, \
-            f"Augmenting 3D. Input batch of image and " \
-            f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
-        B,D,H,W = b_image.shape
-
-        affine_matrix = (torch.eye(3,4).unsqueeze(0) + torch.randn(B,3,4) \
-                         * strength).to(b_image.device)
-
-        meshgrid = F.affine_grid(affine_matrix,torch.Size((B,1,D,H,W)),
-                                 align_corners=False)
-
-    b_image_out = F.grid_sample(
-        b_image.unsqueeze(1).float(), meshgrid, padding_mode='border', align_corners=False)
-    b_label_out = F.grid_sample(
-        b_label.unsqueeze(1).float(), meshgrid, mode='nearest', align_corners=False)
-
-    return b_image_out.squeeze(1), b_label_out.squeeze(1).long()
+    return b_image_out, b_label_out
 
 
 
@@ -297,7 +306,6 @@ def augmentNoise(b_image, strength=0.05):
 
 
 # %%
-from pathlib import Path
 
 class CrossMoDa_Data(Dataset):
     def __init__(self,
@@ -620,11 +628,11 @@ class CrossMoDa_Data(Dataset):
             # disturbance
 
             if not self.augment_at_collate:
-                b_image = image.unsqueeze(0)
-                b_label = label.unsqueeze(0)
-                b_image, b_label = self.augment_tio(b_image, b_label, yield_2d)
-                image = b_image.squeeze(0)
-                label = b_label.squeeze(0)
+                b_image = image.unsqueeze(0).cuda()
+                b_label = label.unsqueeze(0).cuda()
+                b_image, b_label = self.augment(b_image, b_label, yield_2d)
+                image = b_image.squeeze(0).cpu()
+                label = b_label.squeeze(0).cpu()
 
             # Dilate small cochlea segmentation
             # COCHLEA_CLASS_IDX = 2
@@ -722,22 +730,17 @@ class CrossMoDa_Data(Dataset):
                 f"Augmenting 3D. Input batch of image and " \
                 f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
 
-        spatial_aug_selector = np.random.rand()
-
-        b_image, b_label = interpolate_sample(b_image, b_label, 2., yield_2d)
-        if spatial_aug_selector < .4:
-            b_image, b_label = augmentAffine(
-                b_image, b_label, strength=0.05, yield_2d=yield_2d)
-
-        elif spatial_aug_selector <.8:
-            b_image, b_label = augmentBspline(
-                b_image, b_label, num_ctl_points=7, strength=0.005, yield_2d=yield_2d)
-        else:
-            pass
-        b_image, b_label = interpolate_sample(b_image, b_label, .5, yield_2d)
-
         b_image = augmentNoise(b_image, strength=0.05)
+        b_image, b_label = spatial_augment(
+            b_image, b_label,
+            bspline_num_ctl_points=6, bspline_strength=0.005, bspline_probability=.9,
+            affine_strengh=0.08, affine_probability=.45,
+            pre_interpolation_factor=2., yield_2d=yield_2d)
+
+
         b_label = b_label.long()
+
+        return b_image, b_label
 
     def augment_tio(self, image, label, yield_2d):
         # Prepare dims for torchio: All transformed
@@ -823,7 +826,7 @@ config_dict = DotDict({
     'yield_2d_normal_to': "W",
 
     'lr': 0.0005,
-    'use_cosine_annealing': False,
+    'use_cosine_annealing': True,
 
     # Data parameter config
     # 'data_param_optim_momentum': .5,
@@ -1358,7 +1361,7 @@ def train_DL(run_name, config, training_dataset):
 
 
                 # Log data parameters of disturbed samples
-                if training_dataset.disturbed_idxs.nelement() > 0:
+                if len(training_dataset.disturbed_idxs) > 0:
                     corr_coeff = np.corrcoef(
                             torch.sigmoid(embedding.weight).cpu().data.squeeze().numpy(),
                             disturbed_bool_vect.cpu().numpy()
