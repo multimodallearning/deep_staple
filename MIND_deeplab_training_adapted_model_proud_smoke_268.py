@@ -1327,7 +1327,7 @@ def train_DL(run_name, config, training_dataset):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
                         weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
                         weight = weight/weight.mean()
-                        weight = weight*instance_pixel_weight[b_idxs_dataset]
+                        weight = weight/instance_pixel_weight[b_idxs_dataset]
                         loss = (loss*weight).sum()
 
                         print("Embedding std", embedding.weight.data.std().item())
