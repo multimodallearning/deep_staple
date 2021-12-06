@@ -36,7 +36,7 @@ from torch.utils.checkpoint import checkpoint
 from sklearn.model_selection import KFold
 
 from mdl_seg_class.metrics import dice3d, dice2d
-from mdl_seg_class.visualization import display_seg
+from mdl_seg_class.visualization import visualize_seg
 from curriculum_deeplab.mindssc import mindssc
 
 from pathlib import Path
@@ -66,10 +66,10 @@ def in_notebook():
         return True
     except NameError:
         return False
-    
+
 if in_notebook:
     THIS_SCRIPT_DIR = os.path.abspath('')
-else:    
+else:
     THIS_SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 print(f"Running in: {THIS_SCRIPT_DIR}")
 
@@ -850,7 +850,7 @@ class CrossMoDa_Data(Dataset):
         label = label.long()
 
         return image, label
-    
+
 
 from contextlib import contextmanager
 
@@ -875,9 +875,8 @@ config_dict = DotDict({
     # 'fold_override': 0,
     # 'epx_override': 0,
 
-    'num_classes': 3,
     'use_mind': True,
-    'epochs': 120,
+    'epochs': 60,
 
     'batch_size': 64,
     'val_batch_size': 1,
@@ -916,8 +915,8 @@ config_dict = DotDict({
     'wandb_mode': os.environ.get('WANDB_MODE', "online"),
     # 'wandb_name_override': 'my-name',
 
-    'disturbed_percentage': .0,
-    'start_disturbing_after_ep': 100000,
+    'disturbed_percentage': .3,
+    'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
 })
@@ -963,7 +962,7 @@ plt.ylabel("ground truth>0")
 plt.plot(sum_over_w);
 
 # %%
-if config_dict['do_plot']:
+if config_dict['do_plot'] or True:
     # Print bare 2D data
     # print("Displaying 2D bare sample")
     # for img, label in zip(training_dataset.img_data_2d.values(),
@@ -977,29 +976,30 @@ if config_dict['do_plot']:
     # Print transformed 2D data
     training_dataset.train()
     print(training_dataset.disturbed_idxs)
-    training_dataset.set_disturbed_idxs(list(range(0,40,3)))
+    training_dataset.set_disturbed_idxs(list(range(0,20,3)))
     print("Displaying 2D training sample")
-    for sample in (training_dataset[idx] for idx in range(40)):
-        display_seg(in_type="single_2D",
+    for sample in (training_dataset[idx] for idx in range(20)):
+        visualize_seg(in_type="single_2D",
                     img=sample['image'].unsqueeze(0),
                     ground_truth=sample['label'],
                     seg=sample['modified_label'],
                     crop_to_non_zero_gt=True,
                     crop_to_non_zero_seg=True,
                     alpha_seg = .2,
-                    alpha_gt = .4)
+                    alpha_gt = .4,
+        )
 
-#     # Print transformed 3D data
-#     training_dataset.train()
-#     print("Displaying 3D training sample")
-#     leng = 1# training_dataset.__len__(yield_2d_override=False)
-#     for sample in (training_dataset.get_3d_item(idx) for idx in range(leng)):
-#         # training_dataset.set_dilate_kernel_size(1)
-#         display_seg(in_type="single_3D", reduce_dim="W",
-#                     img=sample['image'].unsqueeze(0),
-#                     ground_truth=sample['label'],
-#                     crop_to_non_zero_gt=True,
-#                     alpha_gt = .3)
+    # Print transformed 3D data
+    # training_dataset.train()
+    # print("Displaying 3D training sample")
+    # leng = 1# training_dataset.__len__(yield_2d_override=False)
+    # for sample in (training_dataset.get_3d_item(idx) for idx in range(leng)):
+    #     # training_dataset.set_dilate_kernel_size(1)
+    #     visualize_seg(in_type="single_3D", reduce_dim="W",
+    #                 img=sample['image'].unsqueeze(0),
+    #                 ground_truth=sample['label'],
+    #                 crop_to_non_zero_gt=True,
+    #                 alpha_gt = .3)
 
 #         # training_dataset.set_dilate_kernel_size(7)
 #         display_seg(in_type="single_3D", reduce_dim="W",
@@ -1095,18 +1095,18 @@ def set_module(module, keychain, replacee):
 def save_model(lraspp, optimizer, optimizer_dp, embedding, scaler, _path):
     _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
     _path.mkdir(exist_ok=True, parents=True)
-    
+
     torch.save(lraspp.state_dict(), _path.joinpath('lraspp.pth'))
     torch.save(optimizer.state_dict(), _path.joinpath('optimizer.pth'))
     torch.save(scaler.state_dict(), _path.joinpath('grad_scaler.pth'))
     torch.save(optimizer_dp.state_dict(), _path.joinpath('optimizer_dp.pth'))
     torch.save(embedding.state_dict(), _path.joinpath('embedding.pth'))
-    
+
 
 
 def get_model(config, dataset_len, _path=None, device='cpu'):
     _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
-    
+
     if config.use_mind:
         in_channels = 12
     else:
@@ -1119,9 +1119,9 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
                torch.nn.Conv2d(in_channels, 16, kernel_size=(3, 3), stride=(2, 2),
                                padding=(1, 1), bias=False)
     )
-    
+
     lraspp.to(device)
-    
+
     optimizer = torch.optim.Adam(lraspp.parameters(), lr=config.lr)
 
     # Add data paramters
@@ -1141,7 +1141,7 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
         optimizer_dp.load_state_dict(torch.load(_path.joinpath('optimizer_dp.pth'), map_location=device))
         embedding.load_state_dict(torch.load(_path.joinpath('embedding.pth'), map_location=device))
         scaler.load_state_dict(torch.load(_path.joinpath('grad_scaler.pth'), map_location=device))
-        
+
     else:
         print("Generating fresh lr-aspp model, optimizers, embedding and grad scaler.")
 
@@ -1327,7 +1327,7 @@ def train_DL(run_name, config, training_dataset):
         embedding = embedding.cuda()
         # instance_pixel_weight = instance_pixel_weight.cuda()
         lraspp.cuda()
-        
+
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
 
@@ -1468,7 +1468,7 @@ def train_DL(run_name, config, training_dataset):
                 #     print(f"Current dilate kernel size is {training_dataset.get_dilate_kernel_size()}.")
 
             ### Logging ###
-           
+
             print(f"### Log epoch {epx} @ {time.time()-t0:.2f}s")
             print("### Training")
             ### Log wandb data ###
@@ -1507,10 +1507,10 @@ def train_DL(run_name, config, training_dataset):
             print("### Validation")
             lraspp.eval()
             training_dataset.eval()
-            
+
             val_dices = []
             val_class_dices = []
-            
+
             with amp.autocast(enabled=True):
                 with torch.no_grad():
 
@@ -1567,7 +1567,7 @@ def train_DL(run_name, config, training_dataset):
                                 alpha_seg=.3,
                                 alpha_gt=.0
                             )
-                            
+
                     mean_val_dice = np.nanmean(val_dices)
                     print(f'val_dice_mean_wo_bg_fold{fold_idx}', f"{mean_val_dice*100:.2f}%")
                     wandb.log({f'scores/val_dice_mean_wo_bg_fold{fold_idx}': mean_val_dice}, step=global_idx)
@@ -1579,12 +1579,45 @@ def train_DL(run_name, config, training_dataset):
             if config.debug:
                 break
 
+        if len(training_dataset.disturbed_idxs) > 0 and config.data_parameter_config['data_param_mode'] == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+            print("Writing out sample and weight image.")
+            training_dataset.train()
+            data = ((weight,
+                 disturb_flg,
+                 sample['id'],
+                 sample['dataset_idx'],
+                 sample['image'],
+                 sample['label'],
+                 sample['modified_label']) for weight, disturb_flg, sample in zip(embedding.weight, disturbed_bool_vect, training_dataset)
+            )
+
+            # Here we pack dataset_idx, instance_parameter, disturb_flag, 2d_img, 2d_label, 2d_modified_label
+            samples_sorted = sorted(data)
+            instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels = zip(*samples_sorted)
+
+            # overlay text example: d_idx=0, dp_i=1.00, dist? False
+            overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f} d?{int(disturb_flg)}" \
+                for d_id, instance_p, disturb_flg in zip(d_ids, instance_parameters, disturb_flags)]
+            seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_data_parameter_weighted_samples.png")
+            seg_viz_out_path.parent.mkdir(parents=True, exist_ok=True)
+            visualize_seg(in_type="batch_2D",
+                        img=torch.stack(_2d_imgs).unsqueeze(1),
+                        seg=torch.stack(_2d_modified_labels),
+                        ground_truth=torch.stack(_2d_labels),
+                        crop_to_non_zero_gt=False,
+                        crop_to_non_zero_seg=False,
+                        alpha_seg = .2,
+                        alpha_gt = .4,
+                        n_per_row=70,
+                        overlay_text=overlay_text_list,
+                        file_path=seg_viz_out_path,
+            )
         # End of fold loop
 
 
 # %%
 # config_dict['wandb_mode'] = 'disabled'
-# config_dict['debug'] = False
+# config_dict['debug'] = True
 # Model loading
 # config_dict['wandb_name_override'] = 'dummy-oDbynkD4q8KBTHU5CRKt4Q'
 # config_dict['fold_override'] = 0
