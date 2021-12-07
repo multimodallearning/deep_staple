@@ -327,8 +327,9 @@ class CrossMoDa_Data(Dataset):
         ensure_labeled_pairs=True, use_additional_data=False, resample=True,
         size:tuple=(96,96,60), normalize:bool=True,
         max_load_num=None, crop_w_dim_range=None,
-        disturbed_idxs=None, yield_2d_normal_to=None, flip_r_samples=True,
-        dilate_kernel_sz=3,
+        disturbed_idxs=None, disturbance_mode=None, disturbance_strength=1.0,
+        yield_2d_normal_to=None, flip_r_samples=True,
+        dilate_kernel_sz=1,
         debug=False
     ):
 
@@ -383,6 +384,8 @@ class CrossMoDa_Data(Dataset):
         self.do_train = False
         self.augment_at_collate = False
         self.dilate_kernel_sz = dilate_kernel_sz
+        self.disturbance_mode = disturbance_mode
+        self.disturbance_strength = disturbance_strength
 
         #define finished preprocessing states here with subpath and default size
         states = {
@@ -667,28 +670,39 @@ class CrossMoDa_Data(Dataset):
 
             if self.disturbed_idxs != None and dataset_idx in self.disturbed_idxs:
                 with torch_manual_seeded(dataset_idx):
-                    ROLL_FACT = 10
-                    if yield_2d:
-                        modified_label = \
-                            torch.roll(
-                                modified_label.transpose(-2,-1),
-                                (
-                                    int(torch.randn(1)*ROLL_FACT),
-                                    int(torch.randn(1)*ROLL_FACT)
-                                ),(-2,-1)
-                            )
-                            # torch.flip(modified_label, dims=(-2,-1))
+                    if str(self.disturbance_mode)==str(LabelDisturbanceMode.FLIP_ROLL):
+                        roll_strength = 10*self.disturbance_strength
+                        if yield_2d:
+                            modified_label = \
+                                torch.roll(
+                                    modified_label.transpose(-2,-1),
+                                    (
+                                        int(torch.randn(1)*roll_strength),
+                                        int(torch.randn(1)*roll_strength)
+                                    ),(-2,-1)
+                                )
+                                # torch.flip(modified_label, dims=(-2,-1))
+                        else:
+                            modified_label = \
+                                torch.roll(
+                                    modified_label.permute(1,2,0),
+                                    (
+                                        int(torch.randn(1)*roll_strength),
+                                        int(torch.randn(1)*roll_strength),
+                                        int(torch.randn(1)*roll_strength)
+                                    ),(-3,-2,-1)
+                                )
+                    elif str(self.disturbance_mode)==str(LabelDisturbanceMode.AFFINE):
+                        # Only warp label. TODO: Add option for empty b_image in augment() to increase performance
+                        _, modified_label = augment(b_image, b_label, yield_2d,
+                            bspline_num_ctl_points=6, bspline_strength=0.004*self.augment_strength, bspline_probability=1.,
+                            affine_strengh=0.15*self.augment_strength, affine_probability=1.)
+
+                    elif self.disturbance_mode == None:
+                        pass
                     else:
-                        modified_label = \
-                            torch.roll(
-                                modified_label.permute(1,2,0),
-                                (
-                                    int(torch.randn(1)*ROLL_FACT),
-                                    int(torch.randn(1)*ROLL_FACT),
-                                    int(torch.randn(1)*ROLL_FACT)
-                                ),(-3,-2,-1)
-                            )
-                            # torch.flip(modified_label, dims=(-3,-2,-1))
+                        raise ValueError(f"Disturbance mode {self.disturbance_mode} is not implemented.")
+
 
         if yield_2d:
             assert image.dim() == label.dim() == 2
@@ -769,7 +783,12 @@ class CrossMoDa_Data(Dataset):
 
         return collate_closure
 
-    def augment(self, b_image, b_label, yield_2d):
+    def augment(self, b_image, b_label, yield_2d,
+        noise_strength=0.05,
+        bspline_num_ctl_points=6, bspline_strength=0.004, bspline_probability=.95,
+        affine_strengh=0.07, affine_probability=.45,
+        pre_interpolation_factor=2.):
+
         if yield_2d:
             assert b_image.dim() == b_label.dim() == 3, \
                 f"Augmenting 2D. Input batch of image and " \
@@ -779,13 +798,12 @@ class CrossMoDa_Data(Dataset):
                 f"Augmenting 3D. Input batch of image and " \
                 f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
 
-        b_image = augmentNoise(b_image, strength=0.05)
+        b_image = augmentNoise(b_image, strength=noise_strength)
         b_image, b_label = spatial_augment(
             b_image, b_label,
-            bspline_num_ctl_points=6, bspline_strength=0.004, bspline_probability=.95,
-            affine_strengh=0.07, affine_probability=.45,
+            bspline_num_ctl_points=bspline_num_ctl_points, bspline_strength=bspline_strength, bspline_probability=bspline_probability,
+            affine_strengh=affine_strengh, affine_probability=affine_probability,
             pre_interpolation_factor=2., yield_2d=yield_2d)
-
 
         b_label = b_label.long()
 
@@ -863,6 +881,12 @@ def torch_manual_seeded(seed):
 
 
 # %%
+
+from enum import Enum, auto
+class LabelDisturbanceMode(Enum):
+    FLIP_ROLL = auto()
+    AFFINE = auto()
+
 class DotDict(dict):
     """dot.notation access to dictionary attributes"""
     __getattr__ = dict.get
@@ -915,6 +939,8 @@ config_dict = DotDict({
     'wandb_mode': os.environ.get('WANDB_MODE', "online"),
     # 'wandb_name_override': 'my-name',
 
+    'disturbance_mode': LabelDisturbanceMode.FLIP_ROLL,
+    'disturbance_strenth': 1.0,
     'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
@@ -929,6 +955,7 @@ if config_dict['dataset'] == 'crossmoda':
         max_load_num=config_dict['train_set_max_len'],
         crop_w_dim_range=config_dict['crop_w_dim_range'],
         yield_2d_normal_to=config_dict['yield_2d_normal_to'],
+        disturbed_idxs=None, disturbance_mode=config_dict['disturbance_mode'], disturbance_strength=config_dict['disturbance_strength'],
         dilate_kernel_sz=config_dict['start_dilate_kernel_sz'],
         debug=config_dict['debug']
     )
@@ -1645,115 +1672,115 @@ wandb.finish()
 
 
 # %%
-def inference_DL(run_name, config, inf_dataset):
+# def inference_DL(run_name, config, inf_dataset):
 
-    score_dicts = []
+#     score_dicts = []
 
-    fold_iter = range(config.num_folds)
-    if config_dict['only_first_fold']:
-        fold_iter = fold_iter[0:1]
+#     fold_iter = range(config.num_folds)
+#     if config_dict['only_first_fold']:
+#         fold_iter = fold_iter[0:1]
 
-    for fold_idx in fold_iter:
-        lraspp, *_ = load_model(f"{config.mdl_save_prefix}_fold{fold_idx}", config, len(validation_dataset))
+#     for fold_idx in fold_iter:
+#         lraspp, *_ = load_model(f"{config.mdl_save_prefix}_fold{fold_idx}", config, len(validation_dataset))
 
-        lraspp.eval()
-        inf_dataset.eval()
-        stack_dim = config.yield_2d_normal_to
+#         lraspp.eval()
+#         inf_dataset.eval()
+#         stack_dim = config.yield_2d_normal_to
 
-        inf_dices = []
-        inf_dices_tumour = []
-        inf_dices_cochlea = []
+#         inf_dices = []
+#         inf_dices_tumour = []
+#         inf_dices_cochlea = []
 
-        for inf_sample in inf_dataset:
-            global_idx = get_global_idx(fold_idx, sample_idx, config.epochs)
-            crossmoda_id = sample['crossmoda_id']
-            with amp.autocast(enabled=True):
-                with torch.no_grad():
+#         for inf_sample in inf_dataset:
+#             global_idx = get_global_idx(fold_idx, sample_idx, config.epochs)
+#             crossmoda_id = sample['crossmoda_id']
+#             with amp.autocast(enabled=True):
+#                 with torch.no_grad():
 
-                    # Create batch out of single val sample
-                    b_inf_img = inf_sample['image'].unsqueeze(0)
-                    b_inf_seg = inf_sample['label'].unsqueeze(0)
+#                     # Create batch out of single val sample
+#                     b_inf_img = inf_sample['image'].unsqueeze(0)
+#                     b_inf_seg = inf_sample['label'].unsqueeze(0)
 
-                    B = b_inf_img.shape[0]
+#                     B = b_inf_img.shape[0]
 
-                    b_inf_img = b_inf_img.unsqueeze(1).float().cuda()
-                    b_inf_seg = b_inf_seg.cuda()
-                    b_inf_img_2d = make_2d_stack_from_3d(b_inf_img, stack_dim=stack_dim)
+#                     b_inf_img = b_inf_img.unsqueeze(1).float().cuda()
+#                     b_inf_seg = b_inf_seg.cuda()
+#                     b_inf_img_2d = make_2d_stack_from_3d(b_inf_img, stack_dim=stack_dim)
 
-                    if config.use_mind:
-                        b_inf_img_2d = mindssc(b_inf_img_2d.unsqueeze(1)).squeeze(2)
+#                     if config.use_mind:
+#                         b_inf_img_2d = mindssc(b_inf_img_2d.unsqueeze(1)).squeeze(2)
 
-                    output_inf = lraspp(b_inf_img_2d)['out']
+#                     output_inf = lraspp(b_inf_img_2d)['out']
 
-                    # Prepare logits for scoring
-                    # Scoring happens in 3D again - unstack batch tensor again to stack of 3D
-                    inf_logits_for_score = make_3d_from_2d_stack(output_inf, stack_dim, B)
-                    inf_logits_for_score = inf_logits_for_score.argmax(1)
+#                     # Prepare logits for scoring
+#                     # Scoring happens in 3D again - unstack batch tensor again to stack of 3D
+#                     inf_logits_for_score = make_3d_from_2d_stack(output_inf, stack_dim, B)
+#                     inf_logits_for_score = inf_logits_for_score.argmax(1)
 
-                    inf_dice = dice3d(
-                        torch.nn.functional.one_hot(inf_logits_for_score, 3),
-                        torch.nn.functional.one_hot(b_inf_seg, 3),
-                        one_hot_torch_style=True
-                    )
-                    inf_dices.append(get_batch_dice_wo_bg(inf_dice))
-                    inf_dices_tumour.append(get_batch_dice_tumour(inf_dice))
-                    inf_dices_cochlea.append(get_batch_dice_cochlea(inf_dice))
+#                     inf_dice = dice3d(
+#                         torch.nn.functional.one_hot(inf_logits_for_score, 3),
+#                         torch.nn.functional.one_hot(b_inf_seg, 3),
+#                         one_hot_torch_style=True
+#                     )
+#                     inf_dices.append(get_batch_dice_wo_bg(inf_dice))
+#                     inf_dices_tumour.append(get_batch_dice_tumour(inf_dice))
+#                     inf_dices_cochlea.append(get_batch_dice_cochlea(inf_dice))
 
-                    if config.do_plot:
-                        print("Inference 3D image label/ground-truth")
-                        print(inf_dice)
-                        # display_all_seg_slices(b_seg.unsqueeze(1), logits_for_score)
-                        display_seg(in_type="single_3D",
-                            reduce_dim="W",
-                            img=inf_sample['image'].unsqueeze(0).cpu(),
-                            seg=inf_logits_for_score.squeeze(0).cpu(),
-                            ground_truth=b_inf_seg.squeeze(0).cpu(),
-                            crop_to_non_zero_seg=True,
-                            crop_to_non_zero_gt=True,
-                            alpha_seg=.4,
-                            alpha_gt=.2
-                        )
+#                     if config.do_plot:
+#                         print("Inference 3D image label/ground-truth")
+#                         print(inf_dice)
+#                         # display_all_seg_slices(b_seg.unsqueeze(1), logits_for_score)
+#                         display_seg(in_type="single_3D",
+#                             reduce_dim="W",
+#                             img=inf_sample['image'].unsqueeze(0).cpu(),
+#                             seg=inf_logits_for_score.squeeze(0).cpu(),
+#                             ground_truth=b_inf_seg.squeeze(0).cpu(),
+#                             crop_to_non_zero_seg=True,
+#                             crop_to_non_zero_gt=True,
+#                             alpha_seg=.4,
+#                             alpha_gt=.2
+#                         )
 
-            if config.debug:
-                break
+#             if config.debug:
+#                 break
 
-        mean_inf_dice = np.nanmean(inf_dices)
-        mean_inf_dice_tumour = np.nanmean(inf_dices_tumour)
-        mean_inf_dice_cochlea = np.nanmean(inf_dices_cochlea)
+#         mean_inf_dice = np.nanmean(inf_dices)
+#         mean_inf_dice_tumour = np.nanmean(inf_dices_tumour)
+#         mean_inf_dice_cochlea = np.nanmean(inf_dices_cochlea)
 
-        print(f'inf_dice_mean_wo_bg_fold{fold_idx}', f"{mean_inf_dice*100:.2f}%")
-        print(f'inf_dice_mean_tumour_fold{fold_idx}', f"{mean_inf_dice_tumour*100:.2f}%")
-        print(f'inf_dice_mean_cochlea_fold{fold_idx}', f"{mean_inf_dice_cochlea*100:.2f}%")
-        wandb.log({f'scores/inf_dice_mean_wo_bg_fold{fold_idx}': mean_inf_dice}, step=global_idx)
-        wandb.log({f'scores/inf_dice_mean_tumour_fold{fold_idx}': mean_inf_dice_tumour}, step=global_idx)
-        wandb.log({f'scores/inf_dice_mean_cochlea_fold{fold_idx}': mean_inf_dice_cochlea}, step=global_idx)
+#         print(f'inf_dice_mean_wo_bg_fold{fold_idx}', f"{mean_inf_dice*100:.2f}%")
+#         print(f'inf_dice_mean_tumour_fold{fold_idx}', f"{mean_inf_dice_tumour*100:.2f}%")
+#         print(f'inf_dice_mean_cochlea_fold{fold_idx}', f"{mean_inf_dice_cochlea*100:.2f}%")
+#         wandb.log({f'scores/inf_dice_mean_wo_bg_fold{fold_idx}': mean_inf_dice}, step=global_idx)
+#         wandb.log({f'scores/inf_dice_mean_tumour_fold{fold_idx}': mean_inf_dice_tumour}, step=global_idx)
+#         wandb.log({f'scores/inf_dice_mean_cochlea_fold{fold_idx}': mean_inf_dice_cochlea}, step=global_idx)
 
-        # Store data for inter-fold scoring
-        class_dice_list = inf_dices.tolist()[0]
-        for class_idx, class_dice in enumerate(class_dice_list):
-            score_dicts.append(
-                {
-                    'fold_idx': fold_idx,
-                    'crossmoda_id': crossmoda_id,
-                    'class_idx': class_idx,
-                    'class_dice': class_dice,
-                }
-            )
+#         # Store data for inter-fold scoring
+#         class_dice_list = inf_dices.tolist()[0]
+#         for class_idx, class_dice in enumerate(class_dice_list):
+#             score_dicts.append(
+#                 {
+#                     'fold_idx': fold_idx,
+#                     'crossmoda_id': crossmoda_id,
+#                     'class_idx': class_idx,
+#                     'class_dice': class_dice,
+#                 }
+#             )
 
-    mean_oa_inf_dice = np.nanmean(torch.tensor([score['class_dice'] for score in score_dicts]))
-    print(f"Mean dice over all folds, classes and samples: {mean_oa_inf_dice*100:.2f}%")
-    wandb.log({'scores/mean_dice_all_folds_samples_classes': mean_oa_inf_dice}, step=global_idx)
+#     mean_oa_inf_dice = np.nanmean(torch.tensor([score['class_dice'] for score in score_dicts]))
+#     print(f"Mean dice over all folds, classes and samples: {mean_oa_inf_dice*100:.2f}%")
+#     wandb.log({'scores/mean_dice_all_folds_samples_classes': mean_oa_inf_dice}, step=global_idx)
 
-    return score_dicts
+#     return score_dicts
 
 
 # %%
-folds_scores = []
-run = wandb.init(project="curriculum_deeplab", name=run_name, group=f"testing", job_type="test",
-        config=config_dict, settings=wandb.Settings(start_method="thread"),
-        mode=config_dict['wandb_mode']
-)
-config = wandb.config
-score_dicts = inference_DL(run_name, config, validation_dataset)
-folds_scores.append(score_dicts)
-wandb.finish()
+# folds_scores = []
+# run = wandb.init(project="curriculum_deeplab", name=run_name, group=f"testing", job_type="test",
+#         config=config_dict, settings=wandb.Settings(start_method="thread"),
+#         mode=config_dict['wandb_mode']
+# )
+# config = wandb.config
+# score_dicts = inference_DL(run_name, config, validation_dataset)
+# folds_scores.append(score_dicts)
+# wandb.finish()
