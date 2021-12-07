@@ -1306,7 +1306,7 @@ def train_DL(run_name, config, training_dataset):
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
         epx_start = config.get('epx_override', 0)
         _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
-        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(train_dataloader), _path=_path)
+        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(train_dataloader), _path=_path, device='cuda')
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, T_0=200, T_mult=2, eta_min=config.lr*.1, last_epoch=- 1, verbose=False)
@@ -1317,7 +1317,6 @@ def train_DL(run_name, config, training_dataset):
         # Add inverse weighting to instances according to labeled pixels
         # instance_pixel_weight = torch.sqrt(1.0/(torch.stack([torch.bincount(seg.view(-1))[1] for seg in all_segs]).float()))  TODO removce
         # instance_pixel_weight = instance_pixel_weight/instance_pixel_weight.mean()  TODO removce
-        torch.nn.init.constant_(embedding.weight.data, config.data_parameter_config['init_inst_param'])
 
         scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer_dp, T_0=200, T_mult=2, eta_min=config.data_parameter_config['lr_inst_param']*.1, last_epoch=- 1, verbose=False)
@@ -1580,10 +1579,18 @@ def train_DL(run_name, config, training_dataset):
                 break
 
         if len(training_dataset.disturbed_idxs) > 0 and config.data_parameter_config['data_param_mode'] == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+
+            # Log histogram of clean and disturbed parameters
+            separated_params = list(zip(embedding.cpu()(clean_idxs), embedding.cpu()(disturbed_idxs)))
+            s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
+            fields = {"primary_bins" : "clean_idxs", "secondary_bins" : "disturbed_idxs", "title" : "Data parameter composite histogram"}
+            composite_histogram = wandb.plot_table(vega_spec_name="rap1ide/composite_histogram", data_table=s_table, fields=fields)
+            wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
+
             print("Writing out sample and weight image.")
             training_dataset.train()
             data = ((weight,
-                 disturb_flg,
+                 bool(disturb_flg.item()),
                  sample['id'],
                  sample['dataset_idx'],
                  sample['image'],
@@ -1596,7 +1603,7 @@ def train_DL(run_name, config, training_dataset):
             instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels = zip(*samples_sorted)
 
             # overlay text example: d_idx=0, dp_i=1.00, dist? False
-            overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f} d?{int(disturb_flg)}" \
+            overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
                 for d_id, instance_p, disturb_flg in zip(d_ids, instance_parameters, disturb_flags)]
             seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_data_parameter_weighted_samples.png")
             seg_viz_out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1610,6 +1617,8 @@ def train_DL(run_name, config, training_dataset):
                         alpha_gt = .4,
                         n_per_row=70,
                         overlay_text=overlay_text_list,
+                        annotate_color=(0,255,255),
+                        frame_elements=disturb_flags,
                         file_path=seg_viz_out_path,
             )
         # End of fold loop
@@ -1624,7 +1633,7 @@ def train_DL(run_name, config, training_dataset):
 # config_dict['epx_override'] = 60
 
 run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
-    name = config_dict.get('wandb_name_override', None),
+    name=config_dict.get('wandb_name_override', None),
     config=config_dict, settings=wandb.Settings(start_method="thread"),
     mode=config_dict.get('wandb_mode', 'disabled')
 )
