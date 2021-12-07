@@ -326,7 +326,7 @@ class CrossMoDa_Data(Dataset):
         base_dir, domain, state,
         ensure_labeled_pairs=True, use_additional_data=False, resample=True,
         size:tuple=(96,96,60), normalize:bool=True,
-        max_load_num=None, crop_w_dim_range=None,
+        max_load_num=None, crop_3d_w_dim_range=None,
         disturbed_idxs=None, disturbance_mode=None, disturbance_strength=1.0,
         yield_2d_normal_to=None, flip_r_samples=True,
         dilate_kernel_sz=1,
@@ -359,7 +359,7 @@ class CrossMoDa_Data(Dataset):
 
                 normalize (bool): set to False to disable normalization to mean=0, std=1 for each image (default: True)
                 max_load_num (int): maximum number of pairs to load (uses first max_load_num samples for either images and labels found)
-                crop_w_dim_range (tuple): Tuple of ints defining the range to which dimension W of (D,H,W) is cropped
+                crop_3d_w_dim_range (tuple): Tuple of ints defining the range to which dimension W of (D,H,W) is cropped
                 yield_2d_normal_to (bool):
 
         Returns:
@@ -491,8 +491,8 @@ class CrossMoDa_Data(Dataset):
                     pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
                     tmp = F.pad(tmp,pad)
 
-                if crop_w_dim_range:
-                    tmp = tmp[..., crop_w_dim_range[0]:crop_w_dim_range[1]]
+                if crop_3d_w_dim_range:
+                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
 
                 # Only use tumour class, remove TODO
                 tmp[tmp==2] = 0
@@ -508,8 +508,8 @@ class CrossMoDa_Data(Dataset):
                     pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
                     tmp = F.pad(tmp,pad)
 
-                if crop_w_dim_range:
-                    tmp = tmp[..., crop_w_dim_range[0]:crop_w_dim_range[1]]
+                if crop_3d_w_dim_range:
+                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
 
                 if normalize: #normalize image to zero mean and unit std
                     tmp = (tmp - tmp.mean()) / tmp.std()
@@ -710,7 +710,7 @@ class CrossMoDa_Data(Dataset):
             assert image.dim() == label.dim() == 2
         else:
             assert image.dim() == label.dim() == 3
-        
+
         if self.do_train:
             assert modified_label.dim() == label.dim()
 
@@ -893,8 +893,16 @@ class LabelDisturbanceMode(Enum):
     AFFINE = auto()
 
 class DotDict(dict):
-    """dot.notation access to dictionary attributes"""
-    __getattr__ = dict.get
+    """dot.notation access to dictionary attributes
+        See https://stackoverflow.com/questions/49901590/python-using-copy-deepcopy-on-dotdict
+    """
+
+    def __getattr__(self, item):
+        try:
+            return self[item]
+        except KeyError as e:
+            raise AttributeError from e
+
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
 
@@ -912,19 +920,18 @@ config_dict = DotDict({
 
     'dataset': 'crossmoda',
     'train_set_max_len': 100,
-    'crop_w_dim_range': (24, 110),
+    'crop_3d_w_dim_range': (24, 110),
     'yield_2d_normal_to': "W",
 
     'lr': 0.0005,
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_parameter_config': DotDict(
-        data_param_mode=DataParamMode.ONLY_INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
         # init_class_param=0.01,
         # lr_class_param=0.1,
-        init_inst_param=1.0,
-        lr_inst_param=0.1,
+    'init_inst_param': 1.0,
+    'lr_inst_param': 0.1,
         # wd_inst_param=0.0,
         # wd_class_param=0.0,
         # skip_clamp_data_param=False,
@@ -934,13 +941,13 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    ),
+    # ),
 
     'save_every': 60,
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "0"))),
+    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "1"))),
     'wandb_mode': os.environ.get('WANDB_MODE', "online"),
     'wandb_name_override': None,
 
@@ -958,13 +965,13 @@ if config_dict['dataset'] == 'crossmoda':
         domain="source", state="l4", size=(128, 128, 128),
         ensure_labeled_pairs=True,
         max_load_num=config_dict['train_set_max_len'],
-        crop_w_dim_range=config_dict['crop_w_dim_range'],
+        crop_3d_w_dim_range=config_dict['crop_3d_w_dim_range'],
         yield_2d_normal_to=config_dict['yield_2d_normal_to'],
         disturbed_idxs=None, disturbance_mode=config_dict['disturbance_mode'], disturbance_strength=config_dict['disturbance_strength'],
         dilate_kernel_sz=config_dict['start_dilate_kernel_sz'],
         debug=config_dict['debug']
     )
-    config_dict['label_tags'] = ['background', 'tumour']
+    config_dict.label_tags = ['background', 'tumour']
     training_dataset.eval()
     print("Nonzero slice ratio: ",
         sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)
@@ -977,7 +984,7 @@ if config_dict['dataset'] == 'crossmoda':
 elif config_dict['dataset'] == 'organmnist3d':
     training_dataset = WrapperOrganMNIST3D(
         split='train', root='./data/medmnist', download=True, normalize=True,
-        max_load_num=300, crop_w_dim_range=None,
+        max_load_num=300, crop_3d_w_dim_range=None,
         disturbed_idxs=None, yield_2d_normal_to='W'
     )
     print(training_dataset.mnist_set.info)
@@ -1162,10 +1169,10 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
 
     # Add data paramters
     embedding = nn.Embedding(len(training_dataset), 1, sparse=True).to(device)
-    torch.nn.init.constant_(embedding.weight.data, config.data_parameter_config['init_inst_param'])
+    torch.nn.init.constant_(embedding.weight.data, config.init_inst_param)
 
     optimizer_dp = torch.optim.SparseAdam(
-        embedding.parameters(), lr=config.data_parameter_config['lr_inst_param'],
+        embedding.parameters(), lr=config.lr_inst_param,
         betas=(0.9, 0.999), eps=1e-08)
 
     scaler = amp.GradScaler()
@@ -1355,7 +1362,7 @@ def train_DL(run_name, config, training_dataset):
         # instance_pixel_weight = instance_pixel_weight/instance_pixel_weight.mean()  TODO removce
 
         scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer_dp, T_0=200, T_mult=2, eta_min=config.data_parameter_config['lr_inst_param']*.1, last_epoch=- 1, verbose=False)
+            optimizer_dp, T_0=200, T_mult=2, eta_min=config.lr_inst_param*.1, last_epoch=- 1, verbose=False)
 
         t0 = time.time()
 
@@ -1432,7 +1439,7 @@ def train_DL(run_name, config, training_dataset):
                     assert b_seg_modified.dim() == 3, \
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
-                    if config.data_parameter_config['data_param_mode'] == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+                    if config.data_param_mode == str(DataParamMode.ONLY_INSTANCE_PARAMS):
                         # weight = embedding(b_idxs_dataset).squeeze()
                         # dp_logits = logits*weight.view(-1,1,1,1)
                         # loss = nn.CrossEntropyLoss()(
@@ -1456,7 +1463,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if config.data_parameter_config['data_param_mode'] == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+                if str(config.data_param_mode) == str(DataParamMode.ONLY_INSTANCE_PARAMS):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
@@ -1614,7 +1621,7 @@ def train_DL(run_name, config, training_dataset):
             if config.debug:
                 break
 
-        if len(training_dataset.disturbed_idxs) > 0 and config.data_parameter_config['data_param_mode'] == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+        if len(training_dataset.disturbed_idxs) > 0 and str(config.data_param_mode) == str(DataParamMode.ONLY_INSTANCE_PARAMS):
 
             # Log histogram of clean and disturbed parameters
             separated_params = list(zip(embedding.cpu()(clean_idxs), embedding.cpu()(disturbed_idxs)))
@@ -1661,23 +1668,80 @@ def train_DL(run_name, config, training_dataset):
 
 
 # %%
-# config_dict['wandb_mode'] = 'disabled'
+# Config overrides
+config_dict['wandb_mode'] = 'online'
 # config_dict['debug'] = True
 # Model loading
 # config_dict['wandb_name_override'] = 'dummy-oDbynkD4q8KBTHU5CRKt4Q'
 # config_dict['fold_override'] = 0
 # config_dict['epx_override'] = 60
 
-run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
-    name=config_dict['wandb_name_override'],
-    config=config_dict, settings=wandb.Settings(start_method="thread"),
-    mode=config_dict['wandb_mode']
+# Define sweep override dict
+sweep_config_dict = dict(
+    method='grid',
+    metric=dict(goal='minimize', name='data_parameters/corr_coeff_fold0'),
+    parameters=dict(
+        disturbance_mode=dict(
+            value='LabelDisturbanceMode.AFFINE'
+        ),
+        disturbance_strength=dict(
+            values=[0.2, 0.5, 1.0]
+        ),
+        disturbed_percentage=dict(
+            values=[0.0, 0.3, 0.6]
+        ),
+        data_param_mode=dict(
+            values=['DataParamMode.ONLY_INSTANCE_PARAMS', 'DataParamMode.DISABLED']
+        )
+    )
 )
-run_name = run.name
-config = wandb.config
 
-train_DL(run_name, config, training_dataset)
-wandb.finish()
+# %%
+DO_SWEEP = True
+
+import copy
+
+def normal_run():
+    with wandb.init() as run:
+        run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
+            name=config_dict['wandb_name_override'],
+            config=config_dict, settings=wandb.Settings(start_method="thread"),
+            mode=config_dict['wandb_mode']
+        )
+
+        run_name = run.name
+        config = wandb.config
+        train_DL(run_name, config, training_dataset)
+
+def sweep_run():
+    with wandb.init() as run:
+        run = wandb.init(
+            settings=wandb.Settings(start_method="thread"),
+            mode=config_dict['wandb_mode']
+        )
+
+        run_name = run.name
+        config = wandb.config
+        train_DL(run_name, config, training_dataset)
+
+
+if DO_SWEEP:
+    # Integrate all config_dict entries into sweep_dict.parameters -> sweep overrides config_dict
+    cp_config_dict = copy.deepcopy(config_dict)
+    # cp_config_dict.update(copy.deepcopy(sweep_config_dict['parameters']))
+    for del_key in sweep_config_dict['parameters'].keys():
+        if del_key in cp_config_dict:
+            del cp_config_dict[del_key]
+    merged_sweep_config_dict = copy.deepcopy(sweep_config_dict)
+    # merged_sweep_config_dict.update(cp_config_dict)
+    for key, value in cp_config_dict.items():
+        merged_sweep_config_dict['parameters'][key] = dict(value=value)
+
+    sweep_id = wandb.sweep(merged_sweep_config_dict, project="curriculum_deeplab")
+    wandb.agent(sweep_id, function=sweep_run)
+
+else:
+    normal_run()
 
 
 # %%
