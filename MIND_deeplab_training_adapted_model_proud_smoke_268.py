@@ -18,7 +18,8 @@ import os
 import time
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
 os.environ.update(get_vars(select="* -3 -4"))
-
+import pickle
+import copy
 from collections import OrderedDict
 import torch
 import torch.nn as nn
@@ -326,7 +327,7 @@ class CrossMoDa_Data(Dataset):
         base_dir, domain, state,
         ensure_labeled_pairs=True, use_additional_data=False, resample=True,
         size:tuple=(96,96,60), normalize:bool=True,
-        max_load_num=None, crop_3d_w_dim_range=None,
+        max_load_num=None, crop_3d_w_dim_range=None, crop_2d_slices_gt_num_threshold=None,
         disturbed_idxs=None, disturbance_mode=None, disturbance_strength=1.0,
         yield_2d_normal_to=None, flip_r_samples=True,
         dilate_kernel_sz=1,
@@ -381,6 +382,7 @@ class CrossMoDa_Data(Dataset):
 
         self.disturbed_idxs = disturbed_idxs
         self.yield_2d_normal_to = yield_2d_normal_to
+        self.crop_2d_slices_gt_num_threshold = crop_2d_slices_gt_num_threshold
         self.do_train = False
         self.augment_at_collate = False
         self.dilate_kernel_sz = dilate_kernel_sz
@@ -516,7 +518,7 @@ class CrossMoDa_Data(Dataset):
 
                 self.img_data_3d[_3d_id] = tmp
 
-        # Postprocessing
+        # Postprocessing of 3d volumes
         for _3d_id in list(self.label_data_3d.keys()):
             if self.label_data_3d[_3d_id].unique().numel() != 2: #TODO use 3 classes again
                 del self.img_data_3d[_3d_id]
@@ -567,12 +569,20 @@ class CrossMoDa_Data(Dataset):
                     # Set data view for crossmoda id like "003rW100"
                     self.label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
 
-        # Delete empty 2D slices (but keep 3d data)
+        # Postprocessing of 2d slices
+
+        rem_sum = 0
         for key, label in list(self.label_data_2d.items()):
-            if label.unique().numel() < 2:
+            uniq_vals = label.unique()
+
+            if uniq_vals.max() == 0:
+                # Delete empty 2D slices (but keep 3d data)
                 del self.label_data_2d[key]
                 del self.img_data_2d[key]
-
+            elif sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
+                # Delete 2D slices with less than n gt-pixels (but keep 3d data)
+                del self.label_data_2d[key]
+                del self.img_data_2d[key]
 
         print("Data import finished.")
         print(f"CrossMoDa loader will yield {'2D' if self.yield_2d_normal_to else '3D'} samples")
@@ -921,6 +931,7 @@ config_dict = DotDict({
     'dataset': 'crossmoda',
     'train_set_max_len': 100,
     'crop_3d_w_dim_range': (24, 110),
+    'crop_2d_slices_gt_num_threshold': 25,
     'yield_2d_normal_to': "W",
 
     'lr': 0.0005,
@@ -947,8 +958,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "1"))),
-    'wandb_mode': os.environ.get('WANDB_MODE', "online"),
+    'debug': False,
+    'wandb_mode': "online",
     'wandb_name_override': None,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
@@ -965,7 +976,7 @@ if config_dict['dataset'] == 'crossmoda':
         domain="source", state="l4", size=(128, 128, 128),
         ensure_labeled_pairs=True,
         max_load_num=config_dict['train_set_max_len'],
-        crop_3d_w_dim_range=config_dict['crop_3d_w_dim_range'],
+        crop_3d_w_dim_range=config_dict['crop_3d_w_dim_range'], crop_2d_slices_gt_num_threshold=config_dict['crop_2d_slices_gt_num_threshold'],
         yield_2d_normal_to=config_dict['yield_2d_normal_to'],
         disturbed_idxs=None, disturbance_mode=config_dict['disturbance_mode'], disturbance_strength=config_dict['disturbance_strength'],
         dilate_kernel_sz=config_dict['start_dilate_kernel_sz'],
@@ -1621,7 +1632,7 @@ def train_DL(run_name, config, training_dataset):
             if config.debug:
                 break
 
-        if len(training_dataset.disturbed_idxs) > 0 and str(config.data_param_mode) == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+        if len(disturbed_idxs) > 0 and str(config.data_param_mode) == str(DataParamMode.ONLY_INSTANCE_PARAMS):
 
             # Log histogram of clean and disturbed parameters
             separated_params = list(zip(embedding.cpu()(clean_idxs), embedding.cpu()(disturbed_idxs)))
@@ -1629,6 +1640,14 @@ def train_DL(run_name, config, training_dataset):
             fields = {"primary_bins" : "clean_idxs", "secondary_bins" : "disturbed_idxs", "title" : "Data parameter composite histogram"}
             composite_histogram = wandb.plot_table(vega_spec_name="rap1ide/composite_histogram", data_table=s_table, fields=fields)
             wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
+
+            # Write out data of modified and un-modified labels and an overview image
+            train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_train_label_snapshot.pkl")
+            seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_data_parameter_weighted_samples.png")
+
+            # Generate directories
+            for _pathh in [train_label_snapshot_path, seg_viz_out_path]:
+                _pathh.parent.mkdir(parents=True, exist_ok=True)
 
             print("Writing out sample and weight image.")
             training_dataset.train()
@@ -1645,11 +1664,13 @@ def train_DL(run_name, config, training_dataset):
             samples_sorted = sorted(data)
             instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels = zip(*samples_sorted)
 
+            # Save labels, modified labels, data parameters, ids and flags
+            with open(train_label_snapshot_path, 'wb') as handle:
+                pickle.dump(list(zip(instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_labels, _2d_modified_labels)),
+                    handle, protocol=pickle.HIGHEST_PROTOCOL)
             # overlay text example: d_idx=0, dp_i=1.00, dist? False
             overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
                 for d_id, instance_p, disturb_flg in zip(d_ids, instance_parameters, disturb_flags)]
-            seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_data_parameter_weighted_samples.png")
-            seg_viz_out_path.parent.mkdir(parents=True, exist_ok=True)
             visualize_seg(in_type="batch_2D",
                         img=torch.stack(_2d_imgs).unsqueeze(1),
                         seg=torch.stack(_2d_modified_labels),
@@ -1669,7 +1690,7 @@ def train_DL(run_name, config, training_dataset):
 
 # %%
 # Config overrides
-config_dict['wandb_mode'] = 'online'
+# config_dict['wandb_mode'] = 'disabled'
 # config_dict['debug'] = True
 # Model loading
 # config_dict['wandb_name_override'] = 'dummy-oDbynkD4q8KBTHU5CRKt4Q'
@@ -1698,8 +1719,6 @@ sweep_config_dict = dict(
 
 # %%
 DO_SWEEP = True
-
-import copy
 
 def normal_run():
     with wandb.init() as run:

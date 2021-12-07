@@ -11,10 +11,6 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "env": {
-                "PYTHON_DEBUG": "1",
-                "WANDB_MODE": "disabled"
-            }
         }
     ]
 }
