@@ -1,0 +1,19 @@
+
+program: MIND_deeplab_training_adapted_model_proud_smoke_268.py
+method: grid
+metric:
+  goal: minimize
+  name: data_parameters/corr_coeff_fold0
+parameters:
+  disturbance_mode:
+    values: ['LabelDisturbanceMode.AFFINE'],
+  disturbance_strength:
+    values: [0.2, 0.5, 1.0]
+  disturbed_percentage:
+    values: [0.0, 0.3, 0.6]
+  data_param_mode:
+    values: ['DataParamMode.ONLY_INSTANCE_PARAMS', 'DataParamMode.DISABLED']
+  debug:
+    values: [True]
+  wandb_mode:
+    values: ['offline']

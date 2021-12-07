@@ -940,9 +940,9 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "1"))),
+    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "0"))),
     'wandb_mode': os.environ.get('WANDB_MODE', "online"),
-    # 'wandb_name_override': 'my-name',
+    'wandb_name_override': None,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 1.0,
@@ -995,7 +995,7 @@ plt.ylabel("ground truth>0")
 plt.plot(sum_over_w);
 
 # %%
-if config_dict['do_plot'] or True:
+if config_dict['do_plot']:
     # Print bare 2D data
     # print("Displaying 2D bare sample")
     # for img, label in zip(training_dataset.img_data_2d.values(),
@@ -1669,9 +1669,9 @@ def train_DL(run_name, config, training_dataset):
 # config_dict['epx_override'] = 60
 
 run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
-    name=config_dict.get('wandb_name_override', None),
+    name=config_dict['wandb_name_override'],
     config=config_dict, settings=wandb.Settings(start_method="thread"),
-    mode=config_dict.get('wandb_mode', 'disabled')
+    mode=config_dict['wandb_mode']
 )
 run_name = run.name
 config = wandb.config

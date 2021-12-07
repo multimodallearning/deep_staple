@@ -773,7 +773,7 @@ torch = "^1.8.1"
 type = "git"
 url = "git@github.com:MDL-UzL/SegmentationClassification.git"
 reference = "main"
-resolved_reference = "2bab27c57ab0e34641ccf4e0c770dc6195f12629"
+resolved_reference = "5ddb0c8dea26a886c0d92bbb809e6c2108abf588"
 
 [[package]]
 name = "medmnist"
