@@ -694,9 +694,11 @@ class CrossMoDa_Data(Dataset):
                                 )
                     elif str(self.disturbance_mode)==str(LabelDisturbanceMode.AFFINE):
                         # Only warp label. TODO: Add option for empty b_image in augment() to increase performance
-                        _, modified_label = augment(b_image, b_label, yield_2d,
-                            bspline_num_ctl_points=6, bspline_strength=0.004*self.augment_strength, bspline_probability=1.,
-                            affine_strengh=0.15*self.augment_strength, affine_probability=1.)
+                        b_modified_label = modified_label.unsqueeze(0).cuda()
+                        _, b_modified_label = self.augment(torch.zeros_like(b_modified_label).float(), b_modified_label, yield_2d,
+                            bspline_num_ctl_points=6, bspline_strength=0.005*self.disturbance_strength, bspline_probability=1.,
+                            affine_strengh=0.09*self.disturbance_strength, affine_probability=1.)
+                        modified_label = b_modified_label.squeeze(0).cpu()
 
                     elif self.disturbance_mode == None:
                         pass
@@ -708,6 +710,9 @@ class CrossMoDa_Data(Dataset):
             assert image.dim() == label.dim() == 2
         else:
             assert image.dim() == label.dim() == 3
+        
+        if self.do_train:
+            assert modified_label.dim() == label.dim()
 
         return {
             'image': image,
@@ -935,12 +940,12 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "0"))),
+    'debug': bool(int(os.environ.get('PYTHON_DEBUG', "1"))),
     'wandb_mode': os.environ.get('WANDB_MODE', "online"),
     # 'wandb_name_override': 'my-name',
 
-    'disturbance_mode': LabelDisturbanceMode.FLIP_ROLL,
-    'disturbance_strenth': 1.0,
+    'disturbance_mode': LabelDisturbanceMode.AFFINE,
+    'disturbance_strength': 1.0,
     'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
@@ -960,6 +965,7 @@ if config_dict['dataset'] == 'crossmoda':
         debug=config_dict['debug']
     )
     config_dict['label_tags'] = ['background', 'tumour']
+    training_dataset.eval()
     print("Nonzero slice ratio: ",
         sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)
     )
@@ -1003,18 +1009,21 @@ if config_dict['do_plot'] or True:
     # Print transformed 2D data
     training_dataset.train()
     print(training_dataset.disturbed_idxs)
-    training_dataset.set_disturbed_idxs(list(range(0,20,3)))
+    training_dataset.set_disturbed_idxs(list(range(0,20,1)))
     print("Displaying 2D training sample")
-    for sample in (training_dataset[idx] for idx in range(20)):
-        visualize_seg(in_type="single_2D",
-                    img=sample['image'].unsqueeze(0),
-                    ground_truth=sample['label'],
-                    seg=sample['modified_label'],
-                    crop_to_non_zero_gt=True,
-                    crop_to_non_zero_seg=True,
-                    alpha_seg = .2,
-                    alpha_gt = .4,
-        )
+    for dist_stren in [.0, .5, 1]:
+        print(dist_stren)
+        training_dataset.disturbance_strength = dist_stren
+        for sample in (training_dataset[idx] for idx in range(20)):
+            visualize_seg(in_type="single_2D",
+                        img=sample['image'].unsqueeze(0),
+                        ground_truth=sample['label'],
+                        seg=sample['modified_label'],
+                        crop_to_non_zero_gt=True,
+                        crop_to_non_zero_seg=True,
+                        alpha_seg = .2,
+                        alpha_gt = .4,
+            )
 
     # Print transformed 3D data
     # training_dataset.train()
