@@ -237,9 +237,10 @@ def spatial_augment(b_image, b_label,
             ).to(b_image.device)
             # Add an extra *.5 factor to dim strength to make strength fit 3D case
             dim_strength = (torch.tensor([H,W]).float()*bspline_strength*.5).to(b_image.device)
-            rand_control_points = dim_strength.view(1,2,1,1) * torch.randn(
-                B, 2, bspline_num_ctl_points, bspline_num_ctl_points
-            ).to(b_image.device)
+            rand_control_points = dim_strength.view(1,2,1,1) * \
+                (
+                    1/10*torch.randn(B, 2, bspline_num_ctl_points, bspline_num_ctl_points)+1.
+                ).to(b_image.device)
 
             bspline_disp = bspline(rand_control_points)
             bspline_disp = torch.nn.functional.interpolate(
@@ -249,8 +250,8 @@ def spatial_augment(b_image, b_label,
             grid += bspline_disp
 
         if do_affine:
-            affine_matrix = (torch.eye(2,3).unsqueeze(0) + torch.randn(B,2,3) \
-                            * affine_strengh).to(b_image.device)
+            affine_matrix = (torch.eye(2,3).unsqueeze(0) + \
+                affine_strengh * (1/10*torch.randn(B,2,3)+1.)).to(b_image.device)
 
             affine_disp = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
                                     align_corners=False)
@@ -276,9 +277,10 @@ def spatial_augment(b_image, b_label,
             ).to(b_image.device)
             dim_strength = (torch.tensor([D,H,W]).float()*bspline_strength).to(b_image.device)
 
-            rand_control_points = dim_strength.view(1,3,1,1,1) * torch.randn(
-                B, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points
-            ).to(b_image.device)
+            rand_control_points = dim_strength.view(1,3,1,1,1)  * \
+                (
+                    1/10*torch.randn(B, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points)+1.
+                ).to(b_image.device)
 
             bspline_disp = bspline(rand_control_points)
 
@@ -289,8 +291,8 @@ def spatial_augment(b_image, b_label,
             grid += bspline_disp
 
         if do_affine:
-            affine_matrix = (torch.eye(3,4).unsqueeze(0) + torch.randn(B,3,4) \
-                    * affine_strengh).to(b_image.device)
+            affine_matrix = (torch.eye(3,4).unsqueeze(0) + \
+                affine_strengh * (1/10*torch.randn(B,3,4)+1.)).to(b_image.device)
 
             affine_disp = F.affine_grid(affine_matrix,torch.Size((B,1,D,H,W)),
                                     align_corners=False)
@@ -706,7 +708,7 @@ class CrossMoDa_Data(Dataset):
                         # Only warp label. TODO: Add option for empty b_image in augment() to increase performance
                         b_modified_label = modified_label.unsqueeze(0).cuda()
                         _, b_modified_label = self.augment(torch.zeros_like(b_modified_label).float(), b_modified_label, yield_2d,
-                            bspline_num_ctl_points=6, bspline_strength=0.005*self.disturbance_strength, bspline_probability=1.,
+                            bspline_num_ctl_points=6, bspline_strength=0., bspline_probability=0.,
                             affine_strengh=0.09*self.disturbance_strength, affine_probability=1.)
                         modified_label = b_modified_label.squeeze(0).cpu()
 
@@ -802,8 +804,8 @@ class CrossMoDa_Data(Dataset):
 
     def augment(self, b_image, b_label, yield_2d,
         noise_strength=0.05,
-        bspline_num_ctl_points=6, bspline_strength=0.004, bspline_probability=.95,
-        affine_strengh=0.07, affine_probability=.45,
+        bspline_num_ctl_points=6, bspline_strength=0.002, bspline_probability=.95,
+        affine_strengh=0.03, affine_probability=.45,
         pre_interpolation_factor=2.):
 
         if yield_2d:
@@ -1015,7 +1017,7 @@ plt.ylabel("ground truth>0")
 plt.plot(sum_over_w);
 
 # %%
-if config_dict['do_plot']:
+if config_dict['do_plot'] or True:
     # Print bare 2D data
     # print("Displaying 2D bare sample")
     # for img, label in zip(training_dataset.img_data_2d.values(),
@@ -1031,19 +1033,34 @@ if config_dict['do_plot']:
     print(training_dataset.disturbed_idxs)
     training_dataset.set_disturbed_idxs(list(range(0,20,1)))
     print("Displaying 2D training sample")
-    for dist_stren in [.0, .5, 1]:
+    for dist_stren in [0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0]:
         print(dist_stren)
         training_dataset.disturbance_strength = dist_stren
+        img_stack = []
+        label_stack = []
+        mod_label_stack = []
+
         for sample in (training_dataset[idx] for idx in range(20)):
-            visualize_seg(in_type="single_2D",
-                        img=sample['image'].unsqueeze(0),
-                        ground_truth=sample['label'],
-                        seg=sample['modified_label'],
-                        crop_to_non_zero_gt=True,
-                        crop_to_non_zero_seg=True,
-                        alpha_seg = .2,
-                        alpha_gt = .4,
-            )
+            img_stack.append(sample['image'])
+            label_stack.append(sample['label'])
+            mod_label_stack.append(sample['modified_label'])
+
+        # Change label num == hue shift for display
+        img_stack = torch.stack(img_stack).unsqueeze(1)
+        label_stack = torch.stack(label_stack)
+        mod_label_stack = torch.stack(mod_label_stack)
+
+        mod_label_stack*=4
+
+        visualize_seg(in_type="batch_2D",
+            img=img_stack,
+            # ground_truth=label_stack,
+            seg=(mod_label_stack-label_stack).abs(),
+            # crop_to_non_zero_gt=True,
+            crop_to_non_zero_seg=True,
+            alpha_seg = .6,
+            # alpha_gt = .6,
+        )
 
     # Print transformed 3D data
     # training_dataset.train()
@@ -1709,10 +1726,10 @@ sweep_config_dict = dict(
             value='LabelDisturbanceMode.AFFINE'
         ),
         disturbance_strength=dict(
-            values=[0.05, 0.1, 0.2, 0.5, 1.0]
+            values=[0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0]
         ),
         disturbed_percentage=dict(
-            values=[0.0, 0.3, 0.6]
+            values=[0.1, 0.2, 0.3, 0.6]
         ),
         data_param_mode=dict(
             values=['DataParamMode.ONLY_INSTANCE_PARAMS', 'DataParamMode.DISABLED']
