@@ -776,8 +776,10 @@ class CrossMoDa_Data(Dataset):
         self.augment_at_collate = False
 
     def set_dilate_kernel_size(self, sz):
-
         self.dilate_kernel_sz = max(1,sz)
+
+    def set_disturbance_strength(self, strength):
+        self.disturbance_strength = strength
 
     def get_dilate_kernel_size(self):
         return self.dilate_kernel_sz
@@ -963,7 +965,7 @@ config_dict = DotDict({
     'wandb_name_override': None,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
-    'disturbance_strength': 1.0,
+    'disturbance_strength': .1,
     'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
@@ -1268,7 +1270,7 @@ def log_class_dices(log_prefix, log_postfix, class_dices, log_idx):
 # %%
 def train_DL(run_name, config, training_dataset):
     reset_determinism()
-    print(config.label_tags)
+
     # Configure folds
     kf = KFold(n_splits=config.num_folds)
     kf.get_n_splits(training_dataset)
@@ -1393,6 +1395,7 @@ def train_DL(run_name, config, training_dataset):
 
             if do_disturb:
                 training_dataset.set_disturbed_idxs(disturbed_idxs)
+                training_dataset.set_disturbance_strength(config.disturbance_strength)
             else:
                 training_dataset.set_disturbed_idxs([])
 
@@ -1706,7 +1709,7 @@ sweep_config_dict = dict(
             value='LabelDisturbanceMode.AFFINE'
         ),
         disturbance_strength=dict(
-            values=[0.2, 0.5, 1.0]
+            values=[0.05, 0.1, 0.2, 0.5, 1.0]
         ),
         disturbed_percentage=dict(
             values=[0.0, 0.3, 0.6]
@@ -1876,3 +1879,5 @@ else:
 # score_dicts = inference_DL(run_name, config, validation_dataset)
 # folds_scores.append(score_dicts)
 # wandb.finish()
+
+# %%
