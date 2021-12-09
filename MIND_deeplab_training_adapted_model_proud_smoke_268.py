@@ -945,7 +945,7 @@ config_dict = DotDict({
     'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
         # init_class_param=0.01,
         # lr_class_param=0.1,
-    'init_inst_param': 1.0,
+    # 'init_inst_param': 1.0,
     'lr_inst_param': 0.1,
         # wd_inst_param=0.0,
         # wd_class_param=0.0,
@@ -1199,7 +1199,7 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
 
     # Add data paramters
     embedding = nn.Embedding(len(training_dataset), 1, sparse=True).to(device)
-    torch.nn.init.constant_(embedding.weight.data, config.init_inst_param)
+    # torch.nn.init.constant_(embedding.weight.data, config.init_inst_param)
 
     optimizer_dp = torch.optim.SparseAdam(
         embedding.parameters(), lr=config.lr_inst_param,
@@ -1391,8 +1391,8 @@ def train_DL(run_name, config, training_dataset):
         # instance_pixel_weight = torch.sqrt(1.0/(torch.stack([torch.bincount(seg.view(-1))[1] for seg in all_segs]).float()))  TODO removce
         # instance_pixel_weight = instance_pixel_weight/instance_pixel_weight.mean()  TODO removce
 
-        scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer_dp, T_0=200, T_mult=2, eta_min=config.lr_inst_param*.1, last_epoch=- 1, verbose=False)
+        # scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        #     optimizer_dp, T_0=200, T_mult=2, eta_min=config.lr_inst_param*.1, last_epoch=- 1, verbose=False)
 
         t0 = time.time()
 
@@ -1533,7 +1533,7 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
-                    scheduler_dp.step()
+                    # scheduler_dp.step()
 
                 # if scheduler.T_cur == 0:
                 #     sz = training_dataset.get_dilate_kernel_size()
