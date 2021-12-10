@@ -19,6 +19,7 @@ import time
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
 os.environ.update(get_vars(select="* -3 -4"))
 import pickle
+import gzip
 import copy
 from collections import OrderedDict
 import torch
@@ -956,17 +957,18 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 5,
-    'grid_size_x': 5,
+    'grid_size_y': 64,
+    'grid_size_x': 64,
     # ),
 
-    'save_every': 60,
+    'save_every': 120,
     'mdl_save_prefix': 'data/models',
 
-    'do_plot': False,
-    'debug': False,
+     'do_plot': False,
+    'debug': True,
     'wandb_mode': "online",
     'wandb_name_override': None,
+    'do_sweep': True,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': .1,
@@ -1019,7 +1021,7 @@ plt.ylabel("ground truth>0")
 plt.plot(sum_over_w);
 
 # %%
-if config_dict['do_plot'] or True:
+if config_dict['do_plot']:
     # Print bare 2D data
     # print("Displaying 2D bare sample")
     # for img, label in zip(training_dataset.img_data_2d.values(),
@@ -1219,6 +1221,8 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
 
     else:
         print("Generating fresh lr-aspp model, optimizers, embedding and grad scaler.")
+    print(f"Param count lraspp: {sum(p.numel() for p in lraspp.parameters())}")
+    print(f"Param count embedding: {sum(p.numel() for p in embedding.parameters())}")
 
     return (lraspp, optimizer, optimizer_dp, embedding, scaler)
 
@@ -1722,7 +1726,7 @@ def train_DL(run_name, config, training_dataset):
             wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
 
             # Write out data of modified and un-modified labels and an overview image
-            train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_train_label_snapshot.pkl")
+            train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_train_label_snapshot.pkl.gz")
             seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_data_parameter_weighted_samples.png")
 
             # Generate directories
@@ -1745,7 +1749,7 @@ def train_DL(run_name, config, training_dataset):
             instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels = zip(*samples_sorted)
 
             # Save labels, modified labels, data parameters, ids and flags
-            with open(train_label_snapshot_path, 'wb') as handle:
+            with gzip.open(train_label_snapshot_path, 'wb') as handle:
                 pickle.dump(list(zip(instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_labels, _2d_modified_labels)),
                     handle, protocol=pickle.HIGHEST_PROTOCOL)
             # overlay text example: d_idx=0, dp_i=1.00, dist? False
@@ -1804,8 +1808,6 @@ sweep_config_dict = dict(
 )
 
 # %%
-DO_SWEEP = True
-
 def normal_run():
     with wandb.init(project="curriculum_deeplab", group="training", job_type="train",
             name=config_dict['wandb_name_override'],
@@ -1829,7 +1831,7 @@ def sweep_run():
         train_DL(run_name, config, training_dataset)
 
 
-if DO_SWEEP:
+if config_dict['do_sweep']:
     # Integrate all config_dict entries into sweep_dict.parameters -> sweep overrides config_dict
     cp_config_dict = copy.deepcopy(config_dict)
     # cp_config_dict.update(copy.deepcopy(sweep_config_dict['parameters']))
