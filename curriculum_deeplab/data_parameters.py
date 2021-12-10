@@ -11,6 +11,7 @@ class DotDict(dict):
 
 class DataParamMode(Enum):
     ONLY_INSTANCE_PARAMS = auto()
+    GRIDDED_INSTANCE_PARAMS = auto()
     ONLY_CLASS_PARAMS = auto()
     COMBINED_INSTANCE_CLASS_PARAMS = auto()
     SEPARATE_INSTANCE_CLASS_PARAMS = auto()

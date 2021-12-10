@@ -942,10 +942,10 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.GRIDDED_INSTANCE_PARAMS,
         # init_class_param=0.01,
         # lr_class_param=0.1,
-    # 'init_inst_param': 1.0,
+    'init_inst_param': 1.0,
     'lr_inst_param': 0.1,
         # wd_inst_param=0.0,
         # wd_class_param=0.0,
@@ -956,6 +956,8 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
+    'grid_size_y': 4,
+    'grid_size_x': 4,
     # ),
 
     'save_every': 60,
@@ -1198,8 +1200,8 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
     optimizer = torch.optim.Adam(lraspp.parameters(), lr=config.lr)
 
     # Add data paramters
-    embedding = nn.Embedding(len(training_dataset), 1, sparse=True).to(device)
-    # torch.nn.init.constant_(embedding.weight.data, config.init_inst_param)
+    embedding = nn.Embedding(len(training_dataset)*config.grid_size_y*config.grid_size_x, 1, sparse=True).to(device)
+    torch.nn.init.constant_(embedding.weight.data, config.init_inst_param)
 
     optimizer_dp = torch.optim.SparseAdam(
         embedding.parameters(), lr=config.lr_inst_param,
@@ -1285,6 +1287,11 @@ def log_class_dices(log_prefix, log_postfix, class_dices, log_idx):
 
 
 # %%
+def map_embedding_idxs(idxs, grid_size_y, grid_size_x):
+    with torch.no_grad():
+        t_sz = grid_size_y * grid_size_x
+        return ((idxs*t_sz).long().repeat(t_sz).view(t_sz, idxs.numel())+torch.tensor(range(t_sz)).to(idxs).view(t_sz,1)).permute(1,0).reshape(-1)
+
 def train_DL(run_name, config, training_dataset):
     reset_determinism()
 
@@ -1391,14 +1398,20 @@ def train_DL(run_name, config, training_dataset):
         # instance_pixel_weight = torch.sqrt(1.0/(torch.stack([torch.bincount(seg.view(-1))[1] for seg in all_segs]).float()))  TODO removce
         # instance_pixel_weight = instance_pixel_weight/instance_pixel_weight.mean()  TODO removce
 
-        # scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        #     optimizer_dp, T_0=200, T_mult=2, eta_min=config.lr_inst_param*.1, last_epoch=- 1, verbose=False)
+        scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer_dp, T_0=200, T_mult=2, eta_min=config.lr_inst_param*.1, last_epoch=- 1, verbose=False)
 
         t0 = time.time()
 
+        # Prepare corr coefficient scoring
+        norm_label, mod_label = list(zip(*[(sample['label'], sample['modified_label']) \
+            for sample in training_dataset]))
+
+        union_norm_mod_label = torch.logical_or(torch.stack(norm_label), torch.stack(mod_label))
+
         embedding = embedding.cuda()
-        # instance_pixel_weight = instance_pixel_weight.cuda()
         lraspp.cuda()
+        union_norm_mod_label = union_norm_mod_label.cuda()
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -1471,12 +1484,7 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
                     if config.data_param_mode == str(DataParamMode.ONLY_INSTANCE_PARAMS):
-                        # weight = embedding(b_idxs_dataset).squeeze()
-                        # dp_logits = logits*weight.view(-1,1,1,1)
-                        # loss = nn.CrossEntropyLoss()(
-                        #     dp_logits,
-                        #     b_seg_modified
-                        # )
+
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
                         weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
                         weight = weight/weight.mean()
@@ -1486,6 +1494,26 @@ def train_DL(run_name, config, training_dataset):
                         # Prepare logits for scoring
                         logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
 
+                    elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
+                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
+                        m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
+                        weight = embedding(m_dp_idxs)
+                        weight = weight.reshape(-1, config.grid_size_y, config.grid_size_x)
+                        weight = weight.unsqueeze(1)
+                        weight = torch.nn.functional.interpolate(
+                            weight,
+                            size=(b_seg_modified.shape[-2:]),
+                            mode='bilinear',
+                            align_corners=True
+                        )
+
+                        weight = torch.sigmoid(weight)
+                        weight = weight/weight.mean()
+                        loss = (loss*weight).sum()
+
+                        # Prepare logits for scoring
+                        logits_for_score = (logits*weight).argmax(1)
+
                     else:
                         loss = nn.CrossEntropyLoss()(logits, b_seg_modified)
                         # Prepare logits for scoring
@@ -1494,7 +1522,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
@@ -1533,7 +1561,7 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
-                    # scheduler_dp.step()
+                    scheduler_dp.step()
 
                 # if scheduler.T_cur == 0:
                 #     sz = training_dataset.get_dilate_kernel_size()
@@ -1561,10 +1589,20 @@ def train_DL(run_name, config, training_dataset):
             log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
             # Log data parameters of disturbed samples
             if len(training_dataset.disturbed_idxs) > 0:
+                all_idxs = torch.tensor(range(len(training_dataset))).to(embedding.weight).long()
+                m_all_idxs = map_embedding_idxs(all_idxs, config.grid_size_y, config.grid_size_x)
+                masks = union_norm_mod_label[all_idxs].float()
+                masked_weights = torch.nn.functional.interpolate(
+                    embedding(m_all_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
+                    size=(masks.shape[-2:]),
+                    mode='bilinear',
+                    align_corners=True
+                ).squeeze(1) * masks
                 corr_coeff = np.corrcoef(
-                        torch.sigmoid(embedding.weight).cpu().data.squeeze().numpy(),
-                        disturbed_bool_vect.cpu().numpy()
+                    torch.sigmoid(masked_weights.mean(dim=(-2, -1))).cpu().data.squeeze().numpy(),
+                    disturbed_bool_vect.cpu().numpy()
                 )[0,1]
+
                 wandb.log(
                     {f'data_parameters/corr_coeff_fold{fold_idx}': corr_coeff},
                     step=global_idx
@@ -1726,24 +1764,19 @@ sweep_config_dict = dict(
             value='LabelDisturbanceMode.AFFINE'
         ),
         disturbance_strength=dict(
-            values=[
-                0.1, 0.2,
-                0.3, 0.5,
-                1.0, 2.0,
-                5.0, 10.0
-            ]
+            value=0.3
         ),
         disturbed_percentage=dict(
-            values=[0.1, 0.2, 0.3, 0.6]
+            values=[0.1, 0.2, 0.3]
         ),
         data_param_mode=dict(
-            values=['DataParamMode.ONLY_INSTANCE_PARAMS', 'DataParamMode.DISABLED']
+            values=['DataParamMode.GRIDDED_INSTANCE_PARAMS']
         )
     )
 )
 
 # %%
-DO_SWEEP = True
+DO_SWEEP = False
 
 def normal_run():
     with wandb.init() as run:
