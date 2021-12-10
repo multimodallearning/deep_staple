@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.13.1
+#       jupytext_version: 1.13.3
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -237,7 +237,7 @@ def spatial_augment(b_image=None, b_label=None,
             f"Image and label shapes must match but are {b_image.shape} and {b_label.shape}."
         common_shape = b_image.shape
         common_device = b_image.device
-        
+
     if b_grid_override is None:
         if yield_2d:
             assert len(common_shape) == 3, \
@@ -339,7 +339,7 @@ def spatial_augment(b_image=None, b_label=None,
         b_label_out = b_label_out.squeeze(1).long()
     else:
         b_label_out = None
-    
+
     b_out_grid = grid
 
     if pre_interpolation_factor:
@@ -348,7 +348,7 @@ def spatial_augment(b_image=None, b_label=None,
             1/pre_interpolation_factor, yield_2d
         )
 
-        b_out_grid = F.interpolate(b_out_grid.permute(0,3,1,2), 
+        b_out_grid = F.interpolate(b_out_grid.permute(0,3,1,2),
                       scale_factor=1/pre_interpolation_factor, mode='bilinear',
                       align_corners=True, recompute_scale_factor=False).permute(0,2,3,1)
 
@@ -748,7 +748,7 @@ class CrossMoDa_Data(Dataset):
                         pass
                     else:
                         raise ValueError(f"Disturbance mode {self.disturbance_mode} is not implemented.")
-            # End of disturbance 
+            # End of disturbance
 
         if self.do_augment and not self.augment_at_collate:
             b_image = image.unsqueeze(0).cuda()
@@ -774,7 +774,7 @@ class CrossMoDa_Data(Dataset):
         return {
             'image': image,
             'label': label,
-            'modified_label': modified_label, 
+            'modified_label': modified_label,
             # if disturbance is off, modified label is equals label
             'dataset_idx': dataset_idx,
             'id': _id,
@@ -1012,10 +1012,10 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': "disabled",
+    'debug': False,
+    'wandb_mode': "online",
     'wandb_name_override': None,
-    'do_sweep': False,
+    'do_sweep': True,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 1,
@@ -1068,7 +1068,7 @@ plt.ylabel("ground truth>0")
 plt.plot(sum_over_w);
 
 # %%
-if config_dict['do_plot'] or True:
+if config_dict['do_plot']:
     # Print bare 2D data
     # print("Displaying 2D bare sample")
     # for img, label in zip(training_dataset.img_data_2d.values(),
@@ -1429,7 +1429,7 @@ def train_DL(run_name, config, training_dataset):
             sampler=train_subsampler, pin_memory=True, drop_last=False,
             # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
         )
-        
+
         training_dataset.unset_augment_at_collate()
         training_dataset.set_disturbed_idxs(disturbed_idxs)
         training_dataset.set_disturbance_strength(config.disturbance_strength)
@@ -1473,7 +1473,7 @@ def train_DL(run_name, config, training_dataset):
             training_dataset.train()
 
             ### Disturb samples ###
-            training_dataset.train(disturb=(epx >= config.start_disturbing_after_ep))   
+            training_dataset.train(disturb=(epx >= config.start_disturbing_after_ep))
             wandb.log({"do_disturb": float(training_dataset.do_disturb)}, step=global_idx)
 
             epx_losses = []
@@ -1740,12 +1740,12 @@ def train_DL(run_name, config, training_dataset):
                 print()
                 # End of training loop
 
-            if config.debug or True:
+            if config.debug:
                 break
 
         if len(disturbed_idxs) > 0 and str(config.data_param_mode) != str(DataParamMode.DISABLED):
             training_dataset.eval()
-            
+
             # Log histogram of clean and disturbed parameters
             m_clean_idxs = map_embedding_idxs(
                 clean_idxs, config.grid_size_y, config.grid_size_x
@@ -1758,16 +1758,6 @@ def train_DL(run_name, config, training_dataset):
                 align_corners=True
             ).squeeze(1) * clean_masks
 
-            # TODO remove
-            # training_dataset.eval(disturb=True)
-            # plt.imshow(training_dataset[11]['label'].data.cpu())
-            # plt.show()
-            # plt.imshow(training_dataset[11]['modified_label'].data.cpu())
-            # plt.show()
-            # plt.imshow(union_norm_mod_label[11].data.cpu())
-            # plt.show()
-            # training_dataset.train()
-            # TODO remove
 
             m_disturbed_idxs = map_embedding_idxs(
                 disturbed_idxs, config.grid_size_y, config.grid_size_x
@@ -1808,7 +1798,7 @@ def train_DL(run_name, config, training_dataset):
             # Here we pack dataset_idx, instance_parameter, disturb_flag, 2d_img, 2d_label, 2d_modified_label
             samples_sorted = sorted(data)
             instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels = zip(*samples_sorted)
-            
+
             # TODO readd again
             # Save labels, modified labels, data parameters, ids and flags
             # with gzip.open(train_label_snapshot_path, 'wb') as handle:
