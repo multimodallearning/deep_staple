@@ -1809,10 +1809,11 @@ def train_DL(run_name, config, training_dataset):
 
             overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
                 for d_id, instance_p, disturb_flg in zip(d_ids, instance_parameters, disturb_flags)]
+            overlay_text_list = [overlay_text_list(idx) for idx in train_idxs.tolist()]
             visualize_seg(in_type="batch_2D",
-                        img=torch.stack(_2d_imgs).unsqueeze(1),
-                        seg=torch.stack(_2d_modified_labels),
-                        ground_truth=torch.stack(_2d_labels),
+                        img=torch.stack(_2d_imgs[train_idxs]).unsqueeze(1),
+                        seg=torch.stack(_2d_modified_labels[train_idxs]),
+                        ground_truth=torch.stack(_2d_labels[train_idxs]),
                         crop_to_non_zero_gt=False,
                         crop_to_non_zero_seg=False,
                         alpha_seg = .2,
@@ -1823,21 +1824,21 @@ def train_DL(run_name, config, training_dataset):
                         frame_elements=disturb_flags,
                         file_path=seg_viz_out_path,
             )
-            m_all_idxs = map_embedding_idxs(
-                torch.tensor(range(len(training_dataset))), config.grid_size_y, config.grid_size_x
+            m_tr_idxs = map_embedding_idxs(
+                train_idxs, config.grid_size_y, config.grid_size_x
             ).cuda()
 
-            all_weights = torch.nn.functional.interpolate(
-                embedding(m_all_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
+            tr_weights = torch.nn.functional.interpolate(
+                embedding(m_tr_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
                 size=(disturbed_masks.shape[-2:]),
                 mode='bilinear',
                 align_corners=True
             )
 
             visualize_seg(in_type="batch_2D",
-                        img=all_weights,
-                        seg=torch.stack(_2d_modified_labels),
-                        ground_truth=torch.stack(_2d_labels),
+                        img=tr_weights,
+                        seg=torch.stack(_2d_modified_labels[train_idxs]),
+                        ground_truth=torch.stack(_2d_labels[train_idxs]),
                         crop_to_non_zero_gt=False,
                         crop_to_non_zero_seg=False,
                         alpha_seg = .2,
