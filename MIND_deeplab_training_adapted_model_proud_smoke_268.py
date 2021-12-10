@@ -964,8 +964,8 @@ config_dict = DotDict({
     'save_every': 120,
     'mdl_save_prefix': 'data/models',
 
-     'do_plot': False,
-    'debug': True,
+    'do_plot': False,
+    'debug': False,
     'wandb_mode': "online",
     'wandb_name_override': None,
     'do_sweep': True,
