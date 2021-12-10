@@ -17,7 +17,7 @@
 import os
 import time
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars(select="* -3 -4"))
+os.environ.update(get_vars(select="* -3 -4", force=True))
 import pickle
 import gzip
 import copy
@@ -1013,7 +1013,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': "disabled",
+    'wandb_mode': "online",
     'wandb_name_override': None,
     'do_sweep': False,
 
@@ -1556,11 +1556,10 @@ def train_DL(run_name, config, training_dataset):
                             mode='bilinear',
                             align_corners=True
                         )
-                        weight = F.grid_sample(weight, b_spat_aug_grid,
-                            padding_mode='border', align_corners=False)
-
                         weight = torch.sigmoid(weight)
                         weight = weight/weight.mean()
+                        weight = F.grid_sample(weight, b_spat_aug_grid,
+                            padding_mode='zeros', align_corners=False)
                         loss = (loss*weight).sum()
 
                         # Prepare logits for scoring
@@ -1612,7 +1611,7 @@ def train_DL(run_name, config, training_dataset):
                     scheduler.step()
                     scheduler_dp.step()
 
-                if config.debug and epx > 5:
+                if config.debug:
                     break
 
                 # if scheduler.T_cur == 0:
@@ -1748,30 +1747,21 @@ def train_DL(run_name, config, training_dataset):
             training_dataset.eval()
 
             # Log histogram of clean and disturbed parameters
-            m_clean_idxs = map_embedding_idxs(
-                clean_idxs, config.grid_size_y, config.grid_size_x
+            all_idxs = torch.tensor(range(len(training_dataset)))
+            m_all_idxs = map_embedding_idxs(all_idxs,
+                    config.grid_size_y, config.grid_size_x
             ).cuda()
-            clean_masks = union_norm_mod_label[clean_idxs].float()
-            masked_clean_weights = torch.nn.functional.interpolate(
-                embedding(m_clean_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
-                size=(clean_masks.shape[-2:]),
+            masks = union_norm_mod_label[all_idxs].float()
+            masked_weights = torch.nn.functional.interpolate(
+                embedding(m_all_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
+                size=(masks.shape[-2:]),
                 mode='bilinear',
                 align_corners=True
-            ).squeeze(1) * clean_masks
+            ).squeeze(1) * masks
 
+            reduced_weights = masked_weights.mean(dim=(-2, -1))
 
-            m_disturbed_idxs = map_embedding_idxs(
-                disturbed_idxs, config.grid_size_y, config.grid_size_x
-            ).cuda()
-            disturbed_masks = union_norm_mod_label[disturbed_idxs].float()
-            masked_disturbed_weights = torch.nn.functional.interpolate(
-                embedding(m_disturbed_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
-                size=(disturbed_masks.shape[-2:]),
-                mode='bilinear',
-                align_corners=True
-            ).squeeze(1) * disturbed_masks
-
-            separated_params = list(zip(masked_clean_weights.mean(dim=(-2, -1)), masked_disturbed_weights.mean(dim=(-2, -1))))
+            separated_params = list(zip(reduced_weights[clean_idxs], reduced_weights[disturbed_idxs]))
             s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
             fields = {"primary_bins" : "clean_idxs", "secondary_bins" : "disturbed_idxs", "title" : "Data parameter composite histogram"}
             composite_histogram = wandb.plot_table(vega_spec_name="rap1ide/composite_histogram", data_table=s_table, fields=fields)
@@ -1780,7 +1770,7 @@ def train_DL(run_name, config, training_dataset):
             # Write out data of modified and un-modified labels and an overview image
             train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_train_label_snapshot.pkl.gz")
             seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_data_parameter_weighted_samples.png")
-
+            weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_data_parameter_weightmap.png")
             # Generate directories
             for _pathh in [train_label_snapshot_path, seg_viz_out_path]:
                 _pathh.parent.mkdir(parents=True, exist_ok=True)
@@ -1793,7 +1783,7 @@ def train_DL(run_name, config, training_dataset):
                  sample['dataset_idx'],
                  sample['image'],
                  sample['label'],
-                 sample['modified_label']) for weight, disturb_flg, sample in zip(embedding.weight, disturbed_bool_vect, training_dataset)
+                 sample['modified_label']) for weight, disturb_flg, sample in zip(reduced_weights, disturbed_bool_vect, training_dataset)
             )
 
             # Here we pack dataset_idx, instance_parameter, disturb_flag, 2d_img, 2d_label, 2d_modified_label
@@ -1809,11 +1799,12 @@ def train_DL(run_name, config, training_dataset):
 
             overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
                 for d_id, instance_p, disturb_flg in zip(d_ids, instance_parameters, disturb_flags)]
-            overlay_text_list = [overlay_text_list(idx) for idx in train_idxs.tolist()]
+            overlay_text_list = [overlay_text_list[idx] for idx in train_idxs.tolist()]
+            disturb_flags = [disturb_flags[idx] for idx in train_idxs.tolist()]
             visualize_seg(in_type="batch_2D",
-                        img=torch.stack(_2d_imgs[train_idxs]).unsqueeze(1),
-                        seg=torch.stack(_2d_modified_labels[train_idxs]),
-                        ground_truth=torch.stack(_2d_labels[train_idxs]),
+                        img=torch.stack(_2d_imgs)[train_idxs].unsqueeze(1),
+                        seg=torch.stack(_2d_modified_labels)[train_idxs],
+                        ground_truth=torch.stack(_2d_labels)[train_idxs],
                         crop_to_non_zero_gt=False,
                         crop_to_non_zero_seg=False,
                         alpha_seg = .2,
@@ -1830,15 +1821,15 @@ def train_DL(run_name, config, training_dataset):
 
             tr_weights = torch.nn.functional.interpolate(
                 embedding(m_tr_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
-                size=(disturbed_masks.shape[-2:]),
+                size=(masks.shape[-2:]),
                 mode='bilinear',
                 align_corners=True
             )
 
             visualize_seg(in_type="batch_2D",
                         img=tr_weights,
-                        seg=torch.stack(_2d_modified_labels[train_idxs]),
-                        ground_truth=torch.stack(_2d_labels[train_idxs]),
+                        seg=torch.stack(_2d_modified_labels)[train_idxs],
+                        ground_truth=torch.stack(_2d_labels)[train_idxs],
                         crop_to_non_zero_gt=False,
                         crop_to_non_zero_seg=False,
                         alpha_seg = .2,
@@ -1847,7 +1838,7 @@ def train_DL(run_name, config, training_dataset):
                         overlay_text=overlay_text_list,
                         annotate_color=(0,255,255),
                         frame_elements=disturb_flags,
-                        file_path=seg_viz_out_path,
+                        file_path=weightmap_out_path,
             )
         # End of fold loop
 
