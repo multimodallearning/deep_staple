@@ -1404,9 +1404,9 @@ def train_DL(run_name, config, training_dataset):
         t0 = time.time()
 
         # Prepare corr coefficient scoring
+        training_dataset.train()
         norm_label, mod_label = list(zip(*[(sample['label'], sample['modified_label']) \
             for sample in training_dataset]))
-
         union_norm_mod_label = torch.logical_or(torch.stack(norm_label), torch.stack(mod_label))
 
         embedding = embedding.cuda()
@@ -1770,7 +1770,7 @@ sweep_config_dict = dict(
             values=[0.1, 0.2, 0.3]
         ),
         data_param_mode=dict(
-            values=['DataParamMode.GRIDDED_INSTANCE_PARAMS']
+            value='DataParamMode.GRIDDED_INSTANCE_PARAMS'
         )
     )
 )
