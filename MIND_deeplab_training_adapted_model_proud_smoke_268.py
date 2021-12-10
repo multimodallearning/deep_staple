@@ -1776,15 +1776,14 @@ sweep_config_dict = dict(
 )
 
 # %%
-DO_SWEEP = False
+DO_SWEEP = True
 
 def normal_run():
-    with wandb.init() as run:
-        run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
+    with wandb.init(project="curriculum_deeplab", group="training", job_type="train",
             name=config_dict['wandb_name_override'],
             config=config_dict, settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']
-        )
+        ) as run:
 
         run_name = run.name
         config = wandb.config
