@@ -927,7 +927,7 @@ config_dict = DotDict({
     # 'epx_override': 0,
 
     'use_mind': True,
-    'epochs': 60,
+    'epochs': 80,
 
     'batch_size': 64,
     'val_batch_size': 1,
@@ -956,8 +956,8 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 4,
-    'grid_size_x': 4,
+    'grid_size_y': 5,
+    'grid_size_x': 5,
     # ),
 
     'save_every': 60,
@@ -1690,10 +1690,32 @@ def train_DL(run_name, config, training_dataset):
             if config.debug:
                 break
 
-        if len(disturbed_idxs) > 0 and str(config.data_param_mode) == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+        if len(disturbed_idxs) > 0 and str(config.data_param_mode) != str(DataParamMode.DISABLED):
 
             # Log histogram of clean and disturbed parameters
-            separated_params = list(zip(embedding.cpu()(clean_idxs), embedding.cpu()(disturbed_idxs)))
+            m_clean_idxs = map_embedding_idxs(
+                clean_idxs, config.grid_size_y, config.grid_size_x
+            ).cuda()
+            clean_masks = union_norm_mod_label[clean_idxs].float()
+            masked_clean_weights = torch.nn.functional.interpolate(
+                embedding(m_clean_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
+                size=(clean_masks.shape[-2:]),
+                mode='bilinear',
+                align_corners=True
+            ).squeeze(1) * clean_masks
+
+            m_disturbed_idxs = map_embedding_idxs(
+                disturbed_idxs, config.grid_size_y, config.grid_size_x
+            ).cuda()
+            disturbed_masks = union_norm_mod_label[disturbed_idxs].float()
+            masked_disturbed_weights = torch.nn.functional.interpolate(
+                embedding(m_disturbed_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
+                size=(disturbed_masks.shape[-2:]),
+                mode='bilinear',
+                align_corners=True
+            ).squeeze(1) * disturbed_masks
+
+            separated_params = list(zip(masked_clean_weights.mean(dim=(-2, -1)), masked_disturbed_weights.mean(dim=(-2, -1))))
             s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
             fields = {"primary_bins" : "clean_idxs", "secondary_bins" : "disturbed_idxs", "title" : "Data parameter composite histogram"}
             composite_histogram = wandb.plot_table(vega_spec_name="rap1ide/composite_histogram", data_table=s_table, fields=fields)
@@ -1764,13 +1786,19 @@ sweep_config_dict = dict(
             value='LabelDisturbanceMode.AFFINE'
         ),
         disturbance_strength=dict(
-            value=0.3
+            values=[
+                0.1, 0.2,
+                0.3, 0.5,
+                1.0
+            ]
         ),
         disturbed_percentage=dict(
             values=[0.1, 0.2, 0.3]
         ),
         data_param_mode=dict(
-            value='DataParamMode.GRIDDED_INSTANCE_PARAMS'
+            values=[
+                'DataParamMode.GRIDDED_INSTANCE_PARAMS'
+            ]
         )
     )
 )
