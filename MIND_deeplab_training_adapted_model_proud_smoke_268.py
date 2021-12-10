@@ -1013,12 +1013,12 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': "online",
+    'wandb_mode': "disabled",
     'wandb_name_override': None,
-    'do_sweep': True,
+    'do_sweep': False,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
-    'disturbance_strength': 1,
+    'disturbance_strength': 1.,
     'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
@@ -1612,7 +1612,7 @@ def train_DL(run_name, config, training_dataset):
                     scheduler.step()
                     scheduler_dp.step()
 
-                if config.debug:
+                if config.debug and epx > 5:
                     break
 
                 # if scheduler.T_cur == 0:
@@ -1642,18 +1642,19 @@ def train_DL(run_name, config, training_dataset):
 
             # Log data parameters of disturbed samples
             if len(training_dataset.disturbed_idxs) > 0:
-                all_idxs = torch.tensor(range(len(training_dataset))).to(embedding.weight).long()
-                m_all_idxs = map_embedding_idxs(all_idxs, config.grid_size_y, config.grid_size_x)
-                masks = union_norm_mod_label[all_idxs].float()
+                m_tr_idxs = map_embedding_idxs(train_idxs,
+                    config.grid_size_y, config.grid_size_x
+                ).cuda()
+                masks = union_norm_mod_label[train_idxs].float()
                 masked_weights = torch.nn.functional.interpolate(
-                    embedding(m_all_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
+                    embedding(m_tr_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
                     size=(masks.shape[-2:]),
                     mode='bilinear',
                     align_corners=True
                 ).squeeze(1) * masks
                 corr_coeff = np.corrcoef(
                     torch.sigmoid(masked_weights.mean(dim=(-2, -1))).cpu().data.squeeze().numpy(),
-                    disturbed_bool_vect.cpu().numpy()
+                    disturbed_bool_vect[train_idxs].cpu().numpy()
                 )[0,1]
 
                 wandb.log(
@@ -1737,8 +1738,8 @@ def train_DL(run_name, config, training_dataset):
                     wandb.log({f'scores/val_dice_mean_wo_bg_fold{fold_idx}': mean_val_dice}, step=global_idx)
                     log_class_dices("scores/val_dice_mean_", f"_fold{fold_idx}", val_class_dices, global_idx)
 
-                print()
-                # End of training loop
+            print()
+            # End of training loop
 
             if config.debug:
                 break
@@ -1804,30 +1805,56 @@ def train_DL(run_name, config, training_dataset):
             # with gzip.open(train_label_snapshot_path, 'wb') as handle:
             #     pickle.dump(list(zip(instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_labels, _2d_modified_labels)),
             #         handle, protocol=pickle.HIGHEST_PROTOCOL)
-            # # overlay text example: d_idx=0, dp_i=1.00, dist? False
-            # overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
-            #     for d_id, instance_p, disturb_flg in zip(d_ids, instance_parameters, disturb_flags)]
-            # visualize_seg(in_type="batch_2D",
-            #             img=torch.stack(_2d_imgs).unsqueeze(1),
-            #             seg=torch.stack(_2d_modified_labels),
-            #             ground_truth=torch.stack(_2d_labels),
-            #             crop_to_non_zero_gt=False,
-            #             crop_to_non_zero_seg=False,
-            #             alpha_seg = .2,
-            #             alpha_gt = .4,
-            #             n_per_row=70,
-            #             overlay_text=overlay_text_list,
-            #             annotate_color=(0,255,255),
-            #             frame_elements=disturb_flags,
-            #             file_path=seg_viz_out_path,
-            # )
+            # overlay text example: d_idx=0, dp_i=1.00, dist? False
+
+            overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
+                for d_id, instance_p, disturb_flg in zip(d_ids, instance_parameters, disturb_flags)]
+            visualize_seg(in_type="batch_2D",
+                        img=torch.stack(_2d_imgs).unsqueeze(1),
+                        seg=torch.stack(_2d_modified_labels),
+                        ground_truth=torch.stack(_2d_labels),
+                        crop_to_non_zero_gt=False,
+                        crop_to_non_zero_seg=False,
+                        alpha_seg = .2,
+                        alpha_gt = .4,
+                        n_per_row=70,
+                        overlay_text=overlay_text_list,
+                        annotate_color=(0,255,255),
+                        frame_elements=disturb_flags,
+                        file_path=seg_viz_out_path,
+            )
+            m_all_idxs = map_embedding_idxs(
+                torch.tensor(range(len(training_dataset))), config.grid_size_y, config.grid_size_x
+            ).cuda()
+
+            all_weights = torch.nn.functional.interpolate(
+                embedding(m_all_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
+                size=(disturbed_masks.shape[-2:]),
+                mode='bilinear',
+                align_corners=True
+            )
+
+            visualize_seg(in_type="batch_2D",
+                        img=all_weights,
+                        seg=torch.stack(_2d_modified_labels),
+                        ground_truth=torch.stack(_2d_labels),
+                        crop_to_non_zero_gt=False,
+                        crop_to_non_zero_seg=False,
+                        alpha_seg = .2,
+                        alpha_gt = .2,
+                        n_per_row=70,
+                        overlay_text=overlay_text_list,
+                        annotate_color=(0,255,255),
+                        frame_elements=disturb_flags,
+                        file_path=seg_viz_out_path,
+            )
         # End of fold loop
 
 
 # %%
 # Config overrides
 # config_dict['wandb_mode'] = 'disabled'
-# config_dict['debug'] = True
+config_dict['debug'] = True
 # Model loading
 # config_dict['wandb_name_override'] = 'dummy-oDbynkD4q8KBTHU5CRKt4Q'
 # config_dict['fold_override'] = 0
