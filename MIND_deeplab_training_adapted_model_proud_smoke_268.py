@@ -422,7 +422,8 @@ class CrossMoDa_Data(Dataset):
         self.disturbed_idxs = disturbed_idxs
         self.yield_2d_normal_to = yield_2d_normal_to
         self.crop_2d_slices_gt_num_threshold = crop_2d_slices_gt_num_threshold
-        self.do_train = False
+        self.do_augment = False
+        self.do_disturb = False
         self.augment_at_collate = False
         self.dilate_kernel_sz = dilate_kernel_sz
         self.disturbance_mode = disturbance_mode
@@ -698,20 +699,19 @@ class CrossMoDa_Data(Dataset):
         modified_label = label.detach().clone()
         spat_augment_grid = []
 
-        if self.do_train:
 
-            # In case of training add augmentation, modification and
-            # disturbance
+        # In case of training add augmentation, modification and
+        # disturbance
 
-            # Dilate small cochlea segmentation
-            # COCHLEA_CLASS_IDX = 2
-            # pre_mod = b_label.squeeze(0)
-            # modified_label = dilate_label_class(
-            #     b_label.detach().clone(), COCHLEA_CLASS_IDX, COCHLEA_CLASS_IDX,
-            #     yield_2d=yield_2d, kernel_sz=self.dilate_kernel_sz
-            # ).squeeze(0)
+        # Dilate small cochlea segmentation
+        # COCHLEA_CLASS_IDX = 2
+        # pre_mod = b_label.squeeze(0)
+        # modified_label = dilate_label_class(
+        #     b_label.detach().clone(), COCHLEA_CLASS_IDX, COCHLEA_CLASS_IDX,
+        #     yield_2d=yield_2d, kernel_sz=self.dilate_kernel_sz
+        # ).squeeze(0)
 
-
+        if self.do_disturb:
             if self.disturbed_idxs != None and dataset_idx in self.disturbed_idxs:
                 with torch_manual_seeded(dataset_idx):
                     if str(self.disturbance_mode)==str(LabelDisturbanceMode.FLIP_ROLL):
@@ -748,35 +748,34 @@ class CrossMoDa_Data(Dataset):
                         pass
                     else:
                         raise ValueError(f"Disturbance mode {self.disturbance_mode} is not implemented.")
+            # End of disturbance 
 
-            if not self.augment_at_collate:
-                b_image = image.unsqueeze(0).cuda()
-                b_label = label.unsqueeze(0).cuda()
-                b_modified_label = modified_label.unsqueeze(0).cuda()
+        if self.do_augment and not self.augment_at_collate:
+            b_image = image.unsqueeze(0).cuda()
+            b_label = label.unsqueeze(0).cuda()
+            b_modified_label = modified_label.unsqueeze(0).cuda()
 
-                b_image, b_label, b_spat_augment_grid = \
-                    self.augment(b_image, b_label, yield_2d)
-                _, b_modified_label, _ = \
-                    spatial_augment(b_label=b_modified_label, yield_2d=yield_2d, \
-                                 b_grid_override=b_spat_augment_grid)
+            b_image, b_label, b_spat_augment_grid = \
+                self.augment(b_image, b_label, yield_2d)
+            _, b_modified_label, _ = \
+                spatial_augment(b_label=b_modified_label, yield_2d=yield_2d, \
+                             b_grid_override=b_spat_augment_grid)
 
-                image = b_image.squeeze(0).cpu()
-                label = b_label.squeeze(0).cpu()
-                modified_label = b_modified_label.squeeze(0).cpu()
-                spat_augment_grid = b_spat_augment_grid.squeeze(0).cpu()
+            image = b_image.squeeze(0).cpu()
+            label = b_label.squeeze(0).cpu()
+            modified_label = b_modified_label.squeeze(0).cpu()
+            spat_augment_grid = b_spat_augment_grid.squeeze(0).cpu()
 
         if yield_2d:
             assert image.dim() == label.dim() == 2
         else:
             assert image.dim() == label.dim() == 3
 
-        if self.do_train:
-            assert modified_label.dim() == label.dim()
-
         return {
             'image': image,
             'label': label,
-            'modified_label': modified_label,
+            'modified_label': modified_label, 
+            # if disturbance is off, modified label is equals label
             'dataset_idx': dataset_idx,
             'id': _id,
             'image_path': image_path,
@@ -813,11 +812,12 @@ class CrossMoDa_Data(Dataset):
             self.disturbed_idxs = []
 
 
-    def train(self):
-        self.do_train = True
+    def train(self, augment=True, disturb=True):
+        self.do_augment = augment
+        self.do_disturb = disturb
 
-    def eval(self):
-        self.do_train = False
+    def eval(self, augment=False, disturb=False):
+        self.train(augment, disturb)
 
     def set_augment_at_collate(self):
         self.augment_at_collate = True
@@ -1080,7 +1080,7 @@ if config_dict['do_plot'] or True:
     #                 alpha_gt = .3)
 
     # Print transformed 2D data
-    training_dataset.eval()
+    training_dataset.train()
     print(training_dataset.disturbed_idxs)
     training_dataset.set_disturbed_idxs(list(range(0,20,1)))
     print("Displaying 2D training sample")
@@ -1429,7 +1429,10 @@ def train_DL(run_name, config, training_dataset):
             sampler=train_subsampler, pin_memory=True, drop_last=False,
             # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
         )
+        
         training_dataset.unset_augment_at_collate()
+        training_dataset.set_disturbed_idxs(disturbed_idxs)
+        training_dataset.set_disturbance_strength(config.disturbance_strength)
 
 #         val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
 #                                     sampler=val_subsampler, pin_memory=True, drop_last=False)
@@ -1455,7 +1458,6 @@ def train_DL(run_name, config, training_dataset):
         t0 = time.time()
 
         # Prepare corr coefficient scoring
-        training_dataset.train()
         norm_label, mod_label = list(zip(*[(sample['label'], sample['modified_label']) \
             for sample in training_dataset]))
         union_norm_mod_label = torch.logical_or(torch.stack(norm_label), torch.stack(mod_label))
@@ -1471,14 +1473,8 @@ def train_DL(run_name, config, training_dataset):
             training_dataset.train()
 
             ### Disturb samples ###
-            do_disturb = epx >= config.start_disturbing_after_ep
-            wandb.log({"do_disturb": float(do_disturb)}, step=global_idx)
-
-            if do_disturb:
-                training_dataset.set_disturbed_idxs(disturbed_idxs)
-                training_dataset.set_disturbance_strength(config.disturbance_strength)
-            else:
-                training_dataset.set_disturbed_idxs([])
+            training_dataset.train(disturb=(epx >= config.start_disturbing_after_ep))   
+            wandb.log({"do_disturb": float(training_dataset.do_disturb)}, step=global_idx)
 
             epx_losses = []
             dices = []
@@ -1492,7 +1488,7 @@ def train_DL(run_name, config, training_dataset):
 
                 b_img = batch['image']
                 b_seg = batch['label']
-                b_spat_aug_grid = ['b_spat_aug_grid']
+                b_spat_aug_grid = batch['spat_augment_grid']
 
                 b_seg_modified = batch['modified_label']
                 b_idxs_dataset = batch['dataset_idx']
@@ -1502,7 +1498,7 @@ def train_DL(run_name, config, training_dataset):
                 b_seg_modified = b_seg_modified.cuda()
                 b_idxs_dataset = b_idxs_dataset.cuda()
                 b_seg = b_seg.cuda()
-                b_spat_aug_grid.cuda()
+                b_spat_aug_grid = b_spat_aug_grid.cuda()
 
                 # if True:
                 #     print(f"Input 2D stack label/ground-truth")
@@ -1748,6 +1744,8 @@ def train_DL(run_name, config, training_dataset):
                 break
 
         if len(disturbed_idxs) > 0 and str(config.data_param_mode) != str(DataParamMode.DISABLED):
+            training_dataset.eval()
+            
             # Log histogram of clean and disturbed parameters
             m_clean_idxs = map_embedding_idxs(
                 clean_idxs, config.grid_size_y, config.grid_size_x
@@ -1761,14 +1759,14 @@ def train_DL(run_name, config, training_dataset):
             ).squeeze(1) * clean_masks
 
             # TODO remove
-            training_dataset.eval()
-            plt.imshow(training_dataset[0]['label'].data.cpu())
-            plt.show()
-            plt.imshow(training_dataset[0]['modified_label'].data.cpu())
-            plt.show()
-            plt.imshow(union_norm_mod_label[0].data.cpu())
-            plt.show()
-            training_dataset.train()
+            # training_dataset.eval(disturb=True)
+            # plt.imshow(training_dataset[11]['label'].data.cpu())
+            # plt.show()
+            # plt.imshow(training_dataset[11]['modified_label'].data.cpu())
+            # plt.show()
+            # plt.imshow(union_norm_mod_label[11].data.cpu())
+            # plt.show()
+            # training_dataset.train()
             # TODO remove
 
             m_disturbed_idxs = map_embedding_idxs(
@@ -1781,7 +1779,6 @@ def train_DL(run_name, config, training_dataset):
                 mode='bilinear',
                 align_corners=True
             ).squeeze(1) * disturbed_masks
-
 
             separated_params = list(zip(masked_clean_weights.mean(dim=(-2, -1)), masked_disturbed_weights.mean(dim=(-2, -1))))
             s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
@@ -1811,7 +1808,8 @@ def train_DL(run_name, config, training_dataset):
             # Here we pack dataset_idx, instance_parameter, disturb_flag, 2d_img, 2d_label, 2d_modified_label
             samples_sorted = sorted(data)
             instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels = zip(*samples_sorted)
-
+            
+            # TODO readd again
             # Save labels, modified labels, data parameters, ids and flags
             # with gzip.open(train_label_snapshot_path, 'wb') as handle:
             #     pickle.dump(list(zip(instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_labels, _2d_modified_labels)),
@@ -1835,13 +1833,6 @@ def train_DL(run_name, config, training_dataset):
             # )
         # End of fold loop
 
-# %%
-plt.imshow(training_dataset[2]['label'].data.cpu())
-plt.show()
-plt.imshow(training_dataset[2]['modified_label'].data.cpu())
-plt.show()
-# plt.imshow(union_norm_mod_label[0].data.cpu())
-# plt.show()
 
 # %%
 # Config overrides
