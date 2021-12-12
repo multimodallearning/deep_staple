@@ -1558,7 +1558,7 @@ def train_DL(run_name, config, training_dataset):
                         weight = torch.sigmoid(weight)
                         weight = weight/weight.mean()
                         weight = F.grid_sample(weight, b_spat_aug_grid,
-                            padding_mode='border', align_corners=True)
+                            padding_mode='border', align_corners=False)
                         loss = (loss.unsqueeze(1)*weight).sum()
 
                         # Prepare logits for scoring
