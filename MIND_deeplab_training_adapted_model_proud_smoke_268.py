@@ -1004,11 +1004,11 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 16,
-    'grid_size_x': 16,
+    'grid_size_y': 64,
+    'grid_size_x': 64,
     # ),
 
-    'save_every': 120,
+    'save_every': 200,
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
@@ -1470,7 +1470,6 @@ def train_DL(run_name, config, training_dataset):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
 
             lraspp.train()
-            training_dataset.train()
 
             ### Disturb samples ###
             training_dataset.train(disturb=(epx >= config.start_disturbing_after_ep))
@@ -1559,8 +1558,8 @@ def train_DL(run_name, config, training_dataset):
                         weight = torch.sigmoid(weight)
                         weight = weight/weight.mean()
                         weight = F.grid_sample(weight, b_spat_aug_grid,
-                            padding_mode='zeros', align_corners=False)
-                        loss = (loss*weight).sum()
+                            padding_mode='border', align_corners=True)
+                        loss = (loss.unsqueeze(1)*weight).sum()
 
                         # Prepare logits for scoring
                         logits_for_score = (logits*weight).argmax(1)
@@ -1752,13 +1751,14 @@ def train_DL(run_name, config, training_dataset):
                     config.grid_size_y, config.grid_size_x
             ).cuda()
             masks = union_norm_mod_label[all_idxs].float()
-            masked_weights = torch.nn.functional.interpolate(
+            all_weights = torch.nn.functional.interpolate(
                 embedding(m_all_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
                 size=(masks.shape[-2:]),
                 mode='bilinear',
                 align_corners=True
-            ).squeeze(1) * masks
+            ).squeeze(1)
 
+            masked_weights = all_weights * masks
             reduced_weights = masked_weights.mean(dim=(-2, -1))
 
             separated_params = list(zip(reduced_weights[clean_idxs], reduced_weights[disturbed_idxs]))
@@ -1777,18 +1777,20 @@ def train_DL(run_name, config, training_dataset):
 
             print("Writing out sample and weight image.")
             training_dataset.train()
-            data = ((weight,
-                 bool(disturb_flg.item()),
-                 sample['id'],
-                 sample['dataset_idx'],
-                 sample['image'],
-                 sample['label'],
-                 sample['modified_label']) for weight, disturb_flg, sample in zip(reduced_weights, disturbed_bool_vect, training_dataset)
-            )
+            data = [(
+                weight,
+                weightmap,
+                bool(disturb_flg.item()),
+                sample['id'],
+                sample['dataset_idx'],
+                sample['image'],
+                sample['label'],
+                sample['modified_label']) for weight, weightmap, disturb_flg, sample in zip(reduced_weights, all_weights, disturbed_bool_vect, training_dataset)
+            ]
 
             # Here we pack dataset_idx, instance_parameter, disturb_flag, 2d_img, 2d_label, 2d_modified_label
-            samples_sorted = sorted(data)
-            instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels = zip(*samples_sorted)
+            samples_sorted = sorted(data, key=lambda tpl: tpl[0])
+            dp_weight, dp_weightmap, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels = zip(*samples_sorted)
 
             # TODO readd again
             # Save labels, modified labels, data parameters, ids and flags
@@ -1798,7 +1800,7 @@ def train_DL(run_name, config, training_dataset):
             # overlay text example: d_idx=0, dp_i=1.00, dist? False
 
             overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
-                for d_id, instance_p, disturb_flg in zip(d_ids, instance_parameters, disturb_flags)]
+                for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
             overlay_text_list = [overlay_text_list[idx] for idx in train_idxs.tolist()]
             disturb_flags = [disturb_flags[idx] for idx in train_idxs.tolist()]
             visualize_seg(in_type="batch_2D",
@@ -1815,25 +1817,9 @@ def train_DL(run_name, config, training_dataset):
                         frame_elements=disturb_flags,
                         file_path=seg_viz_out_path,
             )
-            m_tr_idxs = map_embedding_idxs(
-                train_idxs, config.grid_size_y, config.grid_size_x
-            ).cuda()
-
-            tr_weights = torch.nn.functional.interpolate(
-                embedding(m_tr_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
-                size=(masks.shape[-2:]),
-                mode='bilinear',
-                align_corners=True
-            )
 
             visualize_seg(in_type="batch_2D",
-                        img=tr_weights,
-                        seg=torch.stack(_2d_modified_labels)[train_idxs],
-                        ground_truth=torch.stack(_2d_labels)[train_idxs],
-                        crop_to_non_zero_gt=False,
-                        crop_to_non_zero_seg=False,
-                        alpha_seg = .2,
-                        alpha_gt = .2,
+                        img=torch.stack(dp_weightmap)[train_idxs].unsqueeze(1),
                         n_per_row=70,
                         overlay_text=overlay_text_list,
                         annotate_color=(0,255,255),
@@ -1846,7 +1832,7 @@ def train_DL(run_name, config, training_dataset):
 # %%
 # Config overrides
 # config_dict['wandb_mode'] = 'disabled'
-config_dict['debug'] = True
+# config_dict['debug'] = True
 # Model loading
 # config_dict['wandb_name_override'] = 'dummy-oDbynkD4q8KBTHU5CRKt4Q'
 # config_dict['fold_override'] = 0
