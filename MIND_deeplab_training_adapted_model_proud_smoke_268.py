@@ -1805,12 +1805,9 @@ def train_DL(run_name, config, training_dataset):
             disturb_flags = [disturb_flags[idx] for idx in train_idxs.tolist()]
             visualize_seg(in_type="batch_2D",
                         img=torch.stack(_2d_imgs)[train_idxs].unsqueeze(1),
-                        seg=torch.stack(_2d_modified_labels)[train_idxs],
-                        ground_truth=torch.stack(_2d_labels)[train_idxs],
-                        crop_to_non_zero_gt=False,
+                        seg=(4*torch.stack(_2d_modified_labels)[train_idxs]-torch.stack(_2d_labels)[train_idxs]).abs(),
                         crop_to_non_zero_seg=False,
                         alpha_seg = .2,
-                        alpha_gt = .4,
                         n_per_row=70,
                         overlay_text=overlay_text_list,
                         annotate_color=(0,255,255),
@@ -1820,6 +1817,8 @@ def train_DL(run_name, config, training_dataset):
 
             visualize_seg(in_type="batch_2D",
                         img=torch.stack(dp_weightmap)[train_idxs].unsqueeze(1),
+                        seg=torch.stack(_2d_modified_labels)[train_idxs],
+                        alpha_seg = 0.,
                         n_per_row=70,
                         overlay_text=overlay_text_list,
                         annotate_color=(0,255,255),
