@@ -1005,8 +1005,8 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 32,
-    'grid_size_x': 32,
+    'grid_size_y': 1,
+    'grid_size_x': 1,
     # ),
 
     'save_every': 200,
@@ -1241,8 +1241,11 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
         pretrained=False, progress=True, num_classes=len(config.label_tags)
     )
     set_module(lraspp, 'backbone.0.0',
-               torch.nn.Conv2d(in_channels, 16, kernel_size=(3, 3), stride=(2, 2),
-                               padding=(1, 1), bias=False)
+        torch.nn.Conv2d(in_channels, 16, kernel_size=(3, 3), stride=(2, 2),
+                        padding=(1, 1), bias=False)
+    )
+    set_module(lraspp, 'classifier.scale.2',
+        torch.nn.Identity()
     )
 
     lraspp.to(device)
@@ -1534,15 +1537,17 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
                     if config.data_param_mode == str(DataParamMode.ONLY_INSTANCE_PARAMS):
-
-                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
                         weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
-                        weight = weight/weight.mean()
-                        # weight = weight/instance_pixel_weight[b_idxs_dataset] TODO removce
-                        loss = (loss*weight).sum()
+                        logits = logits*weight
+                        input_ = torch.sigmoid(logits)
+                        # loss = nn.CrossEntropyLoss(reduction='mean')(_input, b_seg_modified).mean((-1,-2))
+
+                        # weight = weight/weight.mean()
+                        # # weight = weight/instance_pixel_weight[b_idxs_dataset] TODO removce
+                        # loss = (loss*weight).sum()
 
                         # Prepare logits for scoring
-                        logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
+                        logits_for_score = _input.argmax(-1)
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
 
@@ -1560,7 +1565,7 @@ def train_DL(run_name, config, training_dataset):
                         weight = F.grid_sample(weight, b_spat_aug_grid,
                             padding_mode='border', align_corners=False)
 
-                        logits = logits*weight
+                        logits = logits*weight/weight.mean()
                         loss = nn.BCEWithLogitsLoss(reduction='mean')(
                             logits.permute(0,2,3,1),
                             torch.nn.functional.one_hot(b_seg_modified, len(config.label_tags)).float()
@@ -1576,7 +1581,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 10:
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
