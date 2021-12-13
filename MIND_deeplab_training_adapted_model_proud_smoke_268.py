@@ -1520,6 +1520,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'reg_crossmoda',
+    'reg_state': 'combined',
     'train_set_max_len': 100,
     'crop_3d_w_dim_range': (24, 110),
     'crop_2d_slices_gt_num_threshold': 25,
@@ -1586,7 +1587,9 @@ if config_dict['dataset'] == 'crossmoda':
 
 if config_dict['dataset'] == 'reg_crossmoda':
     training_dataset = RegCrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
-        domain="source", reg_state="combined", size=(128, 128, 128),
+        domain="source",
+        reg_state=config_dict['reg_state'],
+        size=(128, 128, 128),
         ensure_labeled_pairs=True,
         max_load_num=config_dict['train_set_max_len'],
         crop_3d_w_dim_range=config_dict['crop_3d_w_dim_range'], crop_2d_slices_gt_num_threshold=config_dict['crop_2d_slices_gt_num_threshold'],
@@ -2314,10 +2317,13 @@ def train_DL(run_name, config, training_dataset):
 # Define sweep override dict
 sweep_config_dict = dict(
     method='grid',
-    metric=dict(goal='minimize', name='data_parameters/corr_coeff_fold0'),
+    metric=dict(goal='maximize', name='scores/val_dice_mean_tumour_fold0'),
     parameters=dict(
         data_param_mode=dict(
             values=['DataParamMode.ONLY_INSTANCE_PARAMS', 'DataParamMode.DISABLED']
+        ),
+        reg_state=dict(
+            values=['combined', 'best']
         )
     )
 )
