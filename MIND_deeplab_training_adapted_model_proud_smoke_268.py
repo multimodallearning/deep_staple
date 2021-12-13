@@ -19,6 +19,7 @@ import time
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
 os.environ.update(get_vars(select="* -3 -4"))
 import pickle
+import gzip
 import copy
 from collections import OrderedDict
 import torch
@@ -323,7 +324,6 @@ def augmentNoise(b_image, strength=0.05):
 
 
 # %%
-
 class CrossMoDa_Data(Dataset):
     def __init__(self,
         base_dir, domain, state,
@@ -385,7 +385,8 @@ class CrossMoDa_Data(Dataset):
         self.disturbed_idxs = disturbed_idxs
         self.yield_2d_normal_to = yield_2d_normal_to
         self.crop_2d_slices_gt_num_threshold = crop_2d_slices_gt_num_threshold
-        self.do_train = False
+        self.do_augment = False
+        self.do_disturb = False
         self.augment_at_collate = False
         self.dilate_kernel_sz = dilate_kernel_sz
         self.disturbance_mode = disturbance_mode
@@ -639,8 +640,6 @@ class CrossMoDa_Data(Dataset):
         else:
             yield_2d = yield_2d_override
 
-        modified_label = []
-
         if yield_2d:
             all_ids = self.get_2d_ids()
             _id = all_ids[dataset_idx]
@@ -660,16 +659,7 @@ class CrossMoDa_Data(Dataset):
             image_path = self.img_paths[_id]
             label_path = self.label_paths[_id]
 
-        if self.do_train:
-            # In case of training add augmentation, modification and
-            # disturbance
-
-            if not self.augment_at_collate:
-                b_image = image.unsqueeze(0).cuda()
-                b_label = label.unsqueeze(0).cuda()
-                b_image, b_label = self.augment(b_image, b_label, yield_2d)
-                image = b_image.squeeze(0).cpu()
-                label = b_label.squeeze(0).cpu()
+        modified_label = label.detach().clone()
 
             # Dilate small cochlea segmentation
             # COCHLEA_CLASS_IDX = 2
@@ -678,8 +668,8 @@ class CrossMoDa_Data(Dataset):
             #     b_label.detach().clone(), COCHLEA_CLASS_IDX, COCHLEA_CLASS_IDX,
             #     yield_2d=yield_2d, kernel_sz=self.dilate_kernel_sz
             # ).squeeze(0)
-            modified_label = label.detach().clone()
 
+        if self.do_disturb:
             if self.disturbed_idxs != None and dataset_idx in self.disturbed_idxs:
                 with torch_manual_seeded(dataset_idx):
                     if str(self.disturbance_mode)==str(LabelDisturbanceMode.FLIP_ROLL):
@@ -704,6 +694,7 @@ class CrossMoDa_Data(Dataset):
                                         int(torch.randn(1)*roll_strength)
                                     ),(-3,-2,-1)
                                 )
+
                     elif str(self.disturbance_mode)==str(LabelDisturbanceMode.AFFINE):
                         # Only warp label. TODO: Add option for empty b_image in augment() to increase performance
                         b_modified_label = modified_label.unsqueeze(0).cuda()
@@ -716,6 +707,12 @@ class CrossMoDa_Data(Dataset):
                         pass
                     else:
                         raise ValueError(f"Disturbance mode {self.disturbance_mode} is not implemented.")
+        if self.do_augment and not self.augment_at_collate:
+            b_image = image.unsqueeze(0).cuda()
+            b_label = label.unsqueeze(0).cuda()
+            b_image, b_label = self.augment(b_image, b_label, yield_2d)
+            image = b_image.squeeze(0).cpu()
+            label = b_label.squeeze(0).cpu()
 
 
         if yield_2d:
@@ -723,13 +720,11 @@ class CrossMoDa_Data(Dataset):
         else:
             assert image.dim() == label.dim() == 3
 
-        if self.do_train:
-            assert modified_label.dim() == label.dim()
-
         return {
             'image': image,
             'label': label,
             'modified_label': modified_label,
+            # if disturbance is off, modified label is equals label
             'dataset_idx': dataset_idx,
             'id': _id,
             'image_path': image_path,
@@ -765,11 +760,12 @@ class CrossMoDa_Data(Dataset):
             self.disturbed_idxs = []
 
 
-    def train(self):
-        self.do_train = True
+    def train(self, augment=True, disturb=True):
+        self.do_augment = augment
+        self.do_disturb = disturb
 
-    def eval(self):
-        self.do_train = False
+    def eval(self, augment=False, disturb=False):
+        self.train(augment, disturb)
 
     def set_augment_at_collate(self):
         self.augment_at_collate = True
@@ -902,10 +898,10 @@ def torch_manual_seeded(seed):
 # %%
 class RegCrossMoDa_Data(Dataset):
     def __init__(self,
-        base_dir, reg_ver, 
+        base_dir, reg_ver,
         # state,
-        # ensure_labeled_pairs=True, 
-        # use_additional_data=False, 
+        # ensure_labeled_pairs=True,
+        # use_additional_data=False,
         resample=True,
         size:tuple=(96,96,60), normalize:bool=True,
         max_load_num=None, crop_3d_w_dim_range=None, crop_2d_slices_gt_num_threshold=None,
@@ -1457,10 +1453,10 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
         # init_class_param=0.01,
         # lr_class_param=0.1,
-    # 'init_inst_param': 1.0,
+    'init_inst_param': 1.0,
     'lr_inst_param': 0.1,
         # wd_inst_param=0.0,
         # wd_class_param=0.0,
@@ -1473,13 +1469,14 @@ config_dict = DotDict({
         # )
     # ),
 
-    'save_every': 60,
+    'save_every': 200,
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
     'debug': False,
     'wandb_mode': "online",
     'wandb_name_override': None,
+    'do_sweep': False,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': .1,
@@ -1510,7 +1507,7 @@ if config_dict['dataset'] == 'crossmoda':
     #     domain="validation", state="l4", ensure_labeled_pairs=True)
     # target_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
     #     domain="target", state="l4", ensure_labeled_pairs=True)
-    
+
 if config_dict['dataset'] == 'reg_crossmoda':
     training_dataset = RegCrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
         reg_ver="best",
@@ -1564,7 +1561,7 @@ if config_dict['do_plot'] or True:
     print(training_dataset.disturbed_idxs)
     training_dataset.set_disturbed_idxs(list(range(0,20,1)))
     print("Displaying 2D training sample")
-    for dist_stren in [0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0]:
+    for dist_stren in [0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0]:
         print(dist_stren)
         training_dataset.disturbance_strength = dist_stren
         img_stack = []
@@ -1730,7 +1727,7 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
 
     # Add data paramters
     embedding = nn.Embedding(len(training_dataset), 1, sparse=True).to(device)
-    # torch.nn.init.constant_(embedding.weight.data, config.init_inst_param)
+    torch.nn.init.constant_(embedding.weight.data, config.init_inst_param)
 
     optimizer_dp = torch.optim.SparseAdam(
         embedding.parameters(), lr=config.lr_inst_param,
@@ -1748,6 +1745,9 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
 
     else:
         print("Generating fresh lr-aspp model, optimizers, embedding and grad scaler.")
+    print(f"Param count lraspp: {sum(p.numel() for p in lraspp.parameters())}")
+    print(f"Param count embedding: {sum(p.numel() for p in embedding.parameters())}")
+
 
     return (lraspp, optimizer, optimizer_dp, embedding, scaler)
 
@@ -1902,7 +1902,10 @@ def train_DL(run_name, config, training_dataset):
             sampler=train_subsampler, pin_memory=True, drop_last=False,
             # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
         )
+
         training_dataset.unset_augment_at_collate()
+        training_dataset.set_disturbed_idxs(disturbed_idxs)
+        training_dataset.set_disturbance_strength(config.disturbance_strength)
 
 #         val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
 #                                     sampler=val_subsampler, pin_memory=True, drop_last=False)
@@ -1922,30 +1925,22 @@ def train_DL(run_name, config, training_dataset):
         # instance_pixel_weight = torch.sqrt(1.0/(torch.stack([torch.bincount(seg.view(-1))[1] for seg in all_segs]).float()))  TODO removce
         # instance_pixel_weight = instance_pixel_weight/instance_pixel_weight.mean()  TODO removce
 
-        # scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        #     optimizer_dp, T_0=200, T_mult=2, eta_min=config.lr_inst_param*.1, last_epoch=- 1, verbose=False)
+        scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer_dp, T_0=200, T_mult=2, eta_min=config.lr_inst_param*.1, last_epoch=- 1, verbose=False)
 
         t0 = time.time()
 
         embedding = embedding.cuda()
-        # instance_pixel_weight = instance_pixel_weight.cuda()
         lraspp.cuda()
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
 
             lraspp.train()
-            training_dataset.train()
 
             ### Disturb samples ###
-            do_disturb = epx >= config.start_disturbing_after_ep
-            wandb.log({"do_disturb": float(do_disturb)}, step=global_idx)
-
-            if do_disturb:
-                training_dataset.set_disturbed_idxs(disturbed_idxs)
-                training_dataset.set_disturbance_strength(config.disturbance_strength)
-            else:
-                training_dataset.set_disturbed_idxs([])
+            training_dataset.train(disturb=(epx >= config.start_disturbing_after_ep))
+            wandb.log({"do_disturb": float(training_dataset.do_disturb)}, step=global_idx)
 
             epx_losses = []
             dices = []
@@ -2002,12 +1997,7 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
                     if config.data_param_mode == str(DataParamMode.ONLY_INSTANCE_PARAMS):
-                        # weight = embedding(b_idxs_dataset).squeeze()
-                        # dp_logits = logits*weight.view(-1,1,1,1)
-                        # loss = nn.CrossEntropyLoss()(
-                        #     dp_logits,
-                        #     b_seg_modified
-                        # )
+
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
                         weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
                         weight = weight/weight.mean()
@@ -2025,7 +2015,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
@@ -2058,13 +2048,13 @@ def train_DL(run_name, config, training_dataset):
                         alpha_gt =.2
                     )
 
-                if config.debug:
-                    break
-
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
-                    # scheduler_dp.step()
+                    scheduler_dp.step()
+
+                if config.debug:
+                    break
 
                 # if scheduler.T_cur == 0:
                 #     sz = training_dataset.get_dilate_kernel_size()
@@ -2177,14 +2167,14 @@ def train_DL(run_name, config, training_dataset):
                     wandb.log({f'scores/val_dice_mean_wo_bg_fold{fold_idx}': mean_val_dice}, step=global_idx)
                     log_class_dices("scores/val_dice_mean_", f"_fold{fold_idx}", val_class_dices, global_idx)
 
-                print()
-                # End of training loop
+            print()
+            # End of training loop
 
             if config.debug:
                 break
 
-        if len(disturbed_idxs) > 0 and str(config.data_param_mode) == str(DataParamMode.ONLY_INSTANCE_PARAMS):
-
+        if len(disturbed_idxs) > 0 and str(config.data_param_mode) == str(DataParamMode.DISABLED):
+            training_dataset.eval()
             # Log histogram of clean and disturbed parameters
             separated_params = list(zip(embedding.cpu()(clean_idxs), embedding.cpu()(disturbed_idxs)))
             s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
@@ -2274,15 +2264,12 @@ sweep_config_dict = dict(
 )
 
 # %%
-DO_SWEEP = True
-
 def normal_run():
-    with wandb.init() as run:
-        run = wandb.init(project="curriculum_deeplab", group="training", job_type="train",
+    with wandb.init(project="curriculum_deeplab", group="training", job_type="train",
             name=config_dict['wandb_name_override'],
             config=config_dict, settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']
-        )
+        ) as run:
 
         run_name = run.name
         config = wandb.config
@@ -2300,7 +2287,7 @@ def sweep_run():
         train_DL(run_name, config, training_dataset)
 
 
-if DO_SWEEP:
+if config_dict['do_sweep']:
     # Integrate all config_dict entries into sweep_dict.parameters -> sweep overrides config_dict
     cp_config_dict = copy.deepcopy(config_dict)
     # cp_config_dict.update(copy.deepcopy(sweep_config_dict['parameters']))
