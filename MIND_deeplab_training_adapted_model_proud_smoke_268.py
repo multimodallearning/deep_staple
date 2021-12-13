@@ -755,16 +755,17 @@ class CrossMoDa_Data(Dataset):
             b_label = label.unsqueeze(0).cuda()
             b_modified_label = modified_label.unsqueeze(0).cuda()
 
-            b_image, b_label, b_spat_augment_grid = \
-                self.augment(b_image, b_label, yield_2d)
-            _, b_modified_label, _ = \
-                spatial_augment(b_label=b_modified_label, yield_2d=yield_2d, \
-                             b_grid_override=b_spat_augment_grid)
+            b_image, b_label, b_spat_augment_grid = self.augment(
+                b_image, b_label, yield_2d
+            )
+            _, b_modified_label, _ = spatial_augment(
+                b_label=b_modified_label, yield_2d=yield_2d, b_grid_override=b_spat_augment_grid
+            )
 
             image = b_image.squeeze(0).cpu()
             label = b_label.squeeze(0).cpu()
             modified_label = b_modified_label.squeeze(0).cpu()
-            spat_augment_grid = b_spat_augment_grid.squeeze(0).cpu()
+            spat_augment_grid = b_spat_augment_grid.squeeze(0).detach().cpu().clone()
 
         if yield_2d:
             assert image.dim() == label.dim() == 2
@@ -990,7 +991,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.GRIDDED_INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
@@ -1004,8 +1005,8 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 64,
-    'grid_size_x': 64,
+    'grid_size_y': 16,
+    'grid_size_x': 16,
     # ),
 
     'save_every': 200,
@@ -1468,8 +1469,6 @@ def train_DL(run_name, config, training_dataset):
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
-
-            lraspp.train()
 
             ### Disturb samples ###
             training_dataset.train(disturb=(epx >= config.start_disturbing_after_ep))
