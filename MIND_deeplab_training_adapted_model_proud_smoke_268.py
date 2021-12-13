@@ -1470,6 +1470,8 @@ def train_DL(run_name, config, training_dataset):
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
 
+            lraspp.train()
+
             ### Disturb samples ###
             training_dataset.train(disturb=(epx >= config.start_disturbing_after_ep))
             wandb.log({"do_disturb": float(training_dataset.do_disturb)}, step=global_idx)
@@ -1637,7 +1639,6 @@ def train_DL(run_name, config, training_dataset):
             wandb.log({f'scores/dice_mean_wo_bg_fold{fold_idx}': mean_dice}, step=global_idx)
 
             log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
-
             log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
 
             # Log data parameters of disturbed samples
