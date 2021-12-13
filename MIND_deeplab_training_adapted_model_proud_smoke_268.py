@@ -198,11 +198,13 @@ def make_3d_from_2d_stack(b_input, stack_dim, orig_stack_size):
 
 
 # %%
-def spatial_augment(b_image, b_label,
+def spatial_augment(b_image=None, b_label=None,
     bspline_num_ctl_points=6, bspline_strength=0.005, bspline_probability=.9,
     affine_strengh=0.08, affine_probability=.45,
     pre_interpolation_factor=None,
-    yield_2d=False):
+    yield_2d=False,
+    b_grid_override=None):
+
     """
     2D/3D b-spline augmentation on image and segmentation mini-batch on GPU.
     :input: b_image batch (torch.cuda.FloatTensor), b_label batch (torch.cuda.LongTensor)
@@ -218,96 +220,122 @@ def spatial_augment(b_image, b_label,
 
     KERNEL_SIZE = 3
 
-    if yield_2d:
-        assert b_image.dim() == b_label.dim() == 3, \
-            f"Augmenting 2D. Input batch of image and " \
-            f"label should be BxHxW but are {b_image.shape} and {b_label.shape}"
-        B,H,W = b_image.shape
+    if b_image is None:
+        common_shape = b_label.shape
+        common_device = b_label.device
 
-        identity = torch.eye(2,3).expand(B,2,3).to(b_image.device)
-        id_grid = F.affine_grid(identity, torch.Size((B,2,H,W)),
-            align_corners=False)
-
-        grid = id_grid
-
-        if do_bspline:
-            bspline = torch.nn.Sequential(
-                nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-                nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-                nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
-            ).to(b_image.device)
-            # Add an extra *.5 factor to dim strength to make strength fit 3D case
-            dim_strength = (torch.tensor([H,W]).float()*bspline_strength*.5).to(b_image.device)
-            rand_control_points = dim_strength.view(1,2,1,1) * \
-                (
-                    1/10*torch.randn(B, 2, bspline_num_ctl_points, bspline_num_ctl_points)+1.
-                ).to(b_image.device)
-
-            bspline_disp = bspline(rand_control_points)
-            bspline_disp = torch.nn.functional.interpolate(
-                bspline_disp, size=(H,W), mode='bilinear', align_corners=True
-            ).permute(0,2,3,1)
-
-            grid += bspline_disp
-
-        if do_affine:
-            affine_matrix = (torch.eye(2,3).unsqueeze(0) + \
-                affine_strengh * (1/10*torch.randn(B,2,3)+1.)).to(b_image.device)
-
-            affine_disp = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
-                                    align_corners=False)
-            grid += (affine_disp-id_grid)
-
+    elif b_label is None:
+        common_shape = b_image.shape
+        common_device = b_image.device
     else:
-        assert b_image.dim() == b_label.dim() == 4, \
-            f"Augmenting 3D. Input batch of image and " \
-            f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
-        B,D,H,W = b_image.shape
+        assert b_image.shape == b_label.shape, \
+            f"Image and label shapes must match but are {b_image.shape} and {b_label.shape}."
+        common_shape = b_image.shape
+        common_device = b_image.device
 
-        identity = torch.eye(3,4).expand(B,3,4).to(b_image.device)
-        id_grid = F.affine_grid(identity, torch.Size((B,3,D,H,W)),
-            align_corners=False)
+    if b_grid_override is None:
+        if yield_2d:
+            assert len(common_shape) == 3, \
+                f"Augmenting 2D. Input batch " \
+                f"should be BxHxW but is {common_shape}."
+            B,H,W = common_shape
 
-        grid = id_grid
+            identity = torch.eye(2,3).expand(B,2,3).to(common_device)
+            id_grid = F.affine_grid(identity, torch.Size((B,2,H,W)),
+                align_corners=False)
 
-        if do_bspline:
-            bspline = torch.nn.Sequential(
-                nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-                nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-                nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
-            ).to(b_image.device)
-            dim_strength = (torch.tensor([D,H,W]).float()*bspline_strength).to(b_image.device)
+            grid = id_grid
 
-            rand_control_points = dim_strength.view(1,3,1,1,1)  * \
-                (
-                    1/10*torch.randn(B, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points)+1.
+            if do_bspline:
+                bspline = torch.nn.Sequential(
+                    nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
+                ).to(common_device)
+                # Add an extra *.5 factor to dim strength to make strength fit 3D case
+                dim_strength = (torch.tensor([H,W]).float()*bspline_strength*.5).to(common_device)
+                rand_control_points = dim_strength.view(1,2,1,1) * \
+                    (
+                        1/10*torch.randn(B, 2, bspline_num_ctl_points, bspline_num_ctl_points)+1.
+                    ).to(common_device)
+
+                bspline_disp = bspline(rand_control_points)
+                bspline_disp = torch.nn.functional.interpolate(
+                    bspline_disp, size=(H,W), mode='bilinear', align_corners=True
+                ).permute(0,2,3,1)
+
+                grid += bspline_disp
+
+            if do_affine:
+                affine_matrix = (torch.eye(2,3).unsqueeze(0) + \
+                    affine_strengh * (1/10*torch.randn(B,2,3)+1.)).to(common_device)
+
+                affine_disp = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
+                                        align_corners=False)
+                grid += (affine_disp-id_grid)
+
+        else:
+            assert len(common_shape) == 4, \
+                f"Augmenting 3D. Input batch " \
+                f"should be BxDxHxW but is {common_shape}."
+            B,D,H,W = common_shape
+
+            identity = torch.eye(3,4).expand(B,3,4).to(common_device)
+            id_grid = F.affine_grid(identity, torch.Size((B,3,D,H,W)),
+                align_corners=False)
+
+            grid = id_grid
+
+            if do_bspline:
+                bspline = torch.nn.Sequential(
+                    nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
                 ).to(b_image.device)
+                dim_strength = (torch.tensor([D,H,W]).float()*bspline_strength).to(common_device)
 
-            bspline_disp = bspline(rand_control_points)
+                rand_control_points = dim_strength.view(1,3,1,1,1)  * \
+                    (
+                        1/10*torch.randn(B, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points)+1.
+                    ).to(b_image.device)
 
-            bspline_disp = torch.nn.functional.interpolate(
-                bspline_disp, size=(D,H,W), mode='trilinear', align_corners=True
-            ).permute(0,2,3,4,1)
+                bspline_disp = bspline(rand_control_points)
 
-            grid += bspline_disp
+                bspline_disp = torch.nn.functional.interpolate(
+                    bspline_disp, size=(D,H,W), mode='trilinear', align_corners=True
+                ).permute(0,2,3,4,1)
 
-        if do_affine:
-            affine_matrix = (torch.eye(3,4).unsqueeze(0) + \
-                affine_strengh * (1/10*torch.randn(B,3,4)+1.)).to(b_image.device)
+                grid += bspline_disp
 
-            affine_disp = F.affine_grid(affine_matrix,torch.Size((B,1,D,H,W)),
-                                    align_corners=False)
+            if do_affine:
+                affine_matrix = (torch.eye(3,4).unsqueeze(0) + \
+                    affine_strengh * (1/10*torch.randn(B,3,4)+1.)).to(common_device)
 
-            grid += (affine_disp-id_grid)
+                affine_disp = F.affine_grid(affine_matrix,torch.Size((B,1,D,H,W)),
+                                        align_corners=False)
 
-    b_image_out = F.grid_sample(
-        b_image.unsqueeze(1).float(), grid,
-        padding_mode='border', align_corners=False)
-    b_label_out = F.grid_sample(
-        b_label.unsqueeze(1).float(), grid,
-        mode='nearest', align_corners=False)
+                grid += (affine_disp-id_grid)
+    else:
+        # Override grid with external value
+        grid = b_grid_override
 
-    b_image_out, b_label_out = b_image_out.squeeze(1), b_label_out.squeeze(1).long()
+    if b_image is not None:
+        b_image_out = F.grid_sample(
+            b_image.unsqueeze(1).float(), grid,
+            padding_mode='border', align_corners=False)
+        b_image_out = b_image_out.squeeze(1)
+    else:
+        b_image_out = None
+
+    if b_label is not None:
+        b_label_out = F.grid_sample(
+            b_label.unsqueeze(1).float(), grid,
+            mode='nearest', align_corners=False)
+        b_label_out = b_label_out.squeeze(1).long()
+    else:
+        b_label_out = None
+
+    b_out_grid = grid
 
     if pre_interpolation_factor:
         b_image_out, b_label_out = interpolate_sample(
@@ -315,7 +343,11 @@ def spatial_augment(b_image, b_label,
             1/pre_interpolation_factor, yield_2d
         )
 
-    return b_image_out, b_label_out
+        b_out_grid = F.interpolate(b_out_grid.permute(0,3,1,2),
+                      scale_factor=1/pre_interpolation_factor, mode='bilinear',
+                      align_corners=True, recompute_scale_factor=False).permute(0,2,3,1)
+
+    return b_image_out, b_label_out, b_out_grid
 
 
 
@@ -660,7 +692,11 @@ class CrossMoDa_Data(Dataset):
             label_path = self.label_paths[_id]
 
         modified_label = label.detach().clone()
+        spat_augment_grid = []
 
+
+        # In case of training add augmentation, modification and
+        # disturbance
             # Dilate small cochlea segmentation
             # COCHLEA_CLASS_IDX = 2
             # pre_mod = b_label.squeeze(0)
@@ -696,9 +732,8 @@ class CrossMoDa_Data(Dataset):
                                 )
 
                     elif str(self.disturbance_mode)==str(LabelDisturbanceMode.AFFINE):
-                        # Only warp label. TODO: Add option for empty b_image in augment() to increase performance
                         b_modified_label = modified_label.unsqueeze(0).cuda()
-                        _, b_modified_label = self.augment(torch.zeros_like(b_modified_label).float(), b_modified_label, yield_2d,
+                        _, b_modified_label, _ = spatial_augment(b_label=b_modified_label, yield_2d=yield_2d,
                             bspline_num_ctl_points=6, bspline_strength=0., bspline_probability=0.,
                             affine_strengh=0.09*self.disturbance_strength, affine_probability=1.)
                         modified_label = b_modified_label.squeeze(0).cpu()
@@ -707,13 +742,24 @@ class CrossMoDa_Data(Dataset):
                         pass
                     else:
                         raise ValueError(f"Disturbance mode {self.disturbance_mode} is not implemented.")
+            # End of disturbance
+
         if self.do_augment and not self.augment_at_collate:
             b_image = image.unsqueeze(0).cuda()
             b_label = label.unsqueeze(0).cuda()
-            b_image, b_label = self.augment(b_image, b_label, yield_2d)
+            b_modified_label = modified_label.unsqueeze(0).cuda()
+
+            b_image, b_label, b_spat_augment_grid = self.augment(
+                b_image, b_label, yield_2d
+            )
+            _, b_modified_label, _ = spatial_augment(
+                b_label=b_modified_label, yield_2d=yield_2d, b_grid_override=b_spat_augment_grid
+            )
+
             image = b_image.squeeze(0).cpu()
             label = b_label.squeeze(0).cpu()
-
+            modified_label = b_modified_label.squeeze(0).cpu()
+            spat_augment_grid = b_spat_augment_grid.squeeze(0).detach().cpu().clone()
 
         if yield_2d:
             assert image.dim() == label.dim() == 2
@@ -728,7 +774,8 @@ class CrossMoDa_Data(Dataset):
             'dataset_idx': dataset_idx,
             'id': _id,
             'image_path': image_path,
-            'label_path': label_path
+            'label_path': label_path,
+            'spat_augment_grid': spat_augment_grid
         }
 
     def get_3d_item(self, _3d_dataset_idx):
@@ -814,7 +861,7 @@ class CrossMoDa_Data(Dataset):
                 f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
 
         b_image = augmentNoise(b_image, strength=noise_strength)
-        b_image, b_label = spatial_augment(
+        b_image, b_label, b_spat_augment_grid = spatial_augment(
             b_image, b_label,
             bspline_num_ctl_points=bspline_num_ctl_points, bspline_strength=bspline_strength, bspline_probability=bspline_probability,
             affine_strengh=affine_strengh, affine_probability=affine_probability,
@@ -822,7 +869,7 @@ class CrossMoDa_Data(Dataset):
 
         b_label = b_label.long()
 
-        return b_image, b_label
+        return b_image, b_label, b_spat_augment_grid
 
     def augment_tio(self, image, label, yield_2d):
         # Prepare dims for torchio: All transformed
@@ -1008,7 +1055,7 @@ class RegCrossMoDa_Data(Dataset):
 
         if debug:
             loaded_identifier = loaded_identifier[:4]
-            data = data[:4]
+            label_data = label_data[:4]
 
         for idx, identifier in enumerate(loaded_identifier):
             nl_id = int(re.findall(r'\d+', identifier)[0])
@@ -1443,7 +1490,7 @@ config_dict = DotDict({
     'batch_size': 64,
     'val_batch_size': 1,
 
-    'dataset': 'crossmoda',
+    'dataset': 'reg_crossmoda',
     'train_set_max_len': 100,
     'crop_3d_w_dim_range': (24, 110),
     'crop_2d_slices_gt_num_threshold': 25,
@@ -1473,15 +1520,15 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
+    'debug': True,
     'wandb_mode': "online",
     'wandb_name_override': None,
     'do_sweep': False,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
-    'disturbance_strength': .1,
-    'disturbed_percentage': .3,
-    'start_disturbing_after_ep': 0,
+    'disturbance_strength': .0,
+    'disturbed_percentage': .0,
+    'start_disturbing_after_ep': 1000000,
 
     'start_dilate_kernel_sz': 1
 })
@@ -1557,38 +1604,36 @@ if config_dict['do_plot'] or True:
     #                 alpha_gt = .3)
 
     # Print transformed 2D data
-    training_dataset.train()
+    training_dataset.train(disturb=False, augment=True)
     print(training_dataset.disturbed_idxs)
-    training_dataset.set_disturbed_idxs(list(range(0,20,1)))
+    # training_dataset.set_disturbed_idxs(list(range(0,20,1)))
     print("Displaying 2D training sample")
-    for dist_stren in [0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0]:
-        print(dist_stren)
-        training_dataset.disturbance_strength = dist_stren
-        img_stack = []
-        label_stack = []
-        mod_label_stack = []
 
-        for sample in (training_dataset[idx] for idx in range(20)):
-            img_stack.append(sample['image'])
-            label_stack.append(sample['label'])
-            mod_label_stack.append(sample['modified_label'])
+    img_stack = []
+    label_stack = []
+    mod_label_stack = []
 
-        # Change label num == hue shift for display
-        img_stack = torch.stack(img_stack).unsqueeze(1)
-        label_stack = torch.stack(label_stack)
-        mod_label_stack = torch.stack(mod_label_stack)
+    for sample in (training_dataset[idx] for idx in range(20)):
+        img_stack.append(sample['image'])
+        label_stack.append(sample['label'])
+        mod_label_stack.append(sample['modified_label'])
 
-        mod_label_stack*=4
+    # Change label num == hue shift for display
+    img_stack = torch.stack(img_stack).unsqueeze(1)
+    label_stack = torch.stack(label_stack)
+    mod_label_stack = torch.stack(mod_label_stack)
 
-        visualize_seg(in_type="batch_2D",
-            img=img_stack,
-            # ground_truth=label_stack,
-            seg=(mod_label_stack-label_stack).abs(),
-            # crop_to_non_zero_gt=True,
-            crop_to_non_zero_seg=True,
-            alpha_seg = .6,
-            # alpha_gt = .6,
-        )
+    mod_label_stack*=4
+
+    visualize_seg(in_type="batch_2D",
+        img=img_stack,
+        # ground_truth=label_stack,
+        seg=(mod_label_stack-label_stack).abs(),
+        # crop_to_non_zero_gt=True,
+        crop_to_non_zero_seg=True,
+        alpha_seg = .6,
+        # alpha_gt = .6,
+    )
 
     # Print transformed 3D data
     # training_dataset.train()
@@ -1747,7 +1792,6 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
         print("Generating fresh lr-aspp model, optimizers, embedding and grad scaler.")
     print(f"Param count lraspp: {sum(p.numel() for p in lraspp.parameters())}")
     print(f"Param count embedding: {sum(p.numel() for p in embedding.parameters())}")
-
 
     return (lraspp, optimizer, optimizer_dp, embedding, scaler)
 
@@ -2243,20 +2287,6 @@ sweep_config_dict = dict(
     method='grid',
     metric=dict(goal='minimize', name='data_parameters/corr_coeff_fold0'),
     parameters=dict(
-        disturbance_mode=dict(
-            value='LabelDisturbanceMode.AFFINE'
-        ),
-        disturbance_strength=dict(
-            values=[
-                0.1, 0.2,
-                0.3, 0.5,
-                1.0, 2.0,
-                5.0, 10.0
-            ]
-        ),
-        disturbed_percentage=dict(
-            values=[0.1, 0.2, 0.3, 0.6]
-        ),
         data_param_mode=dict(
             values=['DataParamMode.ONLY_INSTANCE_PARAMS', 'DataParamMode.DISABLED']
         )
