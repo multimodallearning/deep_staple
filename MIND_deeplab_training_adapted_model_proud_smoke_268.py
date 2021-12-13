@@ -1081,21 +1081,21 @@ class RegCrossMoDa_Data(Dataset):
             self.label_paths[crossmoda_id] = f'reg_{reg_ver}_{crossmoda_id}'
             self.img_paths[crossmoda_id] = _path
 
-        # if ensure_labeled_pairs:
-        #     pair_idxs = set(self.img_paths).intersection(set(self.label_paths))
-        #     self.label_paths = {_id: _path for _id, _path in self.label_paths.items() if _id in pair_idxs}
-        #     self.img_paths = {_id: _path for _id, _path in self.img_paths.items() if _id in pair_idxs}
-
+        if ensure_labeled_pairs:
+            pair_idxs = set(self.img_paths).intersection(set(self.label_paths))
+            self.label_paths = {_id: _path for _id, _path in self.label_paths.items() if _id in pair_idxs}
+            self.img_paths = {_id: _path for _id, _path in self.img_paths.items() if _id in pair_idxs}
 
         # Populate data
         self.img_data_3d = {}
         self.label_data_3d = {}
+        self.modified_label_data_3d = {}
 
         self.img_data_2d = {}
         self.label_data_2d = {}
+        self.modified_data_2d = {}
 
         #load data
-
         print("Loading CrossMoDa {} images and labels...".format(reg_ver))
         id_paths_to_load = list(self.img_paths.items())
 
@@ -1147,17 +1147,35 @@ class RegCrossMoDa_Data(Dataset):
                 self.img_data_3d[_3d_id] = self.img_data_3d[_3d_id].flip(dims=(1,))
                 self.label_data_3d[_3d_id] = self.label_data_3d[_3d_id].flip(dims=(1,))
 
-        # if max_load_num and ensure_labeled_pairs:
-        #     for _3d_id in list(self.label_data_3d.keys())[max_load_num:]:
-        #         del self.img_data_3d[_3d_id]
-        #         del self.label_data_3d[_3d_id]
+        if max_load_num and ensure_labeled_pairs:
+            for _3d_id in list(self.label_data_3d.keys())[max_load_num:]:
+                del self.img_data_3d[_3d_id]
+                del self.label_data_3d[_3d_id]
 
-        if max_load_num:
+        elif max_load_num:
             for del_key in sorted(list(self.img_data_3d.keys())[max_load_num:]):
                 del self.img_data_3d[del_key]
             del_keys = set(self.label_data_3d.keys()) - set(self.img_data_3d.keys())
             for key in del_keys:
                 del self.label_data_3d[key]
+
+        # Now load registered labels
+        for data_idx, _3d_id in enumerate(loaded_identifier):
+            tmp = label_data[data_idx]
+            if resample: #resample image to specified size
+                tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
+
+            if tmp.shape != size: #for size missmatch use symmetric padding with 0
+                difs = [size[0]-tmp.size(0),size[1]-tmp.size(1),size[2]-tmp.size(2)]
+                pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
+                tmp = F.pad(tmp,pad)
+
+            if crop_3d_w_dim_range:
+                tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
+
+            # Only use tumour class, remove TODO
+            tmp[tmp==2] = 0
+            self.modified_label_data_3d[_3d_id] = tmp.long()
 
         #check for consistency
         print("Equal image and label numbers: {}".format(set(self.img_data_3d)==set(self.label_data_3d)))
@@ -1190,19 +1208,28 @@ class RegCrossMoDa_Data(Dataset):
                     # Set data view for crossmoda id like "003rW100"
                     self.label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
 
+            for _3d_id, label in self.modified_label_data_3d.items():
+                for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
+                                     for slice_idx in range(label.shape[slice_dim])]:
+                    # Set data view for crossmoda id like "003rW100"
+                    self.modified_label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
+
         # Postprocessing of 2d slices
 
         rem_sum = 0
-        for key, label in list(self.label_data_2d.items()):
+        for key, label in list(self.modified_label_data_2d.items()):
             uniq_vals = label.unique()
 
             if uniq_vals.max() == 0:
                 # Delete empty 2D slices (but keep 3d data)
                 del self.label_data_2d[key]
+                del self.modified_label_data_2d[key]
                 del self.img_data_2d[key]
+
             elif sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
                 # Delete 2D slices with less than n gt-pixels (but keep 3d data)
                 del self.label_data_2d[key]
+                del self.modified_label_data_2d[key]
                 del self.img_data_2d[key]
 
         print("Data import finished.")
@@ -1263,6 +1290,7 @@ class RegCrossMoDa_Data(Dataset):
             _id = all_ids[dataset_idx]
             image = self.img_data_2d.get(_id, torch.tensor([]))
             label = self.label_data_2d.get(_id, torch.tensor([]))
+            modified_label = self.modified_label_data_2d.get(_id, torch.tensor([]))
 
             # For 2D crossmoda id cut last 4 "003rW100"
             image_path = self.img_paths[_id[:-4]]
@@ -1273,63 +1301,15 @@ class RegCrossMoDa_Data(Dataset):
             _id = all_ids[dataset_idx]
             image = self.img_data_3d.get(_id, torch.tensor([]))
             label = self.label_data_3d.get(_id, torch.tensor([]))
+            modified_label = self.modified_label_data_3d.get(_id, torch.tensor([]))
 
             image_path = self.img_paths[_id]
             label_path = self.label_paths[_id]
 
-        modified_label = label.detach().clone()
         spat_augment_grid = []
-
 
         # In case of training add augmentation, modification and
         # disturbance
-
-        # Dilate small cochlea segmentation
-        # COCHLEA_CLASS_IDX = 2
-        # pre_mod = b_label.squeeze(0)
-        # modified_label = dilate_label_class(
-        #     b_label.detach().clone(), COCHLEA_CLASS_IDX, COCHLEA_CLASS_IDX,
-        #     yield_2d=yield_2d, kernel_sz=self.dilate_kernel_sz
-        # ).squeeze(0)
-
-        if self.do_disturb:
-            if self.disturbed_idxs != None and dataset_idx in self.disturbed_idxs:
-                with torch_manual_seeded(dataset_idx):
-                    if str(self.disturbance_mode)==str(LabelDisturbanceMode.FLIP_ROLL):
-                        roll_strength = 10*self.disturbance_strength
-                        if yield_2d:
-                            modified_label = \
-                                torch.roll(
-                                    modified_label.transpose(-2,-1),
-                                    (
-                                        int(torch.randn(1)*roll_strength),
-                                        int(torch.randn(1)*roll_strength)
-                                    ),(-2,-1)
-                                )
-                                # torch.flip(modified_label, dims=(-2,-1))
-                        else:
-                            modified_label = \
-                                torch.roll(
-                                    modified_label.permute(1,2,0),
-                                    (
-                                        int(torch.randn(1)*roll_strength),
-                                        int(torch.randn(1)*roll_strength),
-                                        int(torch.randn(1)*roll_strength)
-                                    ),(-3,-2,-1)
-                                )
-
-                    elif str(self.disturbance_mode)==str(LabelDisturbanceMode.AFFINE):
-                        b_modified_label = modified_label.unsqueeze(0).cuda()
-                        _, b_modified_label, _ = spatial_augment(b_label=b_modified_label, yield_2d=yield_2d,
-                            bspline_num_ctl_points=6, bspline_strength=0., bspline_probability=0.,
-                            affine_strengh=0.09*self.disturbance_strength, affine_probability=1.)
-                        modified_label = b_modified_label.squeeze(0).cpu()
-
-                    elif self.disturbance_mode == None:
-                        pass
-                    else:
-                        raise ValueError(f"Disturbance mode {self.disturbance_mode} is not implemented.")
-            # End of disturbance
 
         if self.do_augment and not self.augment_at_collate:
             b_image = image.unsqueeze(0).cuda()
@@ -1520,10 +1500,10 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
+    'debug': False,
     'wandb_mode': "online",
     'wandb_name_override': None,
-    'do_sweep': False,
+    'do_sweep': True,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': .0,
