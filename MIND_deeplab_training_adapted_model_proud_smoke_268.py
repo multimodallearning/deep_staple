@@ -1544,7 +1544,7 @@ def train_DL(run_name, config, training_dataset):
                         logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
+
                         m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
                         weight = embedding(m_dp_idxs)
                         weight = weight.reshape(-1, config.grid_size_y, config.grid_size_x)
@@ -1555,14 +1555,17 @@ def train_DL(run_name, config, training_dataset):
                             mode='bilinear',
                             align_corners=True
                         )
-                        weight = torch.sigmoid(weight)
-                        weight = weight/weight.mean()
+
                         weight = F.grid_sample(weight, b_spat_aug_grid,
                             padding_mode='border', align_corners=False)
-                        loss = (loss.unsqueeze(1)*weight).sum()
 
+                        logits = logits*weight
+                        loss = nn.BCEWithLogitsLoss(reduction='mean')(
+                            logits.permute(0,2,3,1),
+                            torch.nn.functional.one_hot(b_seg_modified, len(config.label_tags)).float()
+                        )
                         # Prepare logits for scoring
-                        logits_for_score = (logits*weight).argmax(1)
+                        logits_for_score = logits.argmax(1)
 
                     else:
                         loss = nn.CrossEntropyLoss()(logits, b_seg_modified)
@@ -1650,8 +1653,10 @@ def train_DL(run_name, config, training_dataset):
                     mode='bilinear',
                     align_corners=True
                 ).squeeze(1) * masks
+                masked_weights[masked_weights==0.] = float('nan')
+
                 corr_coeff = np.corrcoef(
-                    torch.sigmoid(masked_weights.mean(dim=(-2, -1))).cpu().data.squeeze().numpy(),
+                    np.nanmean(masked_weights.detach().cpu(), axis=(-2,-1)),
                     disturbed_bool_vect[train_idxs].cpu().numpy()
                 )[0,1]
 
@@ -1759,7 +1764,8 @@ def train_DL(run_name, config, training_dataset):
             ).squeeze(1)
 
             masked_weights = all_weights * masks
-            reduced_weights = masked_weights.mean(dim=(-2, -1))
+            masked_weights[masked_weights==0.] = float('nan')
+            reduced_weights = np.nanmean(masked_weights.detach().cpu(), axis=(-2,-1))
 
             separated_params = list(zip(reduced_weights[clean_idxs], reduced_weights[disturbed_idxs]))
             s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
