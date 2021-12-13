@@ -991,7 +991,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.GRIDDED_INSTANCE_PARAMS,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
@@ -1005,8 +1005,8 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 16,
-    'grid_size_x': 16,
+    'grid_size_y': 32,
+    'grid_size_x': 32,
     # ),
 
     'save_every': 200,
