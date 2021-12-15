@@ -988,15 +988,15 @@ config_dict = DotDict({
     'yield_2d_normal_to': "W",
 
     'lr': 0.0005,
-    'use_cosine_annealing': True,
+    'use_cosine_annealing': False,
 
     # Data parameter config
     'data_param_mode': DataParamMode.GRIDDED_INSTANCE_PARAMS,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
-    'lr_inst_param': 0.1,
-        # wd_inst_param=0.0,
+    'lr_inst_param': 0.01,
+    'wd_inst_param': 0.001,
         # wd_class_param=0.0,
         # skip_clamp_data_param=False,
         # clamp_sigma_min=np.log(1/20),
@@ -1005,8 +1005,8 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 1,
-    'grid_size_x': 1,
+    'grid_size_y': 64,
+    'grid_size_x': 64,
     # ),
 
     'save_every': 200,
@@ -1254,7 +1254,7 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
 
     # Add data paramters
     embedding = nn.Embedding(len(training_dataset)*config.grid_size_y*config.grid_size_x, 1, sparse=True).to(device)
-    torch.nn.init.constant_(embedding.weight.data, config.init_inst_param)
+    torch.nn.init.normal_(embedding.weight.data, mean=config.init_inst_param, std=0.01)
 
     optimizer_dp = torch.optim.SparseAdam(
         embedding.parameters(), lr=config.lr_inst_param,
@@ -1570,6 +1570,7 @@ def train_DL(run_name, config, training_dataset):
                             logits.permute(0,2,3,1),
                             torch.nn.functional.one_hot(b_seg_modified, len(config.label_tags)).float()
                         )
+                        loss += 0.5 * config.wd_inst_param * (weight.mean((-1,-2))**2).sum()
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
 
@@ -1581,7 +1582,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 10:
                     scaler.step(optimizer_dp)
 
                 scaler.update()
