@@ -976,7 +976,7 @@ config_dict = DotDict({
     # 'epx_override': 0,
 
     'use_mind': True,
-    'epochs': 80,
+    'epochs': 40,
 
     'batch_size': 64,
     'val_batch_size': 1,
@@ -988,25 +988,25 @@ config_dict = DotDict({
     'yield_2d_normal_to': "W",
 
     'lr': 0.0005,
-    'use_cosine_annealing': False,
+    'use_cosine_annealing': True,
 
     # Data parameter config
     'data_param_mode': DataParamMode.GRIDDED_INSTANCE_PARAMS,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
-    'lr_inst_param': 0.01,
-    'wd_inst_param': 0.001,
+    'lr_inst_param': 0.1,
+    # 'wd_inst_param': 0.01,
         # wd_class_param=0.0,
         # skip_clamp_data_param=False,
-        # clamp_sigma_min=np.log(1/20),
-        # clamp_sigma_max=np.log(20),
+    # 'clamp_sigma_min': 0.,
+    # 'clamp_sigma_max': 1.,
         # optim_algorithm=DataParamOptim.ADAM,
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 64,
-    'grid_size_x': 64,
+    'grid_size_y': 32,
+    'grid_size_x': 32,
     # ),
 
     'save_every': 200,
@@ -1244,9 +1244,9 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
         torch.nn.Conv2d(in_channels, 16, kernel_size=(3, 3), stride=(2, 2),
                         padding=(1, 1), bias=False)
     )
-    set_module(lraspp, 'classifier.scale.2',
-        torch.nn.Identity()
-    )
+    # set_module(lraspp, 'classifier.scale.2',
+    #     torch.nn.Identity()
+    # )
 
     lraspp.to(device)
 
@@ -1537,17 +1537,15 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
                     if config.data_param_mode == str(DataParamMode.ONLY_INSTANCE_PARAMS):
-                        weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
-                        logits = logits*weight
-                        input_ = torch.sigmoid(logits)
-                        # loss = nn.CrossEntropyLoss(reduction='mean')(_input, b_seg_modified).mean((-1,-2))
 
-                        # weight = weight/weight.mean()
-                        # # weight = weight/instance_pixel_weight[b_idxs_dataset] TODO removce
-                        # loss = (loss*weight).sum()
+                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
+                        weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
+                        weight = weight/weight.mean()
+                        # weight = weight/instance_pixel_weight[b_idxs_dataset] TODO removce
+                        loss = (loss*weight).sum()
 
                         # Prepare logits for scoring
-                        logits_for_score = _input.argmax(-1)
+                        logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
 
@@ -1565,12 +1563,12 @@ def train_DL(run_name, config, training_dataset):
                         weight = F.grid_sample(weight, b_spat_aug_grid,
                             padding_mode='border', align_corners=False)
 
-                        logits = logits*weight/weight.mean()
+                        logits = logits*weight
                         loss = nn.BCEWithLogitsLoss(reduction='mean')(
                             logits.permute(0,2,3,1),
                             torch.nn.functional.one_hot(b_seg_modified, len(config.label_tags)).float()
                         )
-                        loss += 0.5 * config.wd_inst_param * (weight.mean((-1,-2))**2).sum()
+                        # loss += 0.5 * config.wd_inst_param * (weight.mean((-1,-2))**2).sum()
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
 
@@ -1586,6 +1584,7 @@ def train_DL(run_name, config, training_dataset):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
+                # embedding.weight.data.clamp_(config.clamp_sigma_min, config.clamp_sigma_max)
 
                 epx_losses.append(loss.item())
 
@@ -1687,7 +1686,6 @@ def train_DL(run_name, config, training_dataset):
 
             with amp.autocast(enabled=True):
                 with torch.no_grad():
-
                     for val_idx in val_3d_idxs:
                         val_sample = training_dataset.get_3d_item(val_idx)
                         stack_dim = training_dataset.yield_2d_normal_to
@@ -1754,7 +1752,7 @@ def train_DL(run_name, config, training_dataset):
                 break
 
         if len(disturbed_idxs) > 0 and str(config.data_param_mode) != str(DataParamMode.DISABLED):
-            training_dataset.eval()
+            training_dataset.eval(disturb=True)
 
             # Log histogram of clean and disturbed parameters
             all_idxs = torch.tensor(range(len(training_dataset)))
@@ -1780,15 +1778,14 @@ def train_DL(run_name, config, training_dataset):
             wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
 
             # Write out data of modified and un-modified labels and an overview image
-            train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_train_label_snapshot.pkl.gz")
-            seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_data_parameter_weighted_samples.png")
-            weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx_start}_data_parameter_weightmap.png")
+            train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_train_label_snapshot.pkl.gz")
+            seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_data_parameter_weighted_samples.png")
+            weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_data_parameter_weightmap.png")
             # Generate directories
             for _pathh in [train_label_snapshot_path, seg_viz_out_path]:
                 _pathh.parent.mkdir(parents=True, exist_ok=True)
 
             print("Writing out sample and weight image.")
-            training_dataset.train()
             data = [(
                 weight,
                 weightmap,
@@ -1797,7 +1794,7 @@ def train_DL(run_name, config, training_dataset):
                 sample['dataset_idx'],
                 sample['image'],
                 sample['label'],
-                sample['modified_label']) for weight, weightmap, disturb_flg, sample in zip(reduced_weights, all_weights, disturbed_bool_vect, training_dataset)
+                sample['modified_label']) for weight, weightmap, disturb_flg, sample in zip(reduced_weights[train_idxs], all_weights[train_idxs], disturbed_bool_vect[train_idxs], torch.utils.data.Subset(training_dataset,train_idxs))
             ]
 
             # Here we pack dataset_idx, instance_parameter, disturb_flag, 2d_img, 2d_label, 2d_modified_label
@@ -1813,11 +1810,9 @@ def train_DL(run_name, config, training_dataset):
 
             overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
                 for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
-            overlay_text_list = [overlay_text_list[idx] for idx in train_idxs.tolist()]
-            disturb_flags = [disturb_flags[idx] for idx in train_idxs.tolist()]
             visualize_seg(in_type="batch_2D",
-                        img=torch.stack(_2d_imgs)[train_idxs].unsqueeze(1),
-                        seg=(4*torch.stack(_2d_modified_labels)[train_idxs]-torch.stack(_2d_labels)[train_idxs]).abs(),
+                        img=torch.stack(_2d_imgs).unsqueeze(1),
+                        seg=(4*torch.stack(_2d_modified_labels)-torch.stack(_2d_labels)).abs(),
                         crop_to_non_zero_seg=False,
                         alpha_seg = .2,
                         n_per_row=70,
@@ -1828,8 +1823,8 @@ def train_DL(run_name, config, training_dataset):
             )
 
             visualize_seg(in_type="batch_2D",
-                        img=torch.stack(dp_weightmap)[train_idxs].unsqueeze(1),
-                        seg=torch.stack(_2d_modified_labels)[train_idxs],
+                        img=torch.stack(dp_weightmap).unsqueeze(1),
+                        seg=torch.stack(_2d_modified_labels),
                         alpha_seg = 0.,
                         n_per_row=70,
                         overlay_text=overlay_text_list,
@@ -1845,9 +1840,9 @@ def train_DL(run_name, config, training_dataset):
 # config_dict['wandb_mode'] = 'disabled'
 # config_dict['debug'] = True
 # Model loading
-# config_dict['wandb_name_override'] = 'dummy-oDbynkD4q8KBTHU5CRKt4Q'
+config_dict['wandb_name_override'] = 'swift-paper-698'
 # config_dict['fold_override'] = 0
-# config_dict['epx_override'] = 60
+config_dict['epx_override'] = 39
 
 # Define sweep override dict
 sweep_config_dict = dict(
