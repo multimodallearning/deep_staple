@@ -976,7 +976,7 @@ config_dict = DotDict({
     # 'epx_override': 0,
 
     'use_mind': True,
-    'epochs': 80,
+    'epochs': 40,
 
     'batch_size': 64,
     'val_batch_size': 1,
@@ -1005,8 +1005,8 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 64,
-    'grid_size_x': 64,
+    'grid_size_y': 32,
+    'grid_size_x': 32,
     # ),
 
     'save_every': 200,
@@ -1778,7 +1778,7 @@ def train_DL(run_name, config, training_dataset):
             wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
 
             # Write out data of modified and un-modified labels and an overview image
-            train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_train_label_snapshot.pkl.gz")
+            train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_train_label_snapshot.pth")
             seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_data_parameter_weighted_samples.png")
             weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_data_parameter_weightmap.png")
             # Generate directories
@@ -1802,9 +1802,7 @@ def train_DL(run_name, config, training_dataset):
             dp_weight, dp_weightmap, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels = zip(*samples_sorted)
 
             # Save labels, modified labels, data parameters, ids and flags
-            with gzip.open(train_label_snapshot_path, 'wb') as handle:
-                pickle.dump(list(zip(dp_weight, dp_weightmap, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels)),
-                    handle, protocol=pickle.HIGHEST_PROTOCOL)
+            torch.save([dp_weight, torch.stack(dp_weightmap), disturb_flags, d_ids, torch.stack(dataset_idxs), torch.stack(_2d_labels), torch.stack(_2d_modified_labels)], train_label_snapshot_path)
 
             # overlay text example: d_idx=0, dp_i=1.00, dist? False
             overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
@@ -1839,7 +1837,7 @@ def train_DL(run_name, config, training_dataset):
 # config_dict['wandb_mode'] = 'disabled'
 # config_dict['debug'] = True
 # Model loading
-# config_dict['wandb_name_override'] = 'effortless-sun-710'
+# config_dict['wandb_name_override'] = 'treasured-water-717'
 # # config_dict['fold_override'] = 0
 # config_dict['epx_override'] = 39
 
