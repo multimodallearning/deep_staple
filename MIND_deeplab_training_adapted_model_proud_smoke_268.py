@@ -205,7 +205,7 @@ def make_3d_from_2d_stack(b_input, stack_dim, orig_stack_size):
 # %%
 def spatial_augment(b_image=None, b_label=None,
     bspline_num_ctl_points=6, bspline_strength=0.005, bspline_probability=.9,
-    affine_strengh=0.08, affine_probability=.45,
+    affine_strength=0.08, affine_probability=.45,
     pre_interpolation_factor=None,
     yield_2d=False,
     b_grid_override=None):
@@ -314,7 +314,7 @@ def spatial_augment(b_image=None, b_label=None,
 
             if do_affine:
                 affine_matrix = (torch.eye(3,4).unsqueeze(0) + \
-                    affine_strengh * (1/10*torch.randn(B,3,4)+1.)).to(common_device)
+                    affine_strength * (1/10*torch.randn(B,3,4)+1.)).to(common_device)
 
                 affine_disp = F.affine_grid(affine_matrix,torch.Size((B,1,D,H,W)),
                                         align_corners=False)
@@ -741,7 +741,7 @@ class CrossMoDa_Data(Dataset):
                         b_modified_label = modified_label.unsqueeze(0).cuda()
                         _, b_modified_label, _ = spatial_augment(b_label=b_modified_label, yield_2d=yield_2d,
                             bspline_num_ctl_points=6, bspline_strength=0., bspline_probability=0.,
-                            affine_strengh=0.09*self.disturbance_strength, affine_probability=1.)
+                            affine_strength=0.09*self.disturbance_strength, affine_probability=1.)
                         modified_label = b_modified_label.squeeze(0).cpu()
 
                     elif self.disturbance_mode == None:
@@ -854,7 +854,7 @@ class CrossMoDa_Data(Dataset):
     def augment(self, b_image, b_label, yield_2d,
         noise_strength=0.05,
         bspline_num_ctl_points=6, bspline_strength=0.002, bspline_probability=.95,
-        affine_strengh=0.03, affine_probability=.45,
+        affine_strength=0.03, affine_probability=.45,
         pre_interpolation_factor=2.):
 
         if yield_2d:
@@ -870,7 +870,7 @@ class CrossMoDa_Data(Dataset):
         b_image, b_label, b_spat_augment_grid = spatial_augment(
             b_image, b_label,
             bspline_num_ctl_points=bspline_num_ctl_points, bspline_strength=bspline_strength, bspline_probability=bspline_probability,
-            affine_strengh=affine_strengh, affine_probability=affine_probability,
+            affine_strength=affine_strength, affine_probability=affine_probability,
             pre_interpolation_factor=2., yield_2d=yield_2d)
 
         b_label = b_label.long()
@@ -976,7 +976,7 @@ config_dict = DotDict({
     # 'epx_override': 0,
 
     'use_mind': True,
-    'epochs': 40,
+    'epochs': 80,
 
     'batch_size': 64,
     'val_batch_size': 1,
@@ -1013,8 +1013,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': "online",
+    'debug': True,
+    'wandb_mode': "disabled",
     'wandb_name_override': None,
     'do_sweep': False,
 
@@ -1135,20 +1135,20 @@ if config_dict['do_plot']:
 
 
 # %%
-if config_dict['do_plot']:
-    for sidx in [1,]:
+if config_dict.do_plot:
+    for sidx in [0,]:
         print(f"Sample {sidx}:")
 
         training_dataset.eval()
         sample_eval = training_dataset.get_3d_item(sidx)
 
-        display_seg(in_type="single_3D", reduce_dim="W",
+        visualize_seg(in_type="single_3D", reduce_dim="W",
                     img=sample_eval['image'].unsqueeze(0),
                     ground_truth=sample_eval['label'],
                     crop_to_non_zero_gt=True,
                     alpha_gt = .3)
 
-        display_seg(in_type="single_3D", reduce_dim="W",
+        visualize_seg(in_type="single_3D", reduce_dim="W",
                     img=sample_eval['image'].unsqueeze(0),
                     ground_truth=sample_eval['label'],
                     crop_to_non_zero_gt=True,
@@ -1158,14 +1158,14 @@ if config_dict['do_plot']:
         print("Train sample with ground-truth overlay")
         sample_train = training_dataset.get_3d_item(sidx)
         print(sample_train['label'].unique())
-        display_seg(in_type="single_3D", reduce_dim="W",
+        visualize_seg(in_type="single_3D", reduce_dim="W",
                     img=sample_train['image'].unsqueeze(0),
                     ground_truth=sample_train['label'],
                     crop_to_non_zero_gt=True,
                     alpha_gt=.3)
 
         print("Eval/train diff with diff overlay")
-        display_seg(in_type="single_3D", reduce_dim="W",
+        visualize_seg(in_type="single_3D", reduce_dim="W",
                     img=(sample_eval['image'] - sample_train['image']).unsqueeze(0),
                     ground_truth=(sample_eval['label'] - sample_train['label']).clamp(min=0),
                     crop_to_non_zero_gt=True,
@@ -1840,9 +1840,9 @@ def train_DL(run_name, config, training_dataset):
 # config_dict['wandb_mode'] = 'disabled'
 # config_dict['debug'] = True
 # Model loading
-config_dict['wandb_name_override'] = 'swift-paper-698'
-# config_dict['fold_override'] = 0
-config_dict['epx_override'] = 39
+# config_dict['wandb_name_override'] = 'effortless-sun-710'
+# # config_dict['fold_override'] = 0
+# config_dict['epx_override'] = 39
 
 # Define sweep override dict
 sweep_config_dict = dict(
