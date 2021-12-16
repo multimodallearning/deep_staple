@@ -1005,16 +1005,16 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 32,
-    'grid_size_x': 32,
+    'grid_size_y': 64,
+    'grid_size_x': 64,
     # ),
 
     'save_every': 200,
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': "disabled",
+    'debug': False,
+    'wandb_mode': "online",
     'wandb_name_override': None,
     'do_sweep': False,
 
@@ -1801,13 +1801,12 @@ def train_DL(run_name, config, training_dataset):
             samples_sorted = sorted(data, key=lambda tpl: tpl[0])
             dp_weight, dp_weightmap, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels = zip(*samples_sorted)
 
-            # TODO readd again
             # Save labels, modified labels, data parameters, ids and flags
-            # with gzip.open(train_label_snapshot_path, 'wb') as handle:
-            #     pickle.dump(list(zip(instance_parameters, disturb_flags, d_ids, dataset_idxs, _2d_labels, _2d_modified_labels)),
-            #         handle, protocol=pickle.HIGHEST_PROTOCOL)
-            # overlay text example: d_idx=0, dp_i=1.00, dist? False
+            with gzip.open(train_label_snapshot_path, 'wb') as handle:
+                pickle.dump(list(zip(dp_weight, dp_weightmap, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels)),
+                    handle, protocol=pickle.HIGHEST_PROTOCOL)
 
+            # overlay text example: d_idx=0, dp_i=1.00, dist? False
             overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
                 for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
             visualize_seg(in_type="batch_2D",
