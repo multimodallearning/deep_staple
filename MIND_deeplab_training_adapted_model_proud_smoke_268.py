@@ -273,7 +273,7 @@ def spatial_augment(b_image=None, b_label=None,
 
             if do_affine:
                 affine_matrix = (torch.eye(2,3).unsqueeze(0) + \
-                    affine_strengh * (1/10*torch.randn(B,2,3)+1.)).to(common_device)
+                    affine_strength * (1/10*torch.randn(B,2,3)+1.)).to(common_device)
 
                 affine_disp = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
                                         align_corners=False)
