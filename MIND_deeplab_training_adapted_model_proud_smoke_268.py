@@ -1022,8 +1022,8 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 32,
-    'grid_size_x': 32,
+    'grid_size_y': 64,
+    'grid_size_x': 64,
     # ),
 
     'save_every': 200,
@@ -1557,6 +1557,7 @@ def train_DL(run_name, config, training_dataset):
                         logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
+                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
                         m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
                         weight = embedding(m_dp_idxs)
                         weight = weight.reshape(-1, config.grid_size_y, config.grid_size_x)
@@ -1567,16 +1568,14 @@ def train_DL(run_name, config, training_dataset):
                             mode='bilinear',
                             align_corners=True
                         )
-
+                        weight = torch.sigmoid(weight)
+                        weight = weight/weight.mean()
                         weight = F.grid_sample(weight, b_spat_aug_grid,
                             padding_mode='border', align_corners=False)
+                        loss = (loss.unsqueeze(1)*weight).sum()
 
-                        logits = logits*weight
-                        loss = nn.BCEWithLogitsLoss(reduction='mean')(
-                            logits.permute(0,2,3,1),
-                            torch.nn.functional.one_hot(b_seg_modified, len(config.label_tags)).float()
-                        )
-                        logits_for_score = logits.argmax(1)
+                        # Prepare logits for scoring
+                        logits_for_score = (logits*weight).argmax(1)
 
                     else:
                         loss = nn.CrossEntropyLoss()(logits, b_seg_modified)

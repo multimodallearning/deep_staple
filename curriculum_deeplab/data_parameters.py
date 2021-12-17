@@ -10,7 +10,7 @@ class DotDict(dict):
     __delattr__ = dict.__delitem__
 
 class DataParamMode(Enum):
-    ONLY_INSTANCE_PARAMS = auto()
+    INSTANCE_PARAMS = auto()
     GRIDDED_INSTANCE_PARAMS = auto()
     ONLY_CLASS_PARAMS = auto()
     COMBINED_INSTANCE_CLASS_PARAMS = auto()
