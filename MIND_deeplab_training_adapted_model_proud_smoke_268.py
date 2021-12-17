@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
@@ -1275,7 +1275,7 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
         embedding = None
 
 
-    if config.data_param_mode != str(DataParamMode.DISABLED):
+    if str(config.data_param_mode) != str(DataParamMode.DISABLED):
         optimizer_dp = torch.optim.SparseAdam(
             embedding.parameters(), lr=config.lr_inst_param,
             betas=(0.9, 0.999), eps=1e-08)
@@ -1582,7 +1582,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 10:
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
