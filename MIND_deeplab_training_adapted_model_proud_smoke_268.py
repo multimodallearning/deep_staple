@@ -27,7 +27,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.cuda.amp as amp
 import torchvision
-from curriculum_deeplab.data_parameters import DataParamMode
 import torchio as tio
 
 import matplotlib.pyplot as plt
@@ -968,6 +967,11 @@ class LabelDisturbanceMode(Enum):
     FLIP_ROLL = auto()
     AFFINE = auto()
 
+class DataParamMode(Enum):
+    INSTANCE_PARAMS = auto()
+    GRIDDED_INSTANCE_PARAMS = auto()
+    DISABLED = auto()
+
 class DotDict(dict):
     """dot.notation access to dictionary attributes
         See https://stackoverflow.com/questions/49901590/python-using-copy-deepcopy-on-dotdict
@@ -1004,7 +1008,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
