@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
@@ -1231,15 +1231,13 @@ def set_module(module, keychain, replacee):
 
 
 # %%
-def save_model(lraspp, optimizer, optimizer_dp, embedding, scaler, _path):
+def save_model(_path, **statefuls):
     _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
     _path.mkdir(exist_ok=True, parents=True)
 
-    torch.save(lraspp.state_dict(), _path.joinpath('lraspp.pth'))
-    torch.save(optimizer.state_dict(), _path.joinpath('optimizer.pth'))
-    torch.save(scaler.state_dict(), _path.joinpath('grad_scaler.pth'))
-    torch.save(optimizer_dp.state_dict(), _path.joinpath('optimizer_dp.pth'))
-    torch.save(embedding.state_dict(), _path.joinpath('embedding.pth'))
+    for name, stful in statefuls.items():
+        if stful != None:
+            torch.save(stful.state_dict(), _path.joinpath(name+'.pth'))
 
 
 
@@ -1275,12 +1273,13 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
         embedding = nn.Embedding(len(training_dataset)*config.grid_size_y*config.grid_size_x, 1, sparse=True).to(device)
     else:
         embedding = None
-    torch.nn.init.normal_(embedding.weight.data, mean=config.init_inst_param, std=0.01)
+
 
     if config.data_param_mode != str(DataParamMode.DISABLED):
         optimizer_dp = torch.optim.SparseAdam(
             embedding.parameters(), lr=config.lr_inst_param,
             betas=(0.9, 0.999), eps=1e-08)
+        torch.nn.init.normal_(embedding.weight.data, mean=config.init_inst_param, std=0.01)
 
         if _path and _path.is_dir():
             print(f"Loading embedding and dp_optimizer from {_path}")
@@ -1296,7 +1295,7 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
         print(f"Loading lr-aspp model, optimizers and grad scalers from {_path}")
         lraspp.load_state_dict(torch.load(_path.joinpath('lraspp.pth'), map_location=device))
         optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
-        scaler.load_state_dict(torch.load(_path.joinpath('grad_scaler.pth'), map_location=device))
+        scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
     else:
         print("Generating fresh lr-aspp model, optimizer and grad scaler.")
 
@@ -1474,15 +1473,14 @@ def train_DL(run_name, config, training_dataset):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, T_0=200, T_mult=2, eta_min=config.lr*.1, last_epoch=- 1, verbose=False)
 
+        if optimizer_dp:
+            scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer_dp, T_0=200, T_mult=2, eta_min=config.lr_inst_param*.1, last_epoch=- 1, verbose=False)
+        else:
+            scheduler_dp = None
+
         criterion = nn.CrossEntropyLoss()
         _, all_segs = training_dataset.get_data()
-
-        # Add inverse weighting to instances according to labeled pixels
-        # instance_pixel_weight = torch.sqrt(1.0/(torch.stack([torch.bincount(seg.view(-1))[1] for seg in all_segs]).float()))  TODO removce
-        # instance_pixel_weight = instance_pixel_weight/instance_pixel_weight.mean()  TODO removce
-
-        scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer_dp, T_0=200, T_mult=2, eta_min=config.lr_inst_param*.1, last_epoch=- 1, verbose=False)
 
         t0 = time.time()
 
@@ -1490,9 +1488,6 @@ def train_DL(run_name, config, training_dataset):
         norm_label, mod_label = list(zip(*[(sample['label'], sample['modified_label']) \
             for sample in training_dataset]))
         union_norm_mod_label = torch.logical_or(torch.stack(norm_label), torch.stack(mod_label))
-
-        embedding = embedding.cuda()
-        lraspp.cuda()
         union_norm_mod_label = union_norm_mod_label.cuda()
 
         for epx in range(epx_start, config.epochs):
@@ -1512,7 +1507,8 @@ def train_DL(run_name, config, training_dataset):
             for batch in train_dataloader:
 
                 optimizer.zero_grad()
-                optimizer_dp.zero_grad()
+                if optimizer_dp:
+                    optimizer_dp.zero_grad()
 
                 b_img = batch['image']
                 b_seg = batch['label']
@@ -1527,22 +1523,6 @@ def train_DL(run_name, config, training_dataset):
                 b_idxs_dataset = b_idxs_dataset.cuda()
                 b_seg = b_seg.cuda()
                 b_spat_aug_grid = b_spat_aug_grid.cuda()
-
-                # if True:
-                #     print(f"Input 2D stack label/ground-truth")
-
-                #     # display_all_seg_slices(b_seg.unsqueeze(1), logits_for_score)
-                #     print(b_seg.unique())
-                #     print(b_img.shape)
-                #     display_seg(in_type="batch_2D",
-                #         img=b_img.unsqueeze(1).cpu(),
-                #         seg=b_seg_modified.cpu(),
-                #         ground_truth=b_seg.cpu(),
-                #         crop_to_non_zero_seg=True,
-                #         crop_to_non_zero_gt=True,
-                #         alpha_seg=.2,
-                #         alpha_gt=.4
-                #     )
 
                 if config.use_mind:
                     b_img = mindssc(b_img.unsqueeze(1).unsqueeze(1)).squeeze(2)
@@ -1621,35 +1601,16 @@ def train_DL(run_name, config, training_dataset):
                 class_dices.append(get_batch_dice_per_class(
                     b_dice, config.label_tags, exclude_bg=True))
 
-                if config.do_plot:
-                    print("Training 2D stack image label/ground-truth")
-                    print(b_dice)
-
-                    display_seg(in_type="batch_2D",
-                        img=batch['image'].unsqueeze(1).cpu(),
-                        seg=logits_for_score.cpu(),
-                        ground_truth=b_seg.cpu(),
-                        crop_to_non_zero_seg=True,
-                        crop_to_non_zero_gt=True,
-                        alpha_seg=.1,
-                        alpha_gt =.2
-                    )
-
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
-                    scheduler_dp.step()
+                    if optimizer_dp:
+                        scheduler_dp.step()
 
                 if config.debug:
                     break
 
-                # if scheduler.T_cur == 0:
-                #     sz = training_dataset.get_dilate_kernel_size()
-                #     training_dataset.set_dilate_kernel_size(sz-1)
-                #     print(f"Current dilate kernel size is {training_dataset.get_dilate_kernel_size()}.")
-
             ### Logging ###
-
             print(f"### Log epoch {epx} @ {time.time()-t0:.2f}s")
             print("### Training")
             ### Log wandb data ###
@@ -1665,10 +1626,9 @@ def train_DL(run_name, config, training_dataset):
             wandb.log({f'scores/dice_mean_wo_bg_fold{fold_idx}': mean_dice}, step=global_idx)
 
             log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
-            log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
 
             # Log data parameters of disturbed samples
-            if len(training_dataset.disturbed_idxs) > 0:
+            if len(training_dataset.disturbed_idxs) > 0 and str(config.data_param_mode) != str(DataParamMode.DISABLED):
                 if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                     m_tr_idxs = map_embedding_idxs(train_idxs,
                         config.grid_size_y, config.grid_size_x
@@ -1687,22 +1647,31 @@ def train_DL(run_name, config, training_dataset):
                         disturbed_bool_vect[train_idxs].cpu().numpy()
                     )[0,1]
 
-                else:
+                elif str(config.data_param_mode) == str(DataParamMode.ONLY_INSTANCE_PARAMS):
                     corr_coeff = np.corrcoef(
                         embedding(train_idxs.cuda()).detach().cpu().view(train_idxs.numel()).numpy(),
                         disturbed_bool_vect[train_idxs].cpu().numpy()
                     )[0,1]
 
-            wandb.log(
-                {f'data_parameters/corr_coeff_fold{fold_idx}': corr_coeff},
-                step=global_idx
-            )
-            print(f'data_parameters/corr_coeff_fold{fold_idx}', f"{corr_coeff:.2f}")
+                wandb.log(
+                    {f'data_parameters/corr_coeff_fold{fold_idx}': corr_coeff},
+                    step=global_idx
+                )
+                print(f'data_parameters/corr_coeff_fold{fold_idx}', f"{corr_coeff:.2f}")
+
+            if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+                log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
 
             if (epx % config.save_every == 0 and epx != 0) \
                 or (epx+1 == config.epochs):
                 _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx}"
-                save_model(lraspp, optimizer, optimizer_dp, embedding, scaler, _path)
+                save_model(
+                    _path,
+                    lraspp=lraspp,
+                    optimizer=optimizer, optimizer_dp=optimizer_dp,
+                    scheduler=scheduler, sheduler_dp=scheduler_dp,
+                    embedding=embedding,
+                    scaler=scaler)
                 (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(train_dataloader), _path=_path, device='cuda')
 
             print()
@@ -1872,29 +1841,29 @@ def train_DL(run_name, config, training_dataset):
                     file_path=weightmap_out_path,
                 )
 
-            # Log histogram
-            separated_params = list(zip(dp_weights[clean_idxs], dp_weights[disturbed_idxs]))
-            s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
-            fields = {"primary_bins" : "clean_idxs", "secondary_bins" : "disturbed_idxs", "title" : "Data parameter composite histogram"}
-            composite_histogram = wandb.plot_table(vega_spec_name="rap1ide/composite_histogram", data_table=s_table, fields=fields)
-            wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
+                # Log histogram
+                separated_params = list(zip(dp_weights[clean_idxs], dp_weights[disturbed_idxs]))
+                s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
+                fields = {"primary_bins" : "clean_idxs", "secondary_bins" : "disturbed_idxs", "title" : "Data parameter composite histogram"}
+                composite_histogram = wandb.plot_table(vega_spec_name="rap1ide/composite_histogram", data_table=s_table, fields=fields)
+                wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
 
-            # Write out data of modified and un-modified labels and an overview image
-            print("Writing out sample image.")
-            # overlay text example: d_idx=0, dp_i=1.00, dist? False
-            overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
-                for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
-            visualize_seg(in_type="batch_2D",
-                img=torch.stack(_2d_imgs).unsqueeze(1),
-                seg=(4*torch.stack(_2d_modified_labels)-torch.stack(_2d_labels)).abs(),
-                crop_to_non_zero_seg=False,
-                alpha_seg = .2,
-                n_per_row=70,
-                overlay_text=overlay_text_list,
-                annotate_color=(0,255,255),
-                frame_elements=disturb_flags,
-                file_path=seg_viz_out_path,
-            )
+                # Write out data of modified and un-modified labels and an overview image
+                print("Writing out sample image.")
+                # overlay text example: d_idx=0, dp_i=1.00, dist? False
+                overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
+                    for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
+                visualize_seg(in_type="batch_2D",
+                    img=torch.stack(_2d_imgs).unsqueeze(1),
+                    seg=(4*torch.stack(_2d_modified_labels)-torch.stack(_2d_labels)).abs(),
+                    crop_to_non_zero_seg=False,
+                    alpha_seg = .2,
+                    n_per_row=70,
+                    overlay_text=overlay_text_list,
+                    annotate_color=(0,255,255),
+                    frame_elements=disturb_flags,
+                    file_path=seg_viz_out_path,
+                )
         # End of fold loop
 
 
