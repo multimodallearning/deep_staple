@@ -1018,8 +1018,8 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 128,
-    'grid_size_x': 128,
+    'grid_size_y': 32,
+    'grid_size_x': 32,
     # ),
 
     'save_every': 200,
@@ -1029,7 +1029,7 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': "online",
     'wandb_name_override': None,
-    'do_sweep': False,
+    'do_sweep': True,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 1.,
@@ -1582,7 +1582,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 20:
                     scaler.step(optimizer_dp)
 
                 scaler.update()
@@ -1848,22 +1848,22 @@ def train_DL(run_name, config, training_dataset):
                 composite_histogram = wandb.plot_table(vega_spec_name="rap1ide/composite_histogram", data_table=s_table, fields=fields)
                 wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
 
-                # Write out data of modified and un-modified labels and an overview image
-                print("Writing out sample image.")
-                # overlay text example: d_idx=0, dp_i=1.00, dist? False
-                overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
-                    for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
-                visualize_seg(in_type="batch_2D",
-                    img=torch.stack(_2d_imgs).unsqueeze(1),
-                    seg=(4*torch.stack(_2d_modified_labels)-torch.stack(_2d_labels)).abs(),
-                    crop_to_non_zero_seg=False,
-                    alpha_seg = .2,
-                    n_per_row=70,
-                    overlay_text=overlay_text_list,
-                    annotate_color=(0,255,255),
-                    frame_elements=disturb_flags,
-                    file_path=seg_viz_out_path,
-                )
+            # Write out data of modified and un-modified labels and an overview image
+            print("Writing out sample image.")
+            # overlay text example: d_idx=0, dp_i=1.00, dist? False
+            overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
+                for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
+            visualize_seg(in_type="batch_2D",
+                img=torch.stack(_2d_imgs).unsqueeze(1),
+                seg=(4*torch.stack(_2d_modified_labels)-torch.stack(_2d_labels)).abs(),
+                crop_to_non_zero_seg=False,
+                alpha_seg = .2,
+                n_per_row=70,
+                overlay_text=overlay_text_list,
+                annotate_color=(0,255,255),
+                frame_elements=disturb_flags,
+                file_path=seg_viz_out_path,
+            )
         # End of fold loop
 
 
@@ -1879,24 +1879,23 @@ def train_DL(run_name, config, training_dataset):
 # Define sweep override dict
 sweep_config_dict = dict(
     method='grid',
-    metric=dict(goal='minimize', name='data_parameters/corr_coeff_fold0'),
+    metric=dict(goal='maximize', name='scores/val_dice_mean_tumour_fold0'),
     parameters=dict(
         disturbance_mode=dict(
-            value='LabelDisturbanceMode.AFFINE'
-        ),
-        disturbance_strength=dict(
             values=[
-                0.1, 0.2,
-                0.3, 0.5,
-                1.0
+                'LabelDisturbanceMode.AFFINE',
             ]
         ),
+        disturbance_strength=dict(
+            values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
+        ),
         disturbed_percentage=dict(
-            values=[0.1, 0.2, 0.3]
+            values=[0.3, 0.6]
         ),
         data_param_mode=dict(
             values=[
-                'DataParamMode.GRIDDED_INSTANCE_PARAMS'
+                'DataParamMode.ONLY_INSTANCE_PARAMS',
+                'DataParamMode.DISABLED',
             ]
         )
     )
