@@ -17,7 +17,7 @@
 import os
 import time
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars(select="* -3 -4", force=True))
+os.environ.update(get_vars(select="* -3 -4"))
 import pickle
 import gzip
 import copy
@@ -205,7 +205,7 @@ def make_3d_from_2d_stack(b_input, stack_dim, orig_stack_size):
 # %%
 def spatial_augment(b_image=None, b_label=None,
     bspline_num_ctl_points=6, bspline_strength=0.005, bspline_probability=.9,
-    affine_strength=0.08, affine_probability=.45,
+    affine_strength=0.08, add_affine_translation=0., affine_probability=.45,
     pre_interpolation_factor=None,
     yield_2d=False,
     b_grid_override=None):
@@ -261,7 +261,7 @@ def spatial_augment(b_image=None, b_label=None,
                 dim_strength = (torch.tensor([H,W]).float()*bspline_strength*.5).to(common_device)
                 rand_control_points = dim_strength.view(1,2,1,1) * \
                     (
-                        1/10*torch.randn(B, 2, bspline_num_ctl_points, bspline_num_ctl_points)+1.
+                        torch.randn(B, 2, bspline_num_ctl_points, bspline_num_ctl_points)
                     ).to(common_device)
 
                 bspline_disp = bspline(rand_control_points)
@@ -273,8 +273,11 @@ def spatial_augment(b_image=None, b_label=None,
 
             if do_affine:
                 affine_matrix = (torch.eye(2,3).unsqueeze(0) + \
-                    affine_strength * (1/10*torch.randn(B,2,3)+1.)).to(common_device)
-
+                    affine_strength * torch.randn(B,2,3)).to(common_device)
+                # Add additional x,y offset
+                alpha = np.random.rand() * 2 * np.pi
+                offset_dir =  torch.tensor([np.cos(alpha), np.sin(alpha)])
+                affine_matrix[:,:,-1] = add_affine_translation * offset_dir
                 affine_disp = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
                                         align_corners=False)
                 grid += (affine_disp-id_grid)
@@ -301,7 +304,7 @@ def spatial_augment(b_image=None, b_label=None,
 
                 rand_control_points = dim_strength.view(1,3,1,1,1)  * \
                     (
-                        1/10*torch.randn(B, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points)+1.
+                        torch.randn(B, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points)
                     ).to(b_image.device)
 
                 bspline_disp = bspline(rand_control_points)
@@ -314,7 +317,16 @@ def spatial_augment(b_image=None, b_label=None,
 
             if do_affine:
                 affine_matrix = (torch.eye(3,4).unsqueeze(0) + \
-                    affine_strength * (1/10*torch.randn(B,3,4)+1.)).to(common_device)
+                    affine_strength * torch.randn(B,3,4)).to(common_device)
+
+                # Add additional x,y,z offset
+                theta = np.random.rand() * 2 * np.pi
+                phi = np.random.rand() * 2 * np.pi
+                offset_dir =  torch.tensor([
+                    np.cos(phi)*np.sin(theta),
+                    np.sin(phi)*np.sin(theta),
+                    np.cos(theta)])
+                affine_matrix[:,:,-1] = add_affine_translation * offset_dir
 
                 affine_disp = F.affine_grid(affine_matrix,torch.Size((B,1,D,H,W)),
                                         align_corners=False)
@@ -741,7 +753,8 @@ class CrossMoDa_Data(Dataset):
                         b_modified_label = modified_label.unsqueeze(0).cuda()
                         _, b_modified_label, _ = spatial_augment(b_label=b_modified_label, yield_2d=yield_2d,
                             bspline_num_ctl_points=6, bspline_strength=0., bspline_probability=0.,
-                            affine_strength=0.09*self.disturbance_strength, affine_probability=1.)
+                            affine_strength=0.09*self.disturbance_strength,
+                            add_affine_translation=0.18*self.disturbance_strength, affine_probability=1.)
                         modified_label = b_modified_label.squeeze(0).cpu()
 
                     elif self.disturbance_mode == None:
@@ -853,8 +866,8 @@ class CrossMoDa_Data(Dataset):
 
     def augment(self, b_image, b_label, yield_2d,
         noise_strength=0.05,
-        bspline_num_ctl_points=6, bspline_strength=0.002, bspline_probability=.95,
-        affine_strength=0.03, affine_probability=.45,
+        bspline_num_ctl_points=6, bspline_strength=0.004, bspline_probability=.95,
+        affine_strength=0.07, affine_probability=.45,
         pre_interpolation_factor=2.):
 
         if yield_2d:
@@ -984,14 +997,14 @@ config_dict = DotDict({
     'dataset': 'crossmoda',
     'train_set_max_len': 100,
     'crop_3d_w_dim_range': (24, 110),
-    'crop_2d_slices_gt_num_threshold': 25,
+    'crop_2d_slices_gt_num_threshold': 0,
     'yield_2d_normal_to': "W",
 
     'lr': 0.0005,
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.GRIDDED_INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.ONLY_INSTANCE_PARAMS,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
@@ -1005,8 +1018,8 @@ config_dict = DotDict({
         # optim_options=dict(
         #     betas=(0.9, 0.999)
         # )
-    'grid_size_y': 32,
-    'grid_size_x': 32,
+    'grid_size_y': 128,
+    'grid_size_x': 128,
     # ),
 
     'save_every': 200,
@@ -1036,7 +1049,8 @@ if config_dict['dataset'] == 'crossmoda':
         yield_2d_normal_to=config_dict['yield_2d_normal_to'],
         disturbed_idxs=None, disturbance_mode=config_dict['disturbance_mode'], disturbance_strength=config_dict['disturbance_strength'],
         dilate_kernel_sz=config_dict['start_dilate_kernel_sz'],
-        debug=config_dict['debug']
+        debug=config_dict['debug'],
+        # inject_data_path = '/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/healing_polished-river.pth'
     )
     config_dict.label_tags = ['background', 'tumour']
     training_dataset.eval()
@@ -1247,33 +1261,44 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
     # set_module(lraspp, 'classifier.scale.2',
     #     torch.nn.Identity()
     # )
-
     lraspp.to(device)
+    print(f"Param count lraspp: {sum(p.numel() for p in lraspp.parameters())}")
 
     optimizer = torch.optim.Adam(lraspp.parameters(), lr=config.lr)
-
-    # Add data paramters
-    embedding = nn.Embedding(len(training_dataset)*config.grid_size_y*config.grid_size_x, 1, sparse=True).to(device)
-    torch.nn.init.normal_(embedding.weight.data, mean=config.init_inst_param, std=0.01)
-
-    optimizer_dp = torch.optim.SparseAdam(
-        embedding.parameters(), lr=config.lr_inst_param,
-        betas=(0.9, 0.999), eps=1e-08)
-
     scaler = amp.GradScaler()
 
-    if _path and _path.is_dir():
-        print(f"Loading lr-aspp model, optimizers, embedding and grad scalers from {_path}")
-        lraspp.load_state_dict(torch.load(_path.joinpath('lraspp.pth'), map_location=device))
-        optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
-        optimizer_dp.load_state_dict(torch.load(_path.joinpath('optimizer_dp.pth'), map_location=device))
-        embedding.load_state_dict(torch.load(_path.joinpath('embedding.pth'), map_location=device))
-        scaler.load_state_dict(torch.load(_path.joinpath('grad_scaler.pth'), map_location=device))
+    # Add data paramters embedding and optimizer
+    if config.data_param_mode == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+        embedding = nn.Embedding(len(training_dataset), 1, sparse=True).to(device)
+
+    elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
+        embedding = nn.Embedding(len(training_dataset)*config.grid_size_y*config.grid_size_x, 1, sparse=True).to(device)
+    else:
+        embedding = None
+    torch.nn.init.normal_(embedding.weight.data, mean=config.init_inst_param, std=0.01)
+
+    if config.data_param_mode != str(DataParamMode.DISABLED):
+        optimizer_dp = torch.optim.SparseAdam(
+            embedding.parameters(), lr=config.lr_inst_param,
+            betas=(0.9, 0.999), eps=1e-08)
+
+        if _path and _path.is_dir():
+            print(f"Loading embedding and dp_optimizer from {_path}")
+            optimizer_dp.load_state_dict(torch.load(_path.joinpath('optimizer_dp.pth'), map_location=device))
+            embedding.load_state_dict(torch.load(_path.joinpath('embedding.pth'), map_location=device))
+
+        print(f"Param count embedding: {sum(p.numel() for p in embedding.parameters())}")
 
     else:
-        print("Generating fresh lr-aspp model, optimizers, embedding and grad scaler.")
-    print(f"Param count lraspp: {sum(p.numel() for p in lraspp.parameters())}")
-    print(f"Param count embedding: {sum(p.numel() for p in embedding.parameters())}")
+        optimizer_dp = None
+
+    if _path and _path.is_dir():
+        print(f"Loading lr-aspp model, optimizers and grad scalers from {_path}")
+        lraspp.load_state_dict(torch.load(_path.joinpath('lraspp.pth'), map_location=device))
+        optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
+        scaler.load_state_dict(torch.load(_path.joinpath('grad_scaler.pth'), map_location=device))
+    else:
+        print("Generating fresh lr-aspp model, optimizer and grad scaler.")
 
     return (lraspp, optimizer, optimizer_dp, embedding, scaler)
 
@@ -1548,7 +1573,6 @@ def train_DL(run_name, config, training_dataset):
                         logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-
                         m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
                         weight = embedding(m_dp_idxs)
                         weight = weight.reshape(-1, config.grid_size_y, config.grid_size_x)
@@ -1568,8 +1592,6 @@ def train_DL(run_name, config, training_dataset):
                             logits.permute(0,2,3,1),
                             torch.nn.functional.one_hot(b_seg_modified, len(config.label_tags)).float()
                         )
-                        # loss += 0.5 * config.wd_inst_param * (weight.mean((-1,-2))**2).sum()
-                        # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
 
                     else:
@@ -1584,7 +1606,6 @@ def train_DL(run_name, config, training_dataset):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
-                # embedding.weight.data.clamp_(config.clamp_sigma_min, config.clamp_sigma_max)
 
                 epx_losses.append(loss.item())
 
@@ -1648,30 +1669,38 @@ def train_DL(run_name, config, training_dataset):
 
             # Log data parameters of disturbed samples
             if len(training_dataset.disturbed_idxs) > 0:
-                m_tr_idxs = map_embedding_idxs(train_idxs,
-                    config.grid_size_y, config.grid_size_x
-                ).cuda()
-                masks = union_norm_mod_label[train_idxs].float()
-                masked_weights = torch.nn.functional.interpolate(
-                    embedding(m_tr_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
-                    size=(masks.shape[-2:]),
-                    mode='bilinear',
-                    align_corners=True
-                ).squeeze(1) * masks
-                masked_weights[masked_weights==0.] = float('nan')
+                if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
+                    m_tr_idxs = map_embedding_idxs(train_idxs,
+                        config.grid_size_y, config.grid_size_x
+                    ).cuda()
+                    masks = union_norm_mod_label[train_idxs].float()
+                    masked_weights = torch.nn.functional.interpolate(
+                        embedding(m_tr_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
+                        size=(masks.shape[-2:]),
+                        mode='bilinear',
+                        align_corners=True
+                    ).squeeze(1) * masks
+                    masked_weights[masked_weights==0.] = float('nan')
 
-                corr_coeff = np.corrcoef(
-                    np.nanmean(masked_weights.detach().cpu(), axis=(-2,-1)),
-                    disturbed_bool_vect[train_idxs].cpu().numpy()
-                )[0,1]
+                    corr_coeff = np.corrcoef(
+                        np.nanmean(masked_weights.detach().cpu(), axis=(-2,-1)),
+                        disturbed_bool_vect[train_idxs].cpu().numpy()
+                    )[0,1]
 
-                wandb.log(
-                    {f'data_parameters/corr_coeff_fold{fold_idx}': corr_coeff},
-                    step=global_idx
-                )
-                print(f'data_parameters/corr_coeff_fold{fold_idx}', f"{corr_coeff:.2f}")
+                else:
+                    corr_coeff = np.corrcoef(
+                        embedding(train_idxs.cuda()).detach().cpu().view(train_idxs.numel()).numpy(),
+                        disturbed_bool_vect[train_idxs].cpu().numpy()
+                    )[0,1]
 
-            if epx % config.save_every == 0 or (epx+1 == config.epochs):
+            wandb.log(
+                {f'data_parameters/corr_coeff_fold{fold_idx}': corr_coeff},
+                step=global_idx
+            )
+            print(f'data_parameters/corr_coeff_fold{fold_idx}', f"{corr_coeff:.2f}")
+
+            if (epx % config.save_every == 0 and epx != 0) \
+                or (epx+1 == config.epochs):
                 _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx}"
                 save_model(lraspp, optimizer, optimizer_dp, embedding, scaler, _path)
                 (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(train_dataloader), _path=_path, device='cuda')
@@ -1751,83 +1780,120 @@ def train_DL(run_name, config, training_dataset):
             if config.debug:
                 break
 
-        if len(disturbed_idxs) > 0 and str(config.data_param_mode) != str(DataParamMode.DISABLED):
+        if len(disturbed_idxs) > 0:
             training_dataset.eval(disturb=True)
+            all_idxs = torch.tensor(range(len(training_dataset))).cuda()
+            train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/train_label_snapshot.pth")
+            seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/data_parameter_weighted_samples.png")
 
-            # Log histogram of clean and disturbed parameters
-            all_idxs = torch.tensor(range(len(training_dataset)))
-            m_all_idxs = map_embedding_idxs(all_idxs,
-                    config.grid_size_y, config.grid_size_x
-            ).cuda()
-            masks = union_norm_mod_label[all_idxs].float()
-            all_weights = torch.nn.functional.interpolate(
-                embedding(m_all_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
-                size=(masks.shape[-2:]),
-                mode='bilinear',
-                align_corners=True
-            ).squeeze(1)
+            train_label_snapshot_path.parent.mkdir(parents=True, exist_ok=True)
 
-            masked_weights = all_weights * masks
-            masked_weights[masked_weights==0.] = float('nan')
-            reduced_weights = np.nanmean(masked_weights.detach().cpu(), axis=(-2,-1))
+            if str(config.data_param_mode) == str(DataParamMode.ONLY_INSTANCE_PARAMS):
+                dp_weights = embedding(all_idxs)
 
-            separated_params = list(zip(reduced_weights[clean_idxs], reduced_weights[disturbed_idxs]))
+                data = [(
+                    dp_weight,
+                    bool(disturb_flg.item()),
+                    sample['id'],
+                    sample['dataset_idx'],
+                    sample['image'],
+                    sample['label'],
+                    sample['modified_label']) for dp_weight, disturb_flg, sample in zip(dp_weights[train_idxs], disturbed_bool_vect[train_idxs], torch.utils.data.Subset(training_dataset,train_idxs))
+                ]
+
+                samples_sorted = sorted(data, key=lambda tpl: tpl[0])
+                (dp_weight, disturb_flags,
+                 d_ids, dataset_idxs, _2d_imgs,
+                 _2d_labels, _2d_modified_labels) = zip(*samples_sorted)
+
+                torch.save(
+                    [
+                        dp_weight, disturb_flags,
+                        d_ids, torch.stack(dataset_idxs), torch.stack(_2d_labels),
+                        torch.stack(_2d_modified_labels)
+                    ],
+                    train_label_snapshot_path
+                )
+
+            elif str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
+                # Log histogram of clean and disturbed parameters
+                m_all_idxs = map_embedding_idxs(all_idxs,
+                        config.grid_size_y, config.grid_size_x
+                ).cuda()
+                masks = union_norm_mod_label[all_idxs].float()
+                all_weights = torch.nn.functional.interpolate(
+                    embedding(m_all_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
+                    size=(masks.shape[-2:]),
+                    mode='bilinear',
+                    align_corners=True
+                ).squeeze(1)
+
+                masked_weights = all_weights * masks
+                masked_weights[masked_weights==0.] = float('nan')
+                dp_weights = np.nanmean(masked_weights.detach().cpu(), axis=(-2,-1))
+
+                weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/data_parameter_weightmap.png")
+
+                data = [(
+                    dp_weight,
+                    weightmap,
+                    bool(disturb_flg.item()),
+                    sample['id'],
+                    sample['dataset_idx'],
+                    sample['image'],
+                    sample['label'],
+                    sample['modified_label']) for dp_weight, weightmap, disturb_flg, sample in zip(dp_weights[train_idxs], all_weights[train_idxs], disturbed_bool_vect[train_idxs], torch.utils.data.Subset(training_dataset,train_idxs))
+                ]
+
+                samples_sorted = sorted(data, key=lambda tpl: tpl[0])
+                (dp_weight, dp_weightmap, disturb_flags,
+                 d_ids, dataset_idxs, _2d_imgs,
+                 _2d_labels, _2d_modified_labels) = zip(*samples_sorted)
+
+                torch.save(
+                    [
+                        dp_weight, torch.stack(dp_weightmap), disturb_flags,
+                        d_ids, torch.stack(dataset_idxs), torch.stack(_2d_labels),
+                        torch.stack(_2d_modified_labels)
+                    ],
+                    train_label_snapshot_path
+                )
+
+                print("Writing weight map.")
+                weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_data_parameter_weightmap.png")
+                visualize_seg(in_type="batch_2D",
+                    img=torch.stack(dp_weightmap).unsqueeze(1),
+                    seg=torch.stack(_2d_modified_labels),
+                    alpha_seg = 0.,
+                    n_per_row=70,
+                    overlay_text=overlay_text_list,
+                    annotate_color=(0,255,255),
+                    frame_elements=disturb_flags,
+                    file_path=weightmap_out_path,
+                )
+
+            # Log histogram
+            separated_params = list(zip(dp_weights[clean_idxs], dp_weights[disturbed_idxs]))
             s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
             fields = {"primary_bins" : "clean_idxs", "secondary_bins" : "disturbed_idxs", "title" : "Data parameter composite histogram"}
             composite_histogram = wandb.plot_table(vega_spec_name="rap1ide/composite_histogram", data_table=s_table, fields=fields)
             wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
 
             # Write out data of modified and un-modified labels and an overview image
-            train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_train_label_snapshot.pth")
-            seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_data_parameter_weighted_samples.png")
-            weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_data_parameter_weightmap.png")
-            # Generate directories
-            for _pathh in [train_label_snapshot_path, seg_viz_out_path]:
-                _pathh.parent.mkdir(parents=True, exist_ok=True)
-
-            print("Writing out sample and weight image.")
-            data = [(
-                weight,
-                weightmap,
-                bool(disturb_flg.item()),
-                sample['id'],
-                sample['dataset_idx'],
-                sample['image'],
-                sample['label'],
-                sample['modified_label']) for weight, weightmap, disturb_flg, sample in zip(reduced_weights[train_idxs], all_weights[train_idxs], disturbed_bool_vect[train_idxs], torch.utils.data.Subset(training_dataset,train_idxs))
-            ]
-
-            # Here we pack dataset_idx, instance_parameter, disturb_flag, 2d_img, 2d_label, 2d_modified_label
-            samples_sorted = sorted(data, key=lambda tpl: tpl[0])
-            dp_weight, dp_weightmap, disturb_flags, d_ids, dataset_idxs, _2d_imgs, _2d_labels, _2d_modified_labels = zip(*samples_sorted)
-
-            # Save labels, modified labels, data parameters, ids and flags
-            torch.save([dp_weight, torch.stack(dp_weightmap), disturb_flags, d_ids, torch.stack(dataset_idxs), torch.stack(_2d_labels), torch.stack(_2d_modified_labels)], train_label_snapshot_path)
-
+            print("Writing out sample image.")
             # overlay text example: d_idx=0, dp_i=1.00, dist? False
             overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
                 for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
             visualize_seg(in_type="batch_2D",
-                        img=torch.stack(_2d_imgs).unsqueeze(1),
-                        seg=(4*torch.stack(_2d_modified_labels)-torch.stack(_2d_labels)).abs(),
-                        crop_to_non_zero_seg=False,
-                        alpha_seg = .2,
-                        n_per_row=70,
-                        overlay_text=overlay_text_list,
-                        annotate_color=(0,255,255),
-                        frame_elements=disturb_flags,
-                        file_path=seg_viz_out_path,
-            )
-
-            visualize_seg(in_type="batch_2D",
-                        img=torch.stack(dp_weightmap).unsqueeze(1),
-                        seg=torch.stack(_2d_modified_labels),
-                        alpha_seg = 0.,
-                        n_per_row=70,
-                        overlay_text=overlay_text_list,
-                        annotate_color=(0,255,255),
-                        frame_elements=disturb_flags,
-                        file_path=weightmap_out_path,
+                img=torch.stack(_2d_imgs).unsqueeze(1),
+                seg=(4*torch.stack(_2d_modified_labels)-torch.stack(_2d_labels)).abs(),
+                crop_to_non_zero_seg=False,
+                alpha_seg = .2,
+                n_per_row=70,
+                overlay_text=overlay_text_list,
+                annotate_color=(0,255,255),
+                frame_elements=disturb_flags,
+                file_path=seg_viz_out_path,
             )
         # End of fold loop
 
