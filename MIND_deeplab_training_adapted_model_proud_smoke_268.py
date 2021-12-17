@@ -1582,7 +1582,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 20:
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 10:
                     scaler.step(optimizer_dp)
 
                 scaler.update()
@@ -1604,8 +1604,6 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
-                    if optimizer_dp:
-                        scheduler_dp.step()
 
                 if config.debug:
                     break
