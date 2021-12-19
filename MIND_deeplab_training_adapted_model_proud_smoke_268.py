@@ -1274,10 +1274,10 @@ def get_model(config, dataset_len, num_classes, _path=None, device='cpu'):
 
     # Add data paramters embedding and optimizer
     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
-        embedding = nn.Embedding(len(training_dataset), 1, sparse=True).to(device)
+        embedding = nn.Embedding(dataset_len, 1, sparse=True).to(device)
 
     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-        embedding = nn.Embedding(len(training_dataset)*config.grid_size_y*config.grid_size_x, 1, sparse=True).to(device)
+        embedding = nn.Embedding(dataset_len*config.grid_size_y*config.grid_size_x, 1, sparse=True).to(device)
     else:
         embedding = None
 
@@ -1477,7 +1477,7 @@ def train_DL(run_name, config, training_dataset):
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
         epx_start = config.get('epx_override', 0)
         _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
-        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(train_dataloader), len(training_dataset.label_tags), _path=_path, device='cuda')
+        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), _path=_path, device='cuda')
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, T_0=200, T_mult=2, eta_min=config.lr*.1, last_epoch=- 1, verbose=False)
