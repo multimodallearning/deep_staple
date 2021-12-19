@@ -1430,7 +1430,7 @@ def train_DL(run_name, config, training_dataset):
         disturbed_bool_vect[training_dataset.disturbed_idxs] = 1.
 
         clean_idxs = train_idxs[np.isin(train_idxs, training_dataset.disturbed_idxs, invert=True)]
-        print("Disturbed indexes:", sorted(training_dataset.disturbed_idxs.tolist()))
+        print("Disturbed indexes:", sorted(training_dataset.disturbed_idxs))
 
         if clean_idxs.numel() < 200:
             print(f"Clean indexes: {sorted(clean_idxs.tolist())}")
