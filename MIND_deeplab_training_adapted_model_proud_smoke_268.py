@@ -362,18 +362,23 @@ def augmentNoise(b_image, strength=0.05):
     return b_image + strength*torch.randn_like(b_image)
 
 
+@contextmanager
+def torch_manual_seeded(seed):
+    saved_state = torch.get_rng_state()
+    yield
+    torch.set_rng_state(saved_state)
+
+
 
 # %%
 class CrossMoDa_Data(Dataset):
     def __init__(self,
-        base_dir, domain, reg_state,
+        base_dir, domain, state,
         ensure_labeled_pairs=True, use_additional_data=False, resample=True,
         size:tuple=(96,96,60), normalize:bool=True,
         max_load_num=None, crop_3d_w_dim_range=None, crop_2d_slices_gt_num_threshold=None,
-        disturbed_idxs=None, disturbance_mode=None, disturbance_strength=1.0,
         modified_3d_label_override=None, prevent_disturbance=False,
         yield_2d_normal_to=None, flip_r_samples=True,
-        dilate_kernel_sz=1,
         debug=False
     ):
 
@@ -423,16 +428,13 @@ class CrossMoDa_Data(Dataset):
 
         """
 
-        self.disturbed_idxs = disturbed_idxs
         self.yield_2d_normal_to = yield_2d_normal_to
         self.crop_2d_slices_gt_num_threshold = crop_2d_slices_gt_num_threshold
         self.do_augment = False
         self.use_modified = False
         self.prevent_disturbance = False
+        self.disturbed_idxs = []
         self.augment_at_collate = False
-        self.dilate_kernel_sz = dilate_kernel_sz
-        self.disturbance_mode = disturbance_mode
-        self.disturbance_strength = disturbance_strength
 
         #define finished preprocessing states here with subpath and default size
         states = {
@@ -810,7 +812,7 @@ class CrossMoDa_Data(Dataset):
 
         return img_stack, label_stack
 
-    def set_disturbed_idxs(self, all_idxs, yield_2d_override=None):
+    def disturb_idxs(self, all_idxs, disturbance_mode=None, disturbance_strength=1., yield_2d_override=None):
         if self.prevent_disturbance:
             warnings.warn("Disturbed idxs shall be set but disturbance is prevented for dataset.")
             return
@@ -831,58 +833,57 @@ class CrossMoDa_Data(Dataset):
 
         # Reset modified data
         for idx in range(self.__len__(yield_2d_override=yield_2d)):
-            label_id = self.__getitem__(idx, yield_2d_override=yield_2d)['id']
-
             if yield_2d:
+                label_id = self.get_2d_ids()[idx]
                 self.modified_label_data_2d[label_id] = self.label_data_2d[label_id]
             else:
+                label_id = self.get_3d_ids()[idx]
                 self.modified_label_data_3d[label_id] = self.label_data_3d[label_id]
 
-        # Now apply disturbance
-        for idx in self.disturbed_idxs:
-            sample = self.__getitem__(idx, yield_2d_override=yield_2d)
-            label, label_id = sample['label'], sample['id']
+            # Now apply disturbance
+            if idx in self.disturbed_idxs:
+                label = self.modified_label_data_2d[label_id].detach().clone()
 
-            with torch_manual_seeded(dataset_idx):
-                if str(self.disturbance_mode)==str(LabelDisturbanceMode.FLIP_ROLL):
-                    roll_strength = 10*self.disturbance_strength
-                    if yield_2d:
-                        modified_label = \
-                            torch.roll(
-                                label.transpose(-2,-1),
-                                (
-                                    int(torch.randn(1)*roll_strength),
-                                    int(torch.randn(1)*roll_strength)
-                                ),(-2,-1)
-                            )
+                with torch_manual_seeded(idx):
+                    if str(disturbance_mode)==str(LabelDisturbanceMode.FLIP_ROLL):
+                        roll_strength = 10*disturbance_strength
+                        if yield_2d:
+                            modified_label = \
+                                torch.roll(
+                                    label.transpose(-2,-1),
+                                    (
+                                        int(torch.randn(1)*roll_strength),
+                                        int(torch.randn(1)*roll_strength)
+                                    ),(-2,-1)
+                                )
+                        else:
+                            modified_label = \
+                                torch.roll(
+                                    label.permute(1,2,0),
+                                    (
+                                        int(torch.randn(1)*roll_strength),
+                                        int(torch.randn(1)*roll_strength),
+                                        int(torch.randn(1)*roll_strength)
+                                    ),(-3,-2,-1)
+                                )
+
+                    elif str(disturbance_mode)==str(LabelDisturbanceMode.AFFINE):
+                        b_modified_label = label.unsqueeze(0).cuda()
+                        _, b_modified_label, _ = spatial_augment(b_label=b_modified_label, yield_2d=yield_2d,
+                            bspline_num_ctl_points=6, bspline_strength=0., bspline_probability=0.,
+                            affine_strength=0.09*disturbance_strength,
+                            add_affine_translation=0.18*disturbance_strength, affine_probability=1.)
+                        modified_label = b_modified_label.squeeze(0).cpu()
+
+                    elif disturbance_mode == None:
+                        pass
                     else:
-                        modified_label = \
-                            torch.roll(
-                                label.permute(1,2,0),
-                                (
-                                    int(torch.randn(1)*roll_strength),
-                                    int(torch.randn(1)*roll_strength),
-                                    int(torch.randn(1)*roll_strength)
-                                ),(-3,-2,-1)
-                            )
+                        raise ValueError(f"Disturbance mode {isturbance_mode} is not implemented.")
 
-                elif str(self.disturbance_mode)==str(LabelDisturbanceMode.AFFINE):
-                    b_modified_label = label.unsqueeze(0).cuda()
-                    _, b_modified_label, _ = spatial_augment(b_label=b_modified_label, yield_2d=yield_2d,
-                        bspline_num_ctl_points=6, bspline_strength=0., bspline_probability=0.,
-                        affine_strength=0.09*self.disturbance_strength,
-                        add_affine_translation=0.18*self.disturbance_strength, affine_probability=1.)
-                    modified_label = b_modified_label.squeeze(0).cpu()
-
-                elif self.disturbance_mode == None:
-                    pass
-                else:
-                    raise ValueError(f"Disturbance mode {self.disturbance_mode} is not implemented.")
-
-                if yield_2d:
-                    self.modified_label_data_2d[label_id] = modified_label
-                else:
-                    self.modified_label_data_2d[label_id] = modified_label
+                    if yield_2d:
+                        self.modified_label_data_2d[label_id] = modified_label
+                    else:
+                        self.modified_label_data_2d[label_id] = modified_label
 
 
     def train(self, augment=True, use_modified=True):
@@ -892,20 +893,8 @@ class CrossMoDa_Data(Dataset):
     def eval(self, augment=False, use_modified=False):
         self.train(augment, use_modified)
 
-    def set_augment_at_collate(self):
-        self.augment_at_collate = True
-
-    def unset_augment_at_collate(self):
-        self.augment_at_collate = False
-
-    def set_dilate_kernel_size(self, sz):
-        self.dilate_kernel_sz = max(1,sz)
-
-    def set_disturbance_strength(self, strength):
-        self.disturbance_strength = strength
-
-    def get_dilate_kernel_size(self):
-        return self.dilate_kernel_sz
+    def set_augment_at_collate(self, augment_at_collate=True):
+        self.augment_at_collate = augment_at_collate
 
     def get_efficient_augmentation_collate_fn(self):
         yield_2d = True if self.yield_2d_normal_to else False
@@ -1045,7 +1034,7 @@ if config_dict.reg_state:
     label_data_right = torch.load('./data/optimal_reg_right.pth')
 
     loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
-    label_data = torch.cat([label_data_left[reg_state+'_all'][:44], label_data_right[reg_state+'_all'][:63]], dim=0)
+    label_data = torch.cat([label_data_left[config_dict.reg_state+'_all'][:44], label_data_right[config_dict.reg_state+'_all'][:63]], dim=0)
 
     modified_3d_label_override = {}
     for idx, identifier in enumerate(loaded_identifier):
@@ -1068,9 +1057,7 @@ if config_dict.dataset == 'crossmoda':
         max_load_num=config_dict['train_set_max_len'],
         crop_3d_w_dim_range=config_dict['crop_3d_w_dim_range'], crop_2d_slices_gt_num_threshold=config_dict['crop_2d_slices_gt_num_threshold'],
         yield_2d_normal_to=config_dict['yield_2d_normal_to'],
-        disturbed_idxs=None, disturbance_mode=config_dict['disturbance_mode'], disturbance_strength=config_dict['disturbance_strength'],
         modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
-        dilate_kernel_sz=config_dict['start_dilate_kernel_sz'],
         debug=config_dict['debug'],
         # inject_data_path = '/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/healing_polished-river.pth'
     )
@@ -1117,13 +1104,16 @@ if config_dict['do_plot']:
     #                 alpha_gt = .3)
 
     # Print transformed 2D data
-    training_dataset.train(disturb=False, augment=True)
+    training_dataset.train(use_modified=False, augment=True)
     print(training_dataset.disturbed_idxs)
-    # training_dataset.set_disturbed_idxs(list(range(0,20,1)))
+
     print("Displaying 2D training sample")
     for dist_stren in [0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0]:
         print(dist_stren)
-        training_dataset.disturbance_strength = dist_stren
+        training_dataset.disturb_idxs(list(range(0,20,2)),
+            disturbance_mode=LabelDisturbanceMode.AFFINE,
+            disturbance_strength=dist_stren
+        )
         img_stack = []
         label_stack = []
         mod_label_stack = []
@@ -1147,7 +1137,7 @@ if config_dict['do_plot']:
             # crop_to_non_zero_gt=True,
             crop_to_non_zero_seg=True,
             alpha_seg = .6,
-            # alpha_gt = .6,
+            file_path=f'out{dist_stren}.png'
         )
 
     # Print transformed 3D data
@@ -1480,9 +1470,8 @@ def train_DL(run_name, config, training_dataset):
             # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
         )
 
-        training_dataset.unset_augment_at_collate()
-        training_dataset.set_disturbed_idxs(disturbed_idxs)
-        training_dataset.set_disturbance_strength(config.disturbance_strength)
+        training_dataset.set_augment_at_collate(False)
+        training_dataset.disturb_idxs(disturbed_idxs)
 
 #         val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
 #                                     sampler=val_subsampler, pin_memory=True, drop_last=False)
@@ -1518,7 +1507,7 @@ def train_DL(run_name, config, training_dataset):
             lraspp.train()
 
             ### Disturb samples ###
-            training_dataset.train(disturb=(epx >= config.start_disturbing_after_ep))
+            training_dataset.train(use_modified=(epx >= config.start_disturbing_after_ep))
             wandb.log({"use_modified": float(training_dataset.use_modified)}, step=global_idx)
 
             epx_losses = []
