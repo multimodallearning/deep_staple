@@ -427,7 +427,7 @@ class CrossMoDa_Data(Dataset):
             data = dataset.get_data()
 
         """
-
+        self.label_tags = ['background', 'tumour']
         self.yield_2d_normal_to = yield_2d_normal_to
         self.crop_2d_slices_gt_num_threshold = crop_2d_slices_gt_num_threshold
         self.prevent_disturbance = prevent_disturbance
@@ -1008,7 +1008,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': "online",
+    'wandb_mode': "disabled",
     'wandb_name_override': None,
     'do_sweep': True,
 
@@ -1021,76 +1021,79 @@ config_dict = DotDict({
 })
 
 # %%
-if config_dict.reg_state:
-    REG_STATES = ["combined", "best"]
-    if config_dict.reg_state in REG_STATES:
-        pass
+def prepare_data(config):
+    if config.reg_state:
+        REG_STATES = ["combined", "best"]
+        if config.reg_state in REG_STATES:
+            pass
+        else:
+            raise Exception(f"Unknown registration version. Choose one of {REG_STATES}")
+
+        label_data_left = torch.load('./data/optimal_reg_left.pth')
+        label_data_right = torch.load('./data/optimal_reg_right.pth')
+
+        loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
+        label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
+
+        modified_3d_label_override = {}
+        for idx, identifier in enumerate(loaded_identifier):
+            nl_id = int(re.findall(r'\d+', identifier)[0])
+            lr_id = identifier[-8]
+            crossmoda_id = f"{nl_id:03d}{lr_id}"
+            loaded_identifier[idx] = crossmoda_id
+            modified_3d_label_override[crossmoda_id] = label_data[idx]
+
+        prevent_disturbance = True
+
     else:
-        raise Exception(f"Unknown registration version. Choose one of {REG_STATES}")
+        modified_3d_label_override = None
+        prevent_disturbance = False
 
-    label_data_left = torch.load('./data/optimal_reg_left.pth')
-    label_data_right = torch.load('./data/optimal_reg_right.pth')
+    if config.dataset == 'crossmoda':
+        training_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
+            domain="source", state="l4", size=(128, 128, 128),
+            ensure_labeled_pairs=True,
+            max_load_num=config['train_set_max_len'],
+            crop_3d_w_dim_range=config['crop_3d_w_dim_range'], crop_2d_slices_gt_num_threshold=config['crop_2d_slices_gt_num_threshold'],
+            yield_2d_normal_to=config['yield_2d_normal_to'],
+            modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
+            debug=config['debug'],
+            # inject_data_path = '/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/healing_polished-river.pth'
+        )
+        training_dataset.eval()
+        print("Nonzero slice ratio: ",
+            sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)
+        )
+        # validation_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
+        #     domain="validation", state="l4", ensure_labeled_pairs=True)
+        # target_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
+        #     domain="target", state="l4", ensure_labeled_pairs=True)
 
-    loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
-    label_data = torch.cat([label_data_left[config_dict.reg_state+'_all'][:44], label_data_right[config_dict.reg_state+'_all'][:63]], dim=0)
+    elif config['dataset'] == 'organmnist3d':
+        training_dataset = WrapperOrganMNIST3D(
+            split='train', root='./data/medmnist', download=True, normalize=True,
+            max_load_num=300, crop_3d_w_dim_range=None,
+            disturbed_idxs=None, yield_2d_normal_to='W'
+        )
+        print(training_dataset.mnist_set.info)
+        print("Classes: ", training_dataset.label_tags)
+        print("Samples: ", len(training_dataset))
 
-    modified_3d_label_override = {}
-    for idx, identifier in enumerate(loaded_identifier):
-        nl_id = int(re.findall(r'\d+', identifier)[0])
-        lr_id = identifier[-8]
-        crossmoda_id = f"{nl_id:03d}{lr_id}"
-        loaded_identifier[idx] = crossmoda_id
-        modified_3d_label_override[crossmoda_id] = label_data[idx]
-
-    prevent_disturbance = True
-
-else:
-    modified_3d_label_override = None
-    prevent_disturbance = False
-
-if config_dict.dataset == 'crossmoda':
-    training_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
-        domain="source", state="l4", size=(128, 128, 128),
-        ensure_labeled_pairs=True,
-        max_load_num=config_dict['train_set_max_len'],
-        crop_3d_w_dim_range=config_dict['crop_3d_w_dim_range'], crop_2d_slices_gt_num_threshold=config_dict['crop_2d_slices_gt_num_threshold'],
-        yield_2d_normal_to=config_dict['yield_2d_normal_to'],
-        modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
-        debug=config_dict['debug'],
-        # inject_data_path = '/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/healing_polished-river.pth'
-    )
-    config_dict.label_tags = ['background', 'tumour']
-    training_dataset.eval()
-    print("Nonzero slice ratio: ",
-        sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)
-    )
-    # validation_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
-    #     domain="validation", state="l4", ensure_labeled_pairs=True)
-    # target_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
-    #     domain="target", state="l4", ensure_labeled_pairs=True)
-
-elif config_dict['dataset'] == 'organmnist3d':
-    training_dataset = WrapperOrganMNIST3D(
-        split='train', root='./data/medmnist', download=True, normalize=True,
-        max_load_num=300, crop_3d_w_dim_range=None,
-        disturbed_idxs=None, yield_2d_normal_to='W'
-    )
-    print(training_dataset.mnist_set.info)
-    label_tags = list(training_dataset.mnist_set.info['label'].values())
-    config_dict['label_tags'] = label_tags
-    print("Classes: ", label_tags)
-    print("Samples: ", len(training_dataset))
+    return training_dataset
 
 # %%
-_, all_labels = training_dataset.get_data(yield_2d_override=False)
-print(all_labels.shape)
-sum_over_w = torch.sum(all_labels, dim=(0,1,2))
-plt.xlabel("W")
-plt.ylabel("ground truth>0")
-plt.plot(sum_over_w);
+if False:
+    training_dataset = prepare_data(config_dict)
+    _, all_labels = training_dataset.get_data(yield_2d_override=False)
+    print(all_labels.shape)
+    sum_over_w = torch.sum(all_labels, dim=(0,1,2))
+    plt.xlabel("W")
+    plt.ylabel("ground truth>0")
+    plt.plot(sum_over_w);
 
 # %%
 if config_dict['do_plot']:
+    training_dataset = prepare_data(config_dict)
     # Print bare 2D data
     # print("Displaying 2D bare sample")
     # for img, label in zip(training_dataset.img_data_2d.values(),
@@ -1157,9 +1160,6 @@ if config_dict['do_plot']:
 #                     crop_to_non_zero_gt=True,
 #                     alpha_gt = .3)
 
-
-# %%
-if config_dict.do_plot:
     for sidx in [0,]:
         print(f"Sample {sidx}:")
 
@@ -1195,9 +1195,6 @@ if config_dict.do_plot:
                     crop_to_non_zero_gt=True,
                     alpha_gt = .3)
 
-# %%
-# train_subset = torch.utils.data.Subset(training_dataset,range(2))
-if config_dict['do_plot']:
     train_plotset = (training_dataset.get_3d_item(idx) for idx in (55, 81, 63))
     for sample in train_plotset:
         print(f"Sample {sample['dataset_idx']}:")
@@ -1251,7 +1248,7 @@ def save_model(_path, **statefuls):
 
 
 
-def get_model(config, dataset_len, _path=None, device='cpu'):
+def get_model(config, dataset_len, num_classes, _path=None, device='cpu'):
     _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
     if config.use_mind:
@@ -1260,7 +1257,7 @@ def get_model(config, dataset_len, _path=None, device='cpu'):
         in_channels = 1
 
     lraspp = torchvision.models.segmentation.lraspp_mobilenet_v3_large(
-        pretrained=False, progress=True, num_classes=len(config.label_tags)
+        pretrained=False, progress=True, num_classes=num_classes
     )
     set_module(lraspp, 'backbone.0.0',
         torch.nn.Conv2d(in_channels, 16, kernel_size=(3, 3), stride=(2, 2),
@@ -1480,7 +1477,7 @@ def train_DL(run_name, config, training_dataset):
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
         epx_start = config.get('epx_override', 0)
         _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
-        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(train_dataloader), _path=_path, device='cuda')
+        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(train_dataloader), len(training_dataset.label_tags), _path=_path, device='cuda')
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, T_0=200, T_mult=2, eta_min=config.lr*.1, last_epoch=- 1, verbose=False)
@@ -1602,15 +1599,15 @@ def train_DL(run_name, config, training_dataset):
 
                 # Calculate dice score
                 b_dice = dice2d(
-                    torch.nn.functional.one_hot(logits_for_score, len(config.label_tags)),
-                    torch.nn.functional.one_hot(b_seg, len(config.label_tags)), # Calculate dice score with original segmentation (no disturbance)
+                    torch.nn.functional.one_hot(logits_for_score, len(training_dataset.label_tags)),
+                    torch.nn.functional.one_hot(b_seg, len(training_dataset.label_tags)), # Calculate dice score with original segmentation (no disturbance)
                     one_hot_torch_style=True
                 )
 
                 dices.append(get_batch_dice_over_all(
                     b_dice, exclude_bg=True))
                 class_dices.append(get_batch_dice_per_class(
-                    b_dice, config.label_tags, exclude_bg=True))
+                    b_dice, training_dataset.label_tags, exclude_bg=True))
 
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
@@ -1719,8 +1716,8 @@ def train_DL(run_name, config, training_dataset):
                         ).squeeze(1)
 
                         b_val_dice = dice3d(
-                            torch.nn.functional.one_hot(val_logits_for_score_3d, len(config.label_tags)),
-                            torch.nn.functional.one_hot(b_val_seg, len(config.label_tags)),
+                            torch.nn.functional.one_hot(val_logits_for_score_3d, len(training_dataset.label_tags)),
+                            torch.nn.functional.one_hot(b_val_seg, len(training_dataset.label_tags)),
                             one_hot_torch_style=True
                         )
 
@@ -1729,7 +1726,7 @@ def train_DL(run_name, config, training_dataset):
                             b_val_dice, exclude_bg=True))
 
                         val_class_dices.append(get_batch_dice_per_class(
-                            b_val_dice, config.label_tags, exclude_bg=True))
+                            b_val_dice, training_dataset.label_tags, exclude_bg=True))
 
                         if config.do_plot:
                             print(f"Validation 3D image label/ground-truth {val_3d_idxs}")
@@ -1927,6 +1924,7 @@ def normal_run():
 
         run_name = run.name
         config = wandb.config
+        training_dataset = prepare_data(config)
         train_DL(run_name, config, training_dataset)
 
 def sweep_run():
@@ -1938,6 +1936,7 @@ def sweep_run():
 
         run_name = run.name
         config = wandb.config
+        training_dataset = prepare_data(config)
         train_DL(run_name, config, training_dataset)
 
 
