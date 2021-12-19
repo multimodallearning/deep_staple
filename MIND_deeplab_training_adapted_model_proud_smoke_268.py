@@ -812,7 +812,7 @@ class CrossMoDa_Data(Dataset):
 
         return img_stack, label_stack
 
-    def disturb_idxs(self, all_idxs, disturbance_mode=None, disturbance_strength=1., yield_2d_override=None):
+    def disturb_idxs(self, all_idxs, disturbance_mode, disturbance_strength=1., yield_2d_override=None):
         if self.prevent_disturbance:
             warnings.warn("Disturbed idxs shall be set but disturbance is prevented for dataset.")
             return
@@ -875,10 +875,8 @@ class CrossMoDa_Data(Dataset):
                             add_affine_translation=0.18*disturbance_strength, affine_probability=1.)
                         modified_label = b_modified_label.squeeze(0).cpu()
 
-                    elif disturbance_mode == None:
-                        pass
                     else:
-                        raise ValueError(f"Disturbance mode {isturbance_mode} is not implemented.")
+                        raise ValueError(f"Disturbance mode {disturbance_mode} is not implemented.")
 
                     if yield_2d:
                         self.modified_label_data_2d[label_id] = modified_label
@@ -977,7 +975,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'combined',
+    'reg_state': None,
     'train_set_max_len': 100,
     'crop_3d_w_dim_range': (24, 110),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1012,7 +1010,7 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': "online",
     'wandb_name_override': None,
-    'do_sweep': True,
+    'do_sweep': False,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 1.,
@@ -1423,7 +1421,10 @@ def train_DL(run_name, config, training_dataset):
         ### Disturb dataset ###
         proposed_disturbed_idxs = np.random.choice(train_idxs, size=int(len(train_idxs)*config.disturbed_percentage), replace=False)
         proposed_disturbed_idxs = torch.tensor(proposed_disturbed_idxs)
-        training_dataset.disturb_idxs(proposed_disturbed_idxs)
+        training_dataset.disturb_idxs(proposed_disturbed_idxs,
+            disturbance_mode=config.disturbance_mode,
+            disturbance_strength=config.disturbance_strength
+        )
 
         disturbed_bool_vect = torch.zeros(len(training_dataset))
         disturbed_bool_vect[training_dataset.disturbed_idxs] = 1.
