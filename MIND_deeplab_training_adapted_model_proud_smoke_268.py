@@ -608,22 +608,26 @@ class CrossMoDa_Data(Dataset):
                 self.label_data_3d[_3d_id] = self.label_data_3d[_3d_id].flip(dims=(1,))
                 self.modified_label_data_3d[_3d_id] = self.modified_label_data_3d[_3d_id].flip(dims=(1,))
 
-        if max_load_num and ensure_labeled_pairs:
-            for _3d_id in list(self.label_data_3d.keys())[max_load_num:]:
-                del self.img_data_3d[_3d_id]
-                del self.label_data_3d[_3d_id]
-                del self.modified_label_data_3d[_3d_id]
+        if ensure_labeled_pairs:
+            labelled_keys = set(self.label_data_3d.keys())
+            unlabelled_imgs = set(self.img_data_3d.keys()) - labelled_keys
+            unlabelled_modified_labels = set(self.modified_label_data_3d.keys()) - labelled_keys
 
-        elif max_load_num:
-            for del_key in list(self.img_data_3d.keys())[max_load_num:]:
+            for del_key in unlabelled_imgs:
                 del self.img_data_3d[del_key]
-            for del_key in list(self.label_data_3d.keys())[max_load_num:]:
+            for del_key in unlabelled_modified_labels:
+                del self.modified_label_data_3d[del_key]
+
+        if max_load_num:
+            for del_key in sorted(list(self.img_data_3d.keys()))[max_load_num:]:
+                del self.img_data_3d[del_key]
+            for del_key in sorted(list(self.label_data_3d.keys()))[max_load_num:]:
                 del self.label_data_3d[del_key]
-            for del_key in list(self.modified_label_data_3d.keys())[max_load_num:]:
-                del self.label_data_3d[del_key]
+            for del_key in sorted(list(self.modified_label_data_3d.keys()))[max_load_num:]:
+                del self.modified_label_data_3d[del_key]
 
         #check for consistency
-        print("Equal image and label numbers: {}".format(set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)))
+        print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)} ({len(self.img_data_3d)})")
 
         img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
         img_mean, img_std = img_stack.mean(), img_stack.std()
@@ -734,7 +738,6 @@ class CrossMoDa_Data(Dataset):
             _id = all_ids[dataset_idx]
             image = self.img_data_2d.get(_id, torch.tensor([]))
             label = self.label_data_2d.get(_id, torch.tensor([]))
-            modified_label = self.modified_label_data_2d.get(_id, label.detach().clone())
 
             # For 2D crossmoda id cut last 4 "003rW100"
             image_path = self.img_paths[_id[:-4]]
@@ -745,7 +748,6 @@ class CrossMoDa_Data(Dataset):
             _id = all_ids[dataset_idx]
             image = self.img_data_3d.get(_id, torch.tensor([]))
             label = self.label_data_3d.get(_id, torch.tensor([]))
-            modified_label = self.modified_label_data_3d.get(_id, label.detach().clone())
 
             image_path = self.img_paths[_id]
             label_path = self.label_paths[_id]
@@ -754,10 +756,11 @@ class CrossMoDa_Data(Dataset):
 
         if self.use_modified:
             if yield_2d:
-                modified_label = self.modified_label_data_2d.get(_id)
+                modified_label = self.modified_label_data_2d.get(_id, label.detach().clone())
             else:
-                modified_label = self.modified_label_data_3d.get(_id, label)
-
+                modified_label = self.modified_label_data_3d.get(_id, label.detach().clone())
+        else:
+            modified_label = label.detach().clone()
 
         if self.do_augment and not self.augment_at_collate:
             b_image = image.unsqueeze(0).cuda()
@@ -975,7 +978,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': None,
+    'reg_state': 'combined',
     'train_set_max_len': 100,
     'crop_3d_w_dim_range': (24, 110),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -985,7 +988,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
@@ -1008,9 +1011,9 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': "online",
+    'wandb_mode': "disabled",
     'checkpoint_name': None,
-    'do_sweep': True,
+    'do_sweep': False,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 1.,
@@ -1500,6 +1503,7 @@ def train_DL(run_name, config, training_dataset):
         t0 = time.time()
 
         # Prepare corr coefficient scoring
+        training_dataset.eval(use_modified=True)
         norm_label, mod_label = list(zip(*[(sample['label'], sample['modified_label']) \
             for sample in training_dataset]))
         union_norm_mod_label = torch.logical_or(torch.stack(norm_label), torch.stack(mod_label))
