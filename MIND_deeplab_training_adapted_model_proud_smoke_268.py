@@ -985,7 +985,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
@@ -1010,7 +1010,7 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': "online",
     'wandb_name_override': None,
-    'do_sweep': False,
+    'do_sweep': True,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 1.,
@@ -1910,8 +1910,8 @@ sweep_config_dict = dict(
         # ),
         data_param_mode=dict(
             values=[
-                'DataParamMode.INSTANCE_PARAMS',
-                'DataParamMode.DISABLED',
+                DataParamMode.INSTANCE_PARAMS,
+                DataParamMode.DISABLED,
             ]
         )
     )
@@ -1952,6 +1952,14 @@ if config_dict['do_sweep']:
     # merged_sweep_config_dict.update(cp_config_dict)
     for key, value in cp_config_dict.items():
         merged_sweep_config_dict['parameters'][key] = dict(value=value)
+    # Convert enum values in parameters to string. They will be identified by their numerical index otherwise
+    for key, param_dict in merged_sweep_config_dict['parameters'].items():
+        if 'value' in param_dict and isinstance(param_dict['value'], Enum):
+            param_dict['value'] = str(param_dict['value'])
+        if 'values' in param_dict:
+            param_dict['values'] = [str(elem) if isinstance(elem, Enum) else elem for elem in param_dict['values']]
+
+        merged_sweep_config_dict['parameters'][key] = param_dict
 
     sweep_id = wandb.sweep(merged_sweep_config_dict, project="curriculum_deeplab")
     wandb.agent(sweep_id, function=sweep_run)
