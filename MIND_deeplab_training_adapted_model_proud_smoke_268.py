@@ -1421,25 +1421,26 @@ def train_DL(run_name, config, training_dataset):
         print("Will run validation with these 3D samples:", val_3d_idxs)
 
         ### Disturb dataset ###
-        disturbed_idxs = np.random.choice(train_idxs, size=int(len(train_idxs)*config.disturbed_percentage), replace=False)
-        disturbed_idxs = torch.tensor(disturbed_idxs)
+        proposed_disturbed_idxs = np.random.choice(train_idxs, size=int(len(train_idxs)*config.disturbed_percentage), replace=False)
+        proposed_disturbed_idxs = torch.tensor(proposed_disturbed_idxs)
+        training_dataset.disturb_idxs(proposed_disturbed_idxs)
 
         disturbed_bool_vect = torch.zeros(len(training_dataset))
-        disturbed_bool_vect[disturbed_idxs] = 1.
+        disturbed_bool_vect[training_dataset.disturbed_idxs] = 1.
 
-        clean_idxs = train_idxs[np.isin(train_idxs, disturbed_idxs, invert=True)]
-        print("Disturbed indexes:", sorted(disturbed_idxs.tolist()))
+        clean_idxs = train_idxs[np.isin(train_idxs, training_dataset.disturbed_idxs, invert=True)]
+        print("Disturbed indexes:", sorted(training_dataset.disturbed_idxs.tolist()))
 
         if clean_idxs.numel() < 200:
             print(f"Clean indexes: {sorted(clean_idxs.tolist())}")
 
-        wandb.log({f'datasets/disturbed_idxs_fold{fold_idx}':wandb.Table(columns=['train_idxs'], data=[[idx] for idx in disturbed_idxs])},
+        wandb.log({f'datasets/disturbed_idxs_fold{fold_idx}':wandb.Table(columns=['train_idxs'], data=[[idx] for idx in training_dataset.disturbed_idxs])},
             step=get_global_idx(fold_idx, 0, config.epochs))
 
         ### Visualization ###
         if config.do_plot:
             print("Disturbed samples:")
-            for d_idx in disturbed_idxs:
+            for d_idx in training_dataset.disturbed_idxs:
                 display_seg(in_type="single_3D", reduce_dim="W",
                     img=training_dataset[d_idx][0],
                     ground_truth=disturb_seg(training_dataset[d_idx][1]),
@@ -1471,7 +1472,6 @@ def train_DL(run_name, config, training_dataset):
         )
 
         training_dataset.set_augment_at_collate(False)
-        training_dataset.disturb_idxs(disturbed_idxs)
 
 #         val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
 #                                     sampler=val_subsampler, pin_memory=True, drop_last=False)
@@ -1851,7 +1851,7 @@ def train_DL(run_name, config, training_dataset):
 
             if len(training_dataset.disturbed_idxs) > 0:
                 # Log histogram
-                separated_params = list(zip(dp_weights[clean_idxs], dp_weights[disturbed_idxs]))
+                separated_params = list(zip(dp_weights[clean_idxs], dp_weights[training_dataset.disturbed_idxs]))
                 s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
                 fields = {"primary_bins" : "clean_idxs", "secondary_bins" : "disturbed_idxs", "title" : "Data parameter composite histogram"}
                 composite_histogram = wandb.plot_table(vega_spec_name="rap1ide/composite_histogram", data_table=s_table, fields=fields)
@@ -1862,11 +1862,14 @@ def train_DL(run_name, config, training_dataset):
             # overlay text example: d_idx=0, dp_i=1.00, dist? False
             overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
                 for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
+
             visualize_seg(in_type="batch_2D",
                 img=torch.stack(_2d_imgs).unsqueeze(1),
-                seg=(4*torch.stack(_2d_modified_labels)-torch.stack(_2d_labels)).abs(),
+                seg=4*torch.stack(_2d_modified_labels),
+                ground_truth=torch.stack(_2d_labels)
                 crop_to_non_zero_seg=False,
-                alpha_seg = .2,
+                alpha_seg = .3,
+                alpha_gt = .5,
                 n_per_row=70,
                 overlay_text=overlay_text_list,
                 annotate_color=(0,255,255),
