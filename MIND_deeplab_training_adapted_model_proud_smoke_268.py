@@ -25,7 +25,7 @@ import pickle
 import copy
 from pathlib import Path
 from contextlib import contextmanager
-
+import warnings
 
 import numpy as np
 import torch
@@ -430,9 +430,9 @@ class CrossMoDa_Data(Dataset):
 
         self.yield_2d_normal_to = yield_2d_normal_to
         self.crop_2d_slices_gt_num_threshold = crop_2d_slices_gt_num_threshold
+        self.prevent_disturbance = prevent_disturbance
         self.do_augment = False
         self.use_modified = False
-        self.prevent_disturbance = False
         self.disturbed_idxs = []
         self.augment_at_collate = False
 
