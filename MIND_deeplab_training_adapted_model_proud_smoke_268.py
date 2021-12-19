@@ -966,7 +966,7 @@ config_dict = DotDict({
     'num_folds': 3,
     'only_first_fold': True,
     # 'fold_override': 0,
-    # 'epx_override': 0,
+    # 'checkpoint_epx': 0,
 
     'use_mind': True,
     'epochs': 40,
@@ -1009,7 +1009,7 @@ config_dict = DotDict({
     'do_plot': False,
     'debug': False,
     'wandb_mode': "online",
-    'wandb_name_override': None,
+    'checkpoint_name': None,
     'do_sweep': True,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
@@ -1475,8 +1475,14 @@ def train_DL(run_name, config, training_dataset):
 #                                     sampler=val_subsampler, pin_memory=True, drop_last=False)
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
-        epx_start = config.get('epx_override', 0)
-        _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
+        epx_start = config.get('checkpoint_epx', 0)
+
+        if config.checkpoint_name:
+            # Load from checkpoint
+            _path = f"{config.mdl_save_prefix}/{config.checkpoint_name}_fold{fold_idx}_epx{epx_start}"
+        else:
+            _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
+
         (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), _path=_path, device='cuda')
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
@@ -1882,9 +1888,9 @@ def train_DL(run_name, config, training_dataset):
 # config_dict['wandb_mode'] = 'disabled'
 # config_dict['debug'] = True
 # Model loading
-# config_dict['wandb_name_override'] = 'treasured-water-717'
+# config_dict['checkpoint_name'] = 'treasured-water-717'
 # # config_dict['fold_override'] = 0
-# config_dict['epx_override'] = 39
+# config_dict['checkpoint_epx'] = 39
 
 # Define sweep override dict
 sweep_config_dict = dict(
@@ -1917,7 +1923,6 @@ sweep_config_dict = dict(
 # %%
 def normal_run():
     with wandb.init(project="curriculum_deeplab", group="training", job_type="train",
-            name=config_dict['wandb_name_override'],
             config=config_dict, settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']
         ) as run:
