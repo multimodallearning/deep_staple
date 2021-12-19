@@ -1757,8 +1757,8 @@ def train_DL(run_name, config, training_dataset):
             if config.debug:
                 break
 
-        if len(disturbed_idxs) > 0:
-            training_dataset.eval(disturb=True)
+        if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+            training_dataset.eval(use_modified=True)
             all_idxs = torch.tensor(range(len(training_dataset))).cuda()
             train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/train_label_snapshot.pth")
             seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/data_parameter_weighted_samples.png")
@@ -1849,6 +1849,7 @@ def train_DL(run_name, config, training_dataset):
                     file_path=weightmap_out_path,
                 )
 
+            if len(training_dataset.disturbed_idxs) > 0:
                 # Log histogram
                 separated_params = list(zip(dp_weights[clean_idxs], dp_weights[disturbed_idxs]))
                 s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
@@ -1889,17 +1890,20 @@ sweep_config_dict = dict(
     method='grid',
     metric=dict(goal='maximize', name='scores/val_dice_mean_tumour_fold0'),
     parameters=dict(
-        disturbance_mode=dict(
-            values=[
-                'LabelDisturbanceMode.AFFINE',
-            ]
+        # disturbance_mode=dict(
+        #     values=[
+        #        'LabelDisturbanceMode.AFFINE',
+        #     ]
+        # ),
+        reg_state=dict(
+            values=['best','combined']
         ),
-        disturbance_strength=dict(
-            values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
-        ),
-        disturbed_percentage=dict(
-            values=[0.3, 0.6]
-        ),
+        # disturbance_strength=dict(
+        #     values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
+        # ),
+        # disturbed_percentage=dict(
+        #     values=[0.3, 0.6]
+        # ),
         data_param_mode=dict(
             values=[
                 'DataParamMode.INSTANCE_PARAMS',
