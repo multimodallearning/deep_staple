@@ -1008,7 +1008,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': "disabled",
+    'wandb_mode': "online",
     'wandb_name_override': None,
     'do_sweep': True,
 
@@ -1678,7 +1678,7 @@ def train_DL(run_name, config, training_dataset):
                     scheduler=scheduler, sheduler_dp=scheduler_dp,
                     embedding=embedding,
                     scaler=scaler)
-                (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(train_dataloader), _path=_path, device='cuda')
+                (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), _path=_path, device='cuda')
 
             print()
             print("### Validation")
