@@ -995,7 +995,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': None,
+    'reg_state': 'combined',
     'train_set_max_len': 100,
     'crop_3d_w_dim_range': (24, 110),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1785,7 +1785,7 @@ def train_DL(run_name, config, training_dataset):
             print()
             # End of training loop
 
-            if config.debug or True:
+            if config.debug:
                 break
 
         if str(config.data_param_mode) != str(DataParamMode.DISABLED):
