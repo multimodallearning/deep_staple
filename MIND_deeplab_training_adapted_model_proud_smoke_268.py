@@ -447,7 +447,7 @@ class CrossMoDa_Data(Dataset):
         self.augment_at_collate = False
 
         # Define distance transform of label for boundary loss
-        self.disttransform = boundary_loss_dataloader.dist_map_transform([1, 1], 2)
+        self.disttransform = boundary_loss_dataloader.dist_map_transform([1, 1], len(self.label_tags))
 
         #define finished preprocessing states here with subpath and default size
         states = {
@@ -1042,8 +1042,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': "disabled",
+    'debug': False,
+    'wandb_mode': "online",
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1568,12 +1568,14 @@ def train_DL(run_name, config, training_dataset):
                 b_spat_aug_grid = batch['spat_augment_grid']
 
                 b_seg_modified = batch['modified_label']
-                b_img = b_seg
+                b_seg_modified_dtf = batch['dtf_modified_label']
+
                 b_idxs_dataset = batch['dataset_idx']
                 b_img = b_img.float()
 
                 b_img = b_img.cuda()
                 b_seg_modified = b_seg_modified.cuda()
+                b_seg_modified_dtf = b_seg_modified_dtf.cuda()
                 b_idxs_dataset = b_idxs_dataset.cuda()
                 b_seg = b_seg.cuda()
                 b_spat_aug_grid = b_spat_aug_grid.cuda()
@@ -1596,20 +1598,20 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
-                        logits = F.softmax(logits, dim=1)
+                        probs = F.softmax(logits, dim=1)
 
                         loss = (
-                            criterion_gend_loss(logits, torch.nn.functional.one_hot(b_seg_modified, len(training_dataset.label_tags)).permute(0,3,2,1)) # TODO Check whether to apply softmax here
-                             + criterion_bd_loss(logits, batch['dtf_modified_label'].cuda()).mean((-1,-2))
+                            criterion_gend_loss(probs, torch.nn.functional.one_hot(b_seg_modified, len(training_dataset.label_tags)).permute(0,3,2,1)) # TODO Check whether to apply softmax here
+                             + criterion_bd_loss(probs, b_seg_modified_dtf).mean((-1,-2))
                         )
 
-                        weight = F.softmax(embedding(b_idxs_dataset)).squeeze()
+                        weight = F.softmax(embedding(b_idxs_dataset), dim=0).squeeze()
                         weight = weight/weight.mean()
                         # weight = weight/instance_pixel_weight[b_idxs_dataset] TODO removce
                         loss = (loss*weight).sum()
 
                         # Prepare logits for scoring
-                        logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
+                        logits_for_score = (probs*weight.view(-1,1,1,1)).argmax(1)
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
