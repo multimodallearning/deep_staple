@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.13.3
+#       jupytext_version: 1.13.4
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -638,11 +638,11 @@ class CrossMoDa_Data(Dataset):
         print("Label shape: {}, max.: {}".format(label_stack.shape,torch.max(label_stack)))
 
         if yield_2d_normal_to:
-            if yield_2d_normal_to == "D":
+            if self.yield_2d_normal_to == "D":
                 slice_dim = -3
-            if yield_2d_normal_to == "H":
+            if self.yield_2d_normal_to == "H":
                 slice_dim = -2
-            if yield_2d_normal_to == "W":
+            if self.yield_2d_normal_to == "W":
                 slice_dim = -1
 
             for _3d_id, image in self.img_data_3d.items():
@@ -839,13 +839,14 @@ class CrossMoDa_Data(Dataset):
             if yield_2d:
                 label_id = self.get_2d_ids()[idx]
                 self.modified_label_data_2d[label_id] = self.label_data_2d[label_id]
+                label = self.modified_label_data_2d[label_id].detach().clone()
             else:
                 label_id = self.get_3d_ids()[idx]
                 self.modified_label_data_3d[label_id] = self.label_data_3d[label_id]
+                label = self.modified_label_data_3d[label_id].detach().clone()
 
             # Now apply disturbance
             if idx in self.disturbed_idxs:
-                label = self.modified_label_data_2d[label_id].detach().clone()
 
                 with torch_manual_seeded(idx):
                     if str(disturbance_mode)==str(LabelDisturbanceMode.FLIP_ROLL):
@@ -882,9 +883,25 @@ class CrossMoDa_Data(Dataset):
                         raise ValueError(f"Disturbance mode {disturbance_mode} is not implemented.")
 
                     if yield_2d:
+                        # 3D data is not modified
                         self.modified_label_data_2d[label_id] = modified_label
                     else:
-                        self.modified_label_data_2d[label_id] = modified_label
+                        self.modified_label_data_3d[label_id] = modified_label
+
+                        ref_label = self.modified_label_data_3d[label_id]
+
+                        # Apply modified 3D data to 2D data
+                        if self.yield_2d_normal_to == "D":
+                            slice_dim = -3
+                        if self.yield_2d_normal_to == "H":
+                            slice_dim = -2
+                        if self.yield_2d_normal_to == "W":
+                            slice_dim = -1
+
+                        for idx, lbl_slc in [(slice_idx, ref_label.select(slice_dim, slice_idx)) \
+                            for slice_idx in range(ref_label.shape[slice_dim])]:
+                            # Set data view for crossmoda id like "003rW100"
+                            self.modified_label_data_2d[f"{label_id}{self.yield_2d_normal_to}{idx:03d}"] = lbl_slc
 
 
     def train(self, augment=True, use_modified=True):
@@ -978,7 +995,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'combined',
+    'reg_state': None,
     'train_set_max_len': 100,
     'crop_3d_w_dim_range': (24, 110),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1263,7 +1280,7 @@ def get_model(config, dataset_len, num_classes, _path=None, device='cpu'):
         pretrained=False, progress=True, num_classes=num_classes
     )
     set_module(lraspp, 'backbone.0.0',
-        torch.nn.Conv2d(in_channels, 16, kernel_size=(3, 3), stride=(2, 2),
+        torch.nn.Conv2d(in_channels, 16, kernel_size=(3, 3), stride=(1, 1),
                         padding=(1, 1), bias=False)
     )
     # set_module(lraspp, 'classifier.scale.2',
@@ -1272,7 +1289,7 @@ def get_model(config, dataset_len, num_classes, _path=None, device='cpu'):
     lraspp.to(device)
     print(f"Param count lraspp: {sum(p.numel() for p in lraspp.parameters())}")
 
-    optimizer = torch.optim.Adam(lraspp.parameters(), lr=config.lr)
+    optimizer = torch.optim.AdamW(lraspp.parameters(), lr=config.lr)
     scaler = amp.GradScaler()
 
     # Add data paramters embedding and optimizer
@@ -1416,20 +1433,22 @@ def train_DL(run_name, config, training_dataset):
         trained_3d_dataset_idxs = {dct['3d_dataset_idx'] \
              for dct in training_dataset.get_id_dicts() if dct['2d_dataset_idx'] in train_idxs.tolist()}
         val_3d_idxs = set(range(training_dataset.__len__(yield_2d_override=False))) - trained_3d_dataset_idxs
+        trained_3d_dataset_idxs, val_3d_idxs = torch.tensor(list(trained_3d_dataset_idxs)), torch.tensor(list(val_3d_idxs))
         print("Will run validation with these 3D samples:", val_3d_idxs)
 
         ### Disturb dataset ###
-        proposed_disturbed_idxs = np.random.choice(train_idxs, size=int(len(train_idxs)*config.disturbed_percentage), replace=False)
+        proposed_disturbed_idxs = np.random.choice(trained_3d_dataset_idxs, size=int(len(trained_3d_dataset_idxs)*config.disturbed_percentage), replace=False)
         proposed_disturbed_idxs = torch.tensor(proposed_disturbed_idxs)
         training_dataset.disturb_idxs(proposed_disturbed_idxs,
             disturbance_mode=config.disturbance_mode,
-            disturbance_strength=config.disturbance_strength
+            disturbance_strength=config.disturbance_strength,
+            yield_2d_override=False
         )
 
-        disturbed_bool_vect = torch.zeros(len(training_dataset))
+        disturbed_bool_vect = torch.zeros(training_dataset.__len__(yield_2d_override=False))
         disturbed_bool_vect[training_dataset.disturbed_idxs] = 1.
 
-        clean_idxs = train_idxs[np.isin(train_idxs, training_dataset.disturbed_idxs, invert=True)]
+        clean_idxs = trained_3d_dataset_idxs[np.isin(trained_3d_dataset_idxs, training_dataset.disturbed_idxs, invert=True)]
         print("Disturbed indexes:", sorted(training_dataset.disturbed_idxs))
 
         if clean_idxs.numel() < 200:
@@ -1486,7 +1505,7 @@ def train_DL(run_name, config, training_dataset):
         else:
             _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
 
-        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), _path=_path, device='cuda')
+        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, training_dataset.__len__(yield_2d_override=False), len(training_dataset.label_tags), _path=_path, device='cuda')
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, T_0=200, T_mult=2, eta_min=config.lr*.1, last_epoch=- 1, verbose=False)
@@ -1535,11 +1554,14 @@ def train_DL(run_name, config, training_dataset):
 
                 b_seg_modified = batch['modified_label']
                 b_idxs_dataset = batch['dataset_idx']
+                b_3d_idxs_dataset = torch.tensor([int(_c_id_2d[:3]) for _c_id_2d in batch['id']])
+
                 b_img = b_img.float()
 
                 b_img = b_img.cuda()
                 b_seg_modified = b_seg_modified.cuda()
                 b_idxs_dataset = b_idxs_dataset.cuda()
+                b_3d_idxs_dataset = b_3d_idxs_dataset.cuda()
                 b_seg = b_seg.cuda()
                 b_spat_aug_grid = b_spat_aug_grid.cuda()
 
@@ -1563,7 +1585,7 @@ def train_DL(run_name, config, training_dataset):
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
 
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
-                        weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
+                        weight = torch.sigmoid(embedding(b_3d_idxs_dataset)).squeeze()
                         weight = weight/weight.mean()
                         # weight = weight/instance_pixel_weight[b_idxs_dataset] TODO removce
                         loss = (loss*weight).sum()
@@ -1572,6 +1594,7 @@ def train_DL(run_name, config, training_dataset):
                         logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
+                        raise NotImplementedError("Gridded parameters are not implemented for 3d idxs.")
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
                         m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
                         weight = embedding(m_dp_idxs)
@@ -1665,8 +1688,8 @@ def train_DL(run_name, config, training_dataset):
 
                 elif str(config.data_param_mode) == str(DataParamMode.INSTANCE_PARAMS):
                     corr_coeff = np.corrcoef(
-                        embedding(train_idxs.cuda()).detach().cpu().view(train_idxs.numel()).numpy(),
-                        disturbed_bool_vect[train_idxs].cpu().numpy()
+                        embedding(trained_3d_dataset_idxs.cuda()).detach().cpu().view(trained_3d_dataset_idxs.numel()).numpy(),
+                        disturbed_bool_vect[trained_3d_dataset_idxs].cpu().numpy()
                     )[0,1]
 
                 wandb.log(
@@ -1688,7 +1711,7 @@ def train_DL(run_name, config, training_dataset):
                     scheduler=scheduler, sheduler_dp=scheduler_dp,
                     embedding=embedding,
                     scaler=scaler)
-                (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), _path=_path, device='cuda')
+                (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, training_dataset.__len__(yield_2d_override=False), len(training_dataset.label_tags), _path=_path, device='cuda')
 
             print()
             print("### Validation")
@@ -1762,12 +1785,12 @@ def train_DL(run_name, config, training_dataset):
             print()
             # End of training loop
 
-            if config.debug:
+            if config.debug or True:
                 break
 
         if str(config.data_param_mode) != str(DataParamMode.DISABLED):
             training_dataset.eval(use_modified=True)
-            all_idxs = torch.tensor(range(len(training_dataset))).cuda()
+            all_idxs = torch.tensor(range(training_dataset.__len__(yield_2d_override=False))).cuda()
             train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/train_label_snapshot.pth")
             seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/data_parameter_weighted_samples.png")
 
@@ -1777,13 +1800,13 @@ def train_DL(run_name, config, training_dataset):
                 dp_weights = embedding(all_idxs)
 
                 data = [(
-                    dp_weight,
-                    bool(disturb_flg.item()),
+                    dp_weights[int(sample['id'][:3])],
+                    bool(disturbed_bool_vect[int(sample['id'][:3])]),
                     sample['id'],
                     sample['dataset_idx'],
                     sample['image'],
                     sample['label'],
-                    sample['modified_label']) for dp_weight, disturb_flg, sample in zip(dp_weights[train_idxs], disturbed_bool_vect[train_idxs], torch.utils.data.Subset(training_dataset,train_idxs))
+                    sample['modified_label']) for sample in torch.utils.data.Subset(training_dataset,train_idxs)
                 ]
 
                 samples_sorted = sorted(data, key=lambda tpl: tpl[0])
@@ -1906,15 +1929,15 @@ sweep_config_dict = dict(
         #        'LabelDisturbanceMode.AFFINE',
         #     ]
         # ),
-        reg_state=dict(
-            values=['best','combined']
+        # reg_state=dict(
+        #     values=['best','combined']
+        # ),
+        disturbance_strength=dict(
+            values=[2.0]
         ),
-        # disturbance_strength=dict(
-        #     values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
-        # ),
-        # disturbed_percentage=dict(
-        #     values=[0.3, 0.6]
-        # ),
+        disturbed_percentage=dict(
+            values=[0.3, 0.6]
+        ),
         data_param_mode=dict(
             values=[
                 DataParamMode.INSTANCE_PARAMS,
