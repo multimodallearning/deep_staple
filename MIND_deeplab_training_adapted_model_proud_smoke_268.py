@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.13.3
+#       jupytext_version: 1.13.4
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -14,11 +14,15 @@
 # ---
 
 # %%
+import sys
+sys.path.append("/share/data_supergrover1/weihsbach/shared_data/tmp/boundary-loss")
 import os
 import time
 import random
 import glob
 import re
+import importlib.util
+
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
 os.environ.update(get_vars(select="* -3 -4"))
 import pickle
@@ -65,6 +69,17 @@ else:
     THIS_SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 print(f"Running in: {THIS_SCRIPT_DIR}")
 
+bd_loss_spec = importlib.util.spec_from_file_location("boundary_loss.losses", f"{THIS_SCRIPT_DIR}/../boundary-loss/losses.py")
+boundary_loss_losses = importlib.util.module_from_spec(bd_loss_spec)
+bd_loss_spec.loader.exec_module(boundary_loss_losses)
+
+bd_utils_spec = importlib.util.spec_from_file_location("boundary_loss.utils", f"{THIS_SCRIPT_DIR}/../boundary-loss/utils.py")
+boundary_loss_utils = importlib.util.module_from_spec(bd_utils_spec)
+bd_utils_spec.loader.exec_module(boundary_loss_utils)
+
+bd_dataloader_spec = importlib.util.spec_from_file_location("boundary_loss.dataloader", "/share/data_supergrover1/weihsbach/shared_data/tmp/boundary-loss/dataloader.py")
+boundary_loss_dataloader = importlib.util.module_from_spec(bd_dataloader_spec)
+bd_dataloader_spec.loader.exec_module(boundary_loss_dataloader)
 
 # %%
 def interpolate_sample(b_image=None, b_label=None, scale_factor=1.,
@@ -436,6 +451,9 @@ class CrossMoDa_Data(Dataset):
         self.disturbed_idxs = []
         self.augment_at_collate = False
 
+        # Define distance transform of label for boundary loss
+        self.disttransform = boundary_loss_dataloader.dist_map_transform([1, 1], 2)
+
         #define finished preprocessing states here with subpath and default size
         states = {
             'l1':('L1_original/', (512,512,160)),
@@ -787,7 +805,9 @@ class CrossMoDa_Data(Dataset):
         return {
             'image': image,
             'label': label,
+            'label_disttransform': self.disttransform(label),
             'modified_label': modified_label,
+            'modified_label_disttransform': self.disttransform(modified_label),
             # if disturbance is off, modified label is equals label
             'dataset_idx': dataset_idx,
             'id': _id,
@@ -1497,7 +1517,6 @@ def train_DL(run_name, config, training_dataset):
         else:
             scheduler_dp = None
 
-        criterion = nn.CrossEntropyLoss()
         _, all_segs = training_dataset.get_data()
 
         t0 = time.time()
@@ -1534,6 +1553,7 @@ def train_DL(run_name, config, training_dataset):
                 b_spat_aug_grid = batch['spat_augment_grid']
 
                 b_seg_modified = batch['modified_label']
+                b_img = b_seg
                 b_idxs_dataset = batch['dataset_idx']
                 b_img = b_img.float()
 
@@ -1561,9 +1581,16 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
+                        logits = F.softmax(logits)
+                        gend_loss = boundary_loss_losses.GeneralizedDice(idc=[0, 1], reduction='none')
+                        bd_loss = boundary_loss_losses.BoundaryLoss(idc=[1], reduction='none')
 
-                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
-                        weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
+                        loss = (
+                            gend_loss(logits, torch.nn.functional.one_hot(b_seg_modified, len(training_dataset.label_tags)).permute(0,3,2,1)) # TODO Check whether to apply softmax here
+                             + bd_loss(logits, batch['modified_label_disttransform'].cuda()).mean((-1,-2))
+                        )
+
+                        weight = F.softmax(embedding(b_idxs_dataset)).squeeze()
                         weight = weight/weight.mean()
                         # weight = weight/instance_pixel_weight[b_idxs_dataset] TODO removce
                         loss = (loss*weight).sum()
