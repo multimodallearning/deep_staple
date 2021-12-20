@@ -85,25 +85,21 @@ bd_dataloader_spec.loader.exec_module(boundary_loss_dataloader)
 def interpolate_sample(b_image=None, b_label=None, scale_factor=1.,
                        yield_2d=False):
     if yield_2d:
-        scale = [scale_factor]*2
         im_mode = 'bilinear'
     else:
-        scale = [scale_factor]*3
         im_mode = 'trilinear'
 
     if b_image is not None:
         b_image = F.interpolate(
-            b_image.unsqueeze(1), scale_factor=scale, mode=im_mode, align_corners=True,
+            b_image, scale_factor=scale_factor, mode=im_mode, align_corners=True,
             recompute_scale_factor=False
         )
-        b_image = b_image.squeeze(1)
 
     if b_label is not None:
         b_label = F.interpolate(
-            b_label.unsqueeze(1).float(), scale_factor=scale, mode='nearest',
+            b_label.float(), scale_factor=scale_factor, mode='nearest',
             recompute_scale_factor=False
         ).long()
-        b_label = b_label.squeeze(1)
 
     return b_image, b_label
 
@@ -245,10 +241,10 @@ def spatial_augment(b_image=None, b_label=None,
 
     if b_grid_override is None:
         if yield_2d:
-            assert len(common_shape) == 3, \
+            assert len(common_shape) == 4, \
                 f"Augmenting 2D. Input batch " \
-                f"should be BxHxW but is {common_shape}."
-            B,H,W = common_shape
+                f"should be BxCxHxW but is {common_shape}."
+            B,C,H,W = common_shape
 
             identity = torch.eye(2,3).expand(B,2,3).to(common_device)
             id_grid = F.affine_grid(identity, torch.Size((B,2,H,W)),
@@ -283,15 +279,15 @@ def spatial_augment(b_image=None, b_label=None,
                 alpha = np.random.rand() * 2 * np.pi
                 offset_dir =  torch.tensor([np.cos(alpha), np.sin(alpha)])
                 affine_matrix[:,:,-1] = add_affine_translation * offset_dir
-                affine_disp = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
+                affine_disp = F.affine_grid(affine_matrix, torch.Size((B,2,H,W)),
                                         align_corners=False)
                 grid += (affine_disp-id_grid)
 
         else:
-            assert len(common_shape) == 4, \
+            assert len(common_shape) == 5, \
                 f"Augmenting 3D. Input batch " \
-                f"should be BxDxHxW but is {common_shape}."
-            B,D,H,W = common_shape
+                f"should be BxCxDxHxW but is {common_shape}."
+            B,C,D,H,W = common_shape
 
             identity = torch.eye(3,4).expand(B,3,4).to(common_device)
             id_grid = F.affine_grid(identity, torch.Size((B,3,D,H,W)),
@@ -322,7 +318,7 @@ def spatial_augment(b_image=None, b_label=None,
 
             if do_affine:
                 affine_matrix = (torch.eye(3,4).unsqueeze(0) + \
-                    affine_strength * torch.randn(B,3,4)).to(common_device)
+                    affine_strength * torch.randn(B,1,3,4)).to(common_device)
 
                 # Add additional x,y,z offset
                 theta = np.random.rand() * 2 * np.pi
@@ -343,17 +339,16 @@ def spatial_augment(b_image=None, b_label=None,
 
     if b_image is not None:
         b_image_out = F.grid_sample(
-            b_image.unsqueeze(1).float(), grid,
+            b_image.float(), grid,
             padding_mode='border', align_corners=False)
-        b_image_out = b_image_out.squeeze(1)
     else:
         b_image_out = None
 
     if b_label is not None:
         b_label_out = F.grid_sample(
-            b_label.unsqueeze(1).float(), grid,
+            b_label.float(), grid,
             mode='nearest', align_corners=False)
-        b_label_out = b_label_out.squeeze(1).long()
+        b_label_out = b_label_out.long()
     else:
         b_label_out = None
 
@@ -542,14 +537,17 @@ class CrossMoDa_Data(Dataset):
         # Populate data
         self.img_data_3d = {}
         self.label_data_3d = {}
+        self.dtf_label_data_3d = {}
         self.modified_label_data_3d = {}
+        self.dtf_modified_label_data_3d = {}
 
         self.img_data_2d = {}
         self.label_data_2d = {}
+        self.dtf_label_data_2d = {}
         self.modified_label_data_2d = {}
+        self.dtf_modified_label_data_2d = {}
 
         #load data
-
         print("Loading CrossMoDa {} images and labels...".format(domain))
         id_paths_to_load = list(self.label_paths.items()) + list(self.img_paths.items())
 
@@ -673,13 +671,17 @@ class CrossMoDa_Data(Dataset):
                 for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
                                      for slice_idx in range(label.shape[slice_dim])]:
                     # Set data view for crossmoda id like "003rW100"
-                    self.label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
+                    c_id = f"{_3d_id}{yield_2d_normal_to}{idx:03d}"
+                    self.label_data_2d[c_id] = lbl_slc
+                    self.dtf_label_data_2d[c_id] = self.disttransform(lbl_slc)
 
             for _3d_id, label in self.modified_label_data_3d.items():
                 for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
                                      for slice_idx in range(label.shape[slice_dim])]:
                     # Set data view for crossmoda id like "003rW100"
-                    self.modified_label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
+                    c_id = f"{_3d_id}{yield_2d_normal_to}{idx:03d}"
+                    self.modified_label_data_2d[c_id] = lbl_slc
+                    self.dtf_modified_label_data_2d[c_id] = self.disttransform(lbl_slc)
 
         # Postprocessing of 2d slices
 
@@ -690,13 +692,17 @@ class CrossMoDa_Data(Dataset):
                 # Delete empty 2D slices (but keep 3d data)
                 del self.img_data_2d[key]
                 del self.label_data_2d[key]
+                del self.dtf_label_data_2d[key]
                 del self.modified_label_data_2d[key]
+                del self.dtf_modified_label_data_2d[key]
 
             elif sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
                 # Delete 2D slices with less than n gt-pixels (but keep 3d data)
                 del self.img_data_2d[key]
                 del self.label_data_2d[key]
+                del self.dtf_label_data_2d[key]
                 del self.modified_label_data_2d[key]
+                del self.dtf_modified_label_data_2d[key]
 
         print("Data import finished.")
         print(f"CrossMoDa loader will yield {'2D' if self.yield_2d_normal_to else '3D'} samples")
@@ -756,6 +762,7 @@ class CrossMoDa_Data(Dataset):
             _id = all_ids[dataset_idx]
             image = self.img_data_2d.get(_id, torch.tensor([]))
             label = self.label_data_2d.get(_id, torch.tensor([]))
+            dtf_label = self.dtf_label_data_2d.get(_id, torch.tensor([]))
 
             # For 2D crossmoda id cut last 4 "003rW100"
             image_path = self.img_paths[_id[:-4]]
@@ -766,6 +773,7 @@ class CrossMoDa_Data(Dataset):
             _id = all_ids[dataset_idx]
             image = self.img_data_3d.get(_id, torch.tensor([]))
             label = self.label_data_3d.get(_id, torch.tensor([]))
+            dtf_label = self.dtf_label_data_3d.get(_id, torch.tensor([]))
 
             image_path = self.img_paths[_id]
             label_path = self.label_paths[_id]
@@ -775,26 +783,36 @@ class CrossMoDa_Data(Dataset):
         if self.use_modified:
             if yield_2d:
                 modified_label = self.modified_label_data_2d.get(_id, label.detach().clone())
+                dtf_modified_label = self.dtf_modified_label_data_2d.get(_id, dtf_label.detach().clone())
             else:
                 modified_label = self.modified_label_data_3d.get(_id, label.detach().clone())
+                dtf_modified_label = self.dtf_modified_label_data_3d.get(_id, dtf_label.detach().clone())
         else:
             modified_label = label.detach().clone()
+            dtf_modified_label = dtf_label.detach().clone()
 
         if self.do_augment and not self.augment_at_collate:
-            b_image = image.unsqueeze(0).cuda()
-            b_label = label.unsqueeze(0).cuda()
-            b_modified_label = modified_label.unsqueeze(0).cuda()
+            b_image = image.unsqueeze(0).unsqueeze(0).cuda()
+            b_label = label.unsqueeze(0).unsqueeze(0).cuda()
+            b_modified_label = modified_label.unsqueeze(0).unsqueeze(0).cuda()
+            b_dtf_modified_label = dtf_modified_label.unsqueeze(0).cuda()
 
             b_image, b_label, b_spat_augment_grid = self.augment(
                 b_image, b_label, yield_2d
             )
             _, b_modified_label, _ = spatial_augment(
-                b_label=b_modified_label, yield_2d=yield_2d, b_grid_override=b_spat_augment_grid
+                b_label=b_modified_label,
+                yield_2d=yield_2d, b_grid_override=b_spat_augment_grid
+            )
+            _, b_dtf_modified_label, _ = spatial_augment(
+                b_label=b_dtf_modified_label,
+                yield_2d=yield_2d, b_grid_override=b_spat_augment_grid
             )
 
-            image = b_image.squeeze(0).cpu()
-            label = b_label.squeeze(0).cpu()
-            modified_label = b_modified_label.squeeze(0).cpu()
+            image = b_image.squeeze(0).squeeze(0).cpu()
+            label = b_label.squeeze(0).squeeze(0).cpu()
+            modified_label = b_modified_label.squeeze(0).squeeze(0).cpu()
+            dtf_modified_label = b_dtf_modified_label.squeeze(0).cpu()
             spat_augment_grid = b_spat_augment_grid.squeeze(0).detach().cpu().clone()
 
         if yield_2d:
@@ -805,9 +823,9 @@ class CrossMoDa_Data(Dataset):
         return {
             'image': image,
             'label': label,
-            'label_disttransform': self.disttransform(label),
+            'dtf_label': dtf_label,
             'modified_label': modified_label,
-            'modified_label_disttransform': self.disttransform(modified_label),
+            'dtf_modified_label': dtf_modified_label,
             # if disturbance is off, modified label is equals label
             'dataset_idx': dataset_idx,
             'id': _id,
@@ -859,52 +877,46 @@ class CrossMoDa_Data(Dataset):
             if yield_2d:
                 label_id = self.get_2d_ids()[idx]
                 self.modified_label_data_2d[label_id] = self.label_data_2d[label_id]
+                self.dtf_modified_label_data_2d[label_id] = self.dtf_label_data_2d[label_id]
             else:
                 label_id = self.get_3d_ids()[idx]
                 self.modified_label_data_3d[label_id] = self.label_data_3d[label_id]
+                self.dtf_modified_label_data_3d[label_id] = self.dtf_label_data_3d[label_id]
 
             # Now apply disturbance
             if idx in self.disturbed_idxs:
                 label = self.modified_label_data_2d[label_id].detach().clone()
+                dtf_label = self.dtf_modified_label_data_2d[label_id].detach().clone()
 
                 with torch_manual_seeded(idx):
                     if str(disturbance_mode)==str(LabelDisturbanceMode.FLIP_ROLL):
                         roll_strength = 10*disturbance_strength
                         if yield_2d:
-                            modified_label = \
-                                torch.roll(
-                                    label.transpose(-2,-1),
-                                    (
-                                        int(torch.randn(1)*roll_strength),
-                                        int(torch.randn(1)*roll_strength)
-                                    ),(-2,-1)
-                                )
+                            modified_label = torch.roll(label.transpose(-2,-1),(int(torch.randn(1)*roll_strength),int(torch.randn(1)*roll_strength)),(-2,-1))
+                            dtf_modified_label = torch.roll(dtf_label.transpose(-2,-1),(int(torch.randn(1)*roll_strength),int(torch.randn(1)*roll_strength)),(-2,-1))
                         else:
-                            modified_label = \
-                                torch.roll(
-                                    label.permute(1,2,0),
-                                    (
-                                        int(torch.randn(1)*roll_strength),
-                                        int(torch.randn(1)*roll_strength),
-                                        int(torch.randn(1)*roll_strength)
-                                    ),(-3,-2,-1)
-                                )
+                            modified_label = torch.roll(label.permute(1,2,0), (int(torch.randn(1)*roll_strength),int(torch.randn(1)*roll_strength),int(torch.randn(1)*roll_strength)),(-3,-2,-1))
+                            dtf_modified_label = torch.roll(dtf_label.permute(1,2,0), (int(torch.randn(1)*roll_strength),int(torch.randn(1)*roll_strength),int(torch.randn(1)*roll_strength)),(-3,-2,-1))
 
                     elif str(disturbance_mode)==str(LabelDisturbanceMode.AFFINE):
                         b_modified_label = label.unsqueeze(0).cuda()
-                        _, b_modified_label, _ = spatial_augment(b_label=b_modified_label, yield_2d=yield_2d,
+                        b_dtf_modified_label = label.unsqueeze(0).cuda()
+                        b_dtf_modified_label, b_modified_label, _ = spatial_augment(
+                            b_image=b_dtf_modified_label, b_label=b_modified_label, yield_2d=yield_2d,
                             bspline_num_ctl_points=6, bspline_strength=0., bspline_probability=0.,
                             affine_strength=0.09*disturbance_strength,
                             add_affine_translation=0.18*disturbance_strength, affine_probability=1.)
                         modified_label = b_modified_label.squeeze(0).cpu()
-
+                        dtf_modified_label = b_dtf_modified_label.squeeze(0).cpu()
                     else:
                         raise ValueError(f"Disturbance mode {disturbance_mode} is not implemented.")
 
                     if yield_2d:
                         self.modified_label_data_2d[label_id] = modified_label
+                        self.dtf_modified_label_data_2d[label_id] = dtf_modified_label
                     else:
                         self.modified_label_data_2d[label_id] = modified_label
+                        self.dtf_modified_label_data_3d[label_id] = dtf_modified_label
 
 
     def train(self, augment=True, use_modified=True):
@@ -940,13 +952,13 @@ class CrossMoDa_Data(Dataset):
         pre_interpolation_factor=2.):
 
         if yield_2d:
-            assert b_image.dim() == b_label.dim() == 3, \
-                f"Augmenting 2D. Input batch of image and " \
-                f"label should be BxHxW but are {b_image.shape} and {b_label.shape}"
-        else:
             assert b_image.dim() == b_label.dim() == 4, \
+                f"Augmenting 2D. Input batch of image and " \
+                f"label should be BxCxHxW but are {b_image.shape} and {b_label.shape}"
+        else:
+            assert b_image.dim() == b_label.dim() == 5, \
                 f"Augmenting 3D. Input batch of image and " \
-                f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
+                f"label should be BxCxDxHxW but are {b_image.shape} and {b_label.shape}"
 
         b_image = augmentNoise(b_image, strength=noise_strength)
         b_image, b_label, b_spat_augment_grid = spatial_augment(
@@ -1030,7 +1042,7 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
+    'debug': True,
     'wandb_mode': "disabled",
     'checkpoint_name': None,
     'do_sweep': False,
@@ -1517,6 +1529,9 @@ def train_DL(run_name, config, training_dataset):
         else:
             scheduler_dp = None
 
+        criterion_gend_loss = boundary_loss_losses.GeneralizedDice(idc=[0, 1], reduction='none')
+        criterion_bd_loss = boundary_loss_losses.BoundaryLoss(idc=[1], reduction='none')
+
         _, all_segs = training_dataset.get_data()
 
         t0 = time.time()
@@ -1581,13 +1596,11 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
-                        logits = F.softmax(logits)
-                        gend_loss = boundary_loss_losses.GeneralizedDice(idc=[0, 1], reduction='none')
-                        bd_loss = boundary_loss_losses.BoundaryLoss(idc=[1], reduction='none')
+                        logits = F.softmax(logits, dim=1)
 
                         loss = (
-                            gend_loss(logits, torch.nn.functional.one_hot(b_seg_modified, len(training_dataset.label_tags)).permute(0,3,2,1)) # TODO Check whether to apply softmax here
-                             + bd_loss(logits, batch['modified_label_disttransform'].cuda()).mean((-1,-2))
+                            criterion_gend_loss(logits, torch.nn.functional.one_hot(b_seg_modified, len(training_dataset.label_tags)).permute(0,3,2,1)) # TODO Check whether to apply softmax here
+                             + criterion_bd_loss(logits, batch['dtf_modified_label'].cuda()).mean((-1,-2))
                         )
 
                         weight = F.softmax(embedding(b_idxs_dataset)).squeeze()
