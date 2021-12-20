@@ -1047,7 +1047,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': "disabled",
+    'wandb_mode': "online",
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1603,8 +1603,10 @@ def train_DL(run_name, config, training_dataset):
 
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
                         pred_numel = logits.argmax(1).sum((-2,-1))
+                        inv_numel_weight = torch.sigmoid(1/(pred_numel.sqrt()+1e-6))
+
                         loss = (
-                            nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
+                            nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2)) + inv_numel_weight
                             # criterion_gend_loss(probs, torch.nn.functional.one_hot(b_seg_modified, len(training_dataset.label_tags)).permute(0,3,2,1)) # TODO Check whether to apply softmax here
                             #  + criterion_bd_loss(F.softmax(logits, dim=1), b_seg_modified_dtf).mean((-1,-2))
                         )
@@ -1612,7 +1614,7 @@ def train_DL(run_name, config, training_dataset):
                         weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
                         weight = weight/weight.mean()
                         # weight = weight/instance_pixel_weight[b_idxs_dataset] TODO removce
-                        inv_numel_weight = 1/(pred_numel.sqrt()+1e-6)*pred_numel.sqrt().mean()
+
                         weight = weight*inv_numel_weight
                         loss = (loss*weight).sum()
 
