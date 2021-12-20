@@ -359,10 +359,14 @@ def spatial_augment(b_image=None, b_label=None,
             b_image_out, b_label_out,
             1/pre_interpolation_factor, yield_2d
         )
-
-        b_out_grid = F.interpolate(b_out_grid.permute(0,3,1,2),
-            scale_factor=1/pre_interpolation_factor, mode='bilinear',
-            align_corners=True, recompute_scale_factor=False).permute(0,2,3,1)
+        if yield_2d:
+            b_out_grid = F.interpolate(b_out_grid.permute(0,3,1,2),
+                scale_factor=1/pre_interpolation_factor, mode='bilinear',
+                align_corners=True, recompute_scale_factor=False).permute(0,2,3,1)
+        else:
+            b_out_grid = F.interpolate(b_out_grid.permute(0,4,1,2,3),
+                scale_factor=1/pre_interpolation_factor, mode='bilinear',
+                align_corners=True, recompute_scale_factor=False).permute(0,2,3,4,1)
 
     return b_image_out, b_label_out, b_out_grid
 
@@ -804,8 +808,8 @@ class CrossMoDa_Data(Dataset):
                 b_label=b_modified_label,
                 yield_2d=yield_2d, b_grid_override=b_spat_augment_grid
             )
-            _, b_dtf_modified_label, _ = spatial_augment(
-                b_label=b_dtf_modified_label,
+            b_dtf_modified_label, _, _ = spatial_augment(
+                b_image=b_dtf_modified_label,
                 yield_2d=yield_2d, b_grid_override=b_spat_augment_grid
             )
 
@@ -1043,7 +1047,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': "online",
+    'wandb_mode': "disabled",
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1598,20 +1602,22 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
-                        probs = F.softmax(logits, dim=1)
-
+                        pred_numel = logits.argmax(1).sum((-2,-1))
                         loss = (
-                            criterion_gend_loss(probs, torch.nn.functional.one_hot(b_seg_modified, len(training_dataset.label_tags)).permute(0,3,2,1)) # TODO Check whether to apply softmax here
-                             + criterion_bd_loss(probs, b_seg_modified_dtf).mean((-1,-2))
+                            nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
+                            # criterion_gend_loss(probs, torch.nn.functional.one_hot(b_seg_modified, len(training_dataset.label_tags)).permute(0,3,2,1)) # TODO Check whether to apply softmax here
+                            #  + criterion_bd_loss(F.softmax(logits, dim=1), b_seg_modified_dtf).mean((-1,-2))
                         )
 
-                        weight = F.softmax(embedding(b_idxs_dataset), dim=0).squeeze()
+                        weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
                         weight = weight/weight.mean()
                         # weight = weight/instance_pixel_weight[b_idxs_dataset] TODO removce
+                        inv_numel_weight = 1/(pred_numel.sqrt()+1e-6)*pred_numel.sqrt().mean()
+                        weight = weight*inv_numel_weight
                         loss = (loss*weight).sum()
 
                         # Prepare logits for scoring
-                        logits_for_score = (probs*weight.view(-1,1,1,1)).argmax(1)
+                        logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
