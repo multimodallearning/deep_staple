@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.13.3
+#       jupytext_version: 1.13.4
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -20,7 +20,7 @@ import random
 import glob
 import re
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars(select="* -3 -4"))
+os.environ.update(get_vars(select="* -4"))
 import pickle
 import copy
 from pathlib import Path
@@ -344,7 +344,7 @@ def spatial_augment(b_image=None, b_label=None,
 
     b_out_grid = grid
 
-    if pre_interpolation_factor:
+    if pre_interpolation_factor and False:
         b_image_out, b_label_out = interpolate_sample(
             b_image_out, b_label_out,
             1/pre_interpolation_factor, yield_2d
@@ -469,7 +469,8 @@ class CrossMoDa_Data(Dataset):
 
         else:
             raise Exception("Unknown domain. Choose either 'source', 'target' or 'validation'")
-
+        path = "/share/data_supergrover1/hansen/temp/crossMoDa/preprocessed_new/resampled/localised_crop/target_training/"
+        directory = ""
         files = sorted(glob.glob(os.path.join(path+directory , "*.nii.gz")))
 
         if domain == "hrT2":
@@ -668,7 +669,7 @@ class CrossMoDa_Data(Dataset):
         for key, label in list(self.label_data_2d.items()):
             uniq_vals = label.unique()
 
-            if uniq_vals.max() == 0:
+            if uniq_vals.max() == 0 and False:
                 # Delete empty 2D slices (but keep 3d data)
                 del self.img_data_2d[key]
                 del self.label_data_2d[key]
@@ -971,24 +972,24 @@ config_dict = DotDict({
     # 'fold_override': 0,
     # 'checkpoint_epx': 0,
 
-    'use_mind': True,
-    'epochs': 40,
+    'use_mind': False,
+    'epochs': 80,
 
-    'batch_size': 64,
+    'batch_size': 32,
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'combined',
-    'train_set_max_len': 100,
-    'crop_3d_w_dim_range': (24, 110),
+    'reg_state': None,
+    'train_set_max_len': None,
+    'crop_3d_w_dim_range': (35, 105),
     'crop_2d_slices_gt_num_threshold': 0,
     'yield_2d_normal_to': "W",
 
-    'lr': 0.0005,
+    'lr': 0.001,
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
@@ -1015,9 +1016,9 @@ config_dict = DotDict({
     'checkpoint_name': None,
     'do_sweep': False,
 
-    'disturbance_mode': LabelDisturbanceMode.AFFINE,
-    'disturbance_strength': 1.,
-    'disturbed_percentage': .3,
+    'disturbance_mode': None,
+    'disturbance_strength': 0.,
+    'disturbed_percentage': .0,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
@@ -1054,14 +1055,14 @@ def prepare_data(config):
 
     if config.dataset == 'crossmoda':
         training_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
-            domain="source", state="l4", size=(128, 128, 128),
+            domain="target", state="l4", size=(128, 128, 128),
             ensure_labeled_pairs=True,
             max_load_num=config['train_set_max_len'],
             crop_3d_w_dim_range=config['crop_3d_w_dim_range'], crop_2d_slices_gt_num_threshold=config['crop_2d_slices_gt_num_threshold'],
             yield_2d_normal_to=config['yield_2d_normal_to'],
             modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
             debug=config['debug'],
-            # inject_data_path = '/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/healing_polished-river.pth'
+            # inject_data_path = '/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/healing_polished-river.xpth'
         )
         training_dataset.eval()
         print("Nonzero slice ratio: ",
@@ -1272,7 +1273,7 @@ def get_model(config, dataset_len, num_classes, _path=None, device='cpu'):
     lraspp.to(device)
     print(f"Param count lraspp: {sum(p.numel() for p in lraspp.parameters())}")
 
-    optimizer = torch.optim.Adam(lraspp.parameters(), lr=config.lr)
+    optimizer = torch.optim.AdamW(lraspp.parameters(), lr=config.lr)
     scaler = amp.GradScaler()
 
     # Add data paramters embedding and optimizer
@@ -1406,9 +1407,12 @@ def train_DL(run_name, config, training_dataset):
     fold_means_no_bg = []
 
     for fold_idx, (train_idxs, val_idxs) in fold_iter:
+        SET_LEN = training_dataset.__len__(yield_2d_override=False)
+        SHAPE_LEN = training_dataset.__getitem__(0, yield_2d_override=False)['image'].shape[-1]
+        train_idxs = list(range(SHAPE_LEN*(SET_LEN-20)))
+        val_idxs = list(range(SHAPE_LEN*(SET_LEN-20), SET_LEN*SHAPE_LEN))
         train_idxs = torch.tensor(train_idxs)
         val_idxs = torch.tensor(val_idxs)
-
         # Training happens in 2D, validation happens in 3D:
         # Read 2D dataset idxs which are used for training,
         # get their 3D super-ids by 3d dataset length
@@ -1456,12 +1460,8 @@ def train_DL(run_name, config, training_dataset):
 
         _, all_segs = training_dataset.get_data()
 
-        # TODO add class weights again
-        # class_weight = torch.sqrt(1.0/(torch.bincount(all_segs.long().view(-1)).float()))
-        # class_weight = class_weight/class_weight.mean()
-        # class_weight[0] = 0.15
-        # class_weight = class_weight.cuda()
-        # print('inv sqrt class_weight', class_weight)
+        class_weights = 1/(torch.bincount(all_segs.reshape(-1).long())).float().pow(.35)
+        class_weights /= class_weights.mean()
 
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
@@ -1489,15 +1489,14 @@ def train_DL(run_name, config, training_dataset):
         (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), _path=_path, device='cuda')
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=200, T_mult=2, eta_min=config.lr*.1, last_epoch=- 1, verbose=False)
+            optimizer, T_0=500, T_mult=2)
 
         if optimizer_dp:
             scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer_dp, T_0=200, T_mult=2, eta_min=config.lr_inst_param*.1, last_epoch=- 1, verbose=False)
+                optimizer_dp, T_0=500, T_mult=2)
         else:
             scheduler_dp = None
 
-        criterion = nn.CrossEntropyLoss()
         _, all_segs = training_dataset.get_data()
 
         t0 = time.time()
@@ -1593,7 +1592,7 @@ def train_DL(run_name, config, training_dataset):
                         logits_for_score = (logits*weight).argmax(1)
 
                     else:
-                        loss = nn.CrossEntropyLoss()(logits, b_seg_modified)
+                        loss = nn.CrossEntropyLoss(class_weights.cuda())(logits, b_seg_modified)
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
 
@@ -1622,7 +1621,9 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
-
+                    if epx == config.epochs//2:
+                        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                            optimizer, T_0=500, T_mult=2)
                 if config.debug:
                     break
 
@@ -1711,12 +1712,16 @@ def train_DL(run_name, config, training_dataset):
 
                         b_val_img = b_val_img.unsqueeze(1).float().cuda()
                         b_val_seg = b_val_seg.cuda()
+                        b_val_seg = interpolate_sample(b_label=b_val_seg.permute(0,3,1,2).squeeze(0), scale_factor=2, yield_2d=True)[1].permute(1,2,0).unsqueeze(0)
+
                         b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=stack_dim)
 
                         if config.use_mind:
                             b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
-
+                        b_val_img_2d= interpolate_sample(b_image=b_val_img_2d.squeeze(1), scale_factor=2, yield_2d=True)[0].unsqueeze(1)
                         output_val = lraspp(b_val_img_2d)['out']
+                        # features = lraspp.backbone(F.interpolate(b_val_img_2d,scale_factor=2,mode='bilinear'))
+                        # output_val = F.interpolate(lraspp.classifier(features),scale_factor=2,mode='bilinear',align_corners=False)
 
                         # Prepare logits for scoring
                         # Scoring happens in 3D again - unstack batch tensor again to stack of 3D
