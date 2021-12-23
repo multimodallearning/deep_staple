@@ -193,6 +193,159 @@ def make_3d_from_2d_stack(b_input, stack_dim, orig_stack_size):
 
 
 # %%
+def corrupted_spatial_augment(b_image=None, b_label=None,
+    bspline_num_ctl_points=6, bspline_strength=0.005, bspline_probability=.9,
+    affine_strengh=0.08, affine_probability=.45,
+    pre_interpolation_factor=None,
+    yield_2d=False,
+    b_grid_override=None):
+
+    """
+    2D/3D b-spline augmentation on image and segmentation mini-batch on GPU.
+    :input: b_image batch (torch.cuda.FloatTensor), b_label batch (torch.cuda.LongTensor)
+    :return: augmented Bx(D)xHxW image batch (torch.cuda.FloatTensor),
+    augmented Bx(D)xHxW seg batch (torch.cuda.LongTensor)
+    """
+
+    do_bspline = (np.random.rand() < bspline_probability)
+    do_affine = (np.random.rand() < affine_probability)
+
+    if pre_interpolation_factor:
+        b_image, b_label = interpolate_sample(b_image, b_label, pre_interpolation_factor, yield_2d)
+
+    KERNEL_SIZE = 3
+
+    if b_image is None:
+        common_shape = b_label.shape
+        common_device = b_label.device
+
+    elif b_label is None:
+        common_shape = b_image.shape
+        common_device = b_image.device
+    else:
+        assert b_image.shape == b_label.shape, \
+            f"Image and label shapes must match but are {b_image.shape} and {b_label.shape}."
+        common_shape = b_image.shape
+        common_device = b_image.device
+
+    if b_grid_override is None:
+        if yield_2d:
+            assert len(common_shape) == 3, \
+                f"Augmenting 2D. Input batch " \
+                f"should be BxHxW but is {common_shape}."
+            B,H,W = common_shape
+
+            identity = torch.eye(2,3).expand(B,2,3).to(common_device)
+            id_grid = F.affine_grid(identity, torch.Size((B,2,H,W)),
+                align_corners=False)
+
+            grid = id_grid
+
+            if do_bspline:
+                bspline = torch.nn.Sequential(
+                    nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
+                ).to(common_device)
+                # Add an extra *.5 factor to dim strength to make strength fit 3D case
+                dim_strength = (torch.tensor([H,W]).float()*bspline_strength*.5).to(common_device)
+                rand_control_points = dim_strength.view(1,2,1,1) * \
+                    (
+                        1/10*torch.randn(B, 2, bspline_num_ctl_points, bspline_num_ctl_points)+1.
+                    ).to(common_device)
+
+                bspline_disp = bspline(rand_control_points)
+                bspline_disp = torch.nn.functional.interpolate(
+                    bspline_disp, size=(H,W), mode='bilinear', align_corners=True
+                ).permute(0,2,3,1)
+
+                grid += bspline_disp
+
+            if do_affine:
+                affine_matrix = (torch.eye(2,3).unsqueeze(0) + \
+                    affine_strengh * (1/10*torch.randn(B,2,3)+1.)).to(common_device)
+
+                affine_disp = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
+                                        align_corners=False)
+                grid += (affine_disp-id_grid)
+
+        else:
+            assert len(common_shape) == 4, \
+                f"Augmenting 3D. Input batch " \
+                f"should be BxDxHxW but is {common_shape}."
+            B,D,H,W = common_shape
+
+            identity = torch.eye(3,4).expand(B,3,4).to(common_device)
+            id_grid = F.affine_grid(identity, torch.Size((B,3,D,H,W)),
+                align_corners=False)
+
+            grid = id_grid
+
+            if do_bspline:
+                bspline = torch.nn.Sequential(
+                    nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
+                ).to(b_image.device)
+                dim_strength = (torch.tensor([D,H,W]).float()*bspline_strength).to(common_device)
+
+                rand_control_points = dim_strength.view(1,3,1,1,1)  * \
+                    (
+                        1/10*torch.randn(B, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points)+1.
+                    ).to(b_image.device)
+
+                bspline_disp = bspline(rand_control_points)
+
+                bspline_disp = torch.nn.functional.interpolate(
+                    bspline_disp, size=(D,H,W), mode='trilinear', align_corners=True
+                ).permute(0,2,3,4,1)
+
+                grid += bspline_disp
+
+            if do_affine:
+                affine_matrix = (torch.eye(3,4).unsqueeze(0) + \
+                    affine_strengh * (1/10*torch.randn(B,3,4)+1.)).to(common_device)
+
+                affine_disp = F.affine_grid(affine_matrix,torch.Size((B,1,D,H,W)),
+                                        align_corners=False)
+
+                grid += (affine_disp-id_grid)
+    else:
+        # Override grid with external value
+        grid = b_grid_override
+
+    if b_image is not None:
+        b_image_out = F.grid_sample(
+            b_image.unsqueeze(1).float(), grid,
+            padding_mode='border', align_corners=False)
+        b_image_out = b_image_out.squeeze(1)
+    else:
+        b_image_out = None
+
+    if b_label is not None:
+        b_label_out = F.grid_sample(
+            b_label.unsqueeze(1).float(), grid,
+            mode='nearest', align_corners=False)
+        b_label_out = b_label_out.squeeze(1).long()
+    else:
+        b_label_out = None
+
+    b_out_grid = grid
+
+    if pre_interpolation_factor:
+        b_image_out, b_label_out = interpolate_sample(
+            b_image_out, b_label_out,
+            1/pre_interpolation_factor, yield_2d
+        )
+
+        b_out_grid = F.interpolate(b_out_grid.permute(0,3,1,2),
+                      scale_factor=1/pre_interpolation_factor, mode='bilinear',
+                      align_corners=True, recompute_scale_factor=False).permute(0,2,3,1)
+
+    return b_image_out, b_label_out, b_out_grid
+
+
+# %%
 def spatial_augment(b_image=None, b_label=None,
     bspline_num_ctl_points=6, bspline_strength=0.005, bspline_probability=.9,
     affine_strength=0.08, add_affine_translation=0., affine_probability=.45,
@@ -878,6 +1031,13 @@ class CrossMoDa_Data(Dataset):
                             add_affine_translation=0.18*disturbance_strength, affine_probability=1.)
                         modified_label = b_modified_label.squeeze(0).cpu()
 
+                    elif str(disturbance_mode)==str(LabelDisturbanceMode.CORRUPTED_AFFINE):
+                        b_modified_label = label.unsqueeze(0).cuda()
+                        _, b_modified_label, _ = corrupted_spatial_augment(b_label=b_modified_label, yield_2d=yield_2d,
+                            bspline_num_ctl_points=6, bspline_strength=0., bspline_probability=0.,
+                            affine_strengh=0.09*disturbance_strength, affine_probability=1.)
+                        modified_label = b_modified_label.squeeze(0).cpu()
+
                     else:
                         raise ValueError(f"Disturbance mode {disturbance_mode} is not implemented.")
 
@@ -945,6 +1105,7 @@ from enum import Enum, auto
 class LabelDisturbanceMode(Enum):
     FLIP_ROLL = auto()
     AFFINE = auto()
+    CORRUPTED_AFFINE = auto()
 
 class DataParamMode(Enum):
     INSTANCE_PARAMS = auto()
@@ -978,7 +1139,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'combined',
+    'reg_state': None,
     'train_set_max_len': 100,
     'crop_3d_w_dim_range': (24, 110),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -988,7 +1149,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
@@ -1011,12 +1172,12 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': "disabled",
+    'wandb_mode': "online",
     'checkpoint_name': None,
     'do_sweep': False,
 
-    'disturbance_mode': LabelDisturbanceMode.AFFINE,
-    'disturbance_strength': 1.,
+    'disturbance_mode': LabelDisturbanceMode.CORRUPTED_AFFINE,
+    'disturbance_strength': 2.,
     'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
@@ -1906,9 +2067,9 @@ sweep_config_dict = dict(
         #        'LabelDisturbanceMode.AFFINE',
         #     ]
         # ),
-        reg_state=dict(
-            values=['best','combined']
-        ),
+        # reg_state=dict(
+        #     values=['best','combined']
+        # ),
         # disturbance_strength=dict(
         #     values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
         # ),
