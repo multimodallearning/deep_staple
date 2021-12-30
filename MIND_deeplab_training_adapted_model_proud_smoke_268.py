@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.13.3
+#       jupytext_version: 1.13.4
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -979,7 +979,7 @@ config_dict = DotDict({
 
     'dataset': 'crossmoda',
     'reg_state': 'combined',
-    'train_set_max_len': 100,
+    'train_set_max_len': None,
     'crop_3d_w_dim_range': (24, 110),
     'crop_2d_slices_gt_num_threshold': 0,
     'yield_2d_normal_to': "W",
@@ -1011,13 +1011,13 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': "disabled",
+    'wandb_mode': "online",
     'checkpoint_name': None,
     'do_sweep': False,
 
-    'disturbance_mode': LabelDisturbanceMode.AFFINE,
-    'disturbance_strength': 1.,
-    'disturbed_percentage': .3,
+    'disturbance_mode': None,
+    'disturbance_strength': 0.,
+    'disturbed_percentage': .0,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
@@ -1381,6 +1381,17 @@ def map_embedding_idxs(idxs, grid_size_y, grid_size_x):
         t_sz = grid_size_y * grid_size_x
         return ((idxs*t_sz).long().repeat(t_sz).view(t_sz, idxs.numel())+torch.tensor(range(t_sz)).to(idxs).view(t_sz,1)).permute(1,0).reshape(-1)
 
+def inference_wrap(lraspp, b_img, use_mind=True):
+    with torch.inference_mode():
+        if use_mind:
+            b_out = lraspp(
+                mindssc(b_img.view(1,1,1,b_img.shape[-2],b_img.shape[-1]).float()).squeeze(2)
+            )['out']
+            b_out = b_out.argmax(1)
+            return b_out
+        else:
+            raise NotImplementedError()
+
 def train_DL(run_name, config, training_dataset):
     reset_determinism()
 
@@ -1450,7 +1461,7 @@ def train_DL(run_name, config, training_dataset):
 
         ### Configure MIND ###
         if config.use_mind:
-            in_channels =12
+            in_channels = 12
         else:
             in_channels = 1
 
@@ -1775,7 +1786,6 @@ def train_DL(run_name, config, training_dataset):
 
             if str(config.data_param_mode) == str(DataParamMode.INSTANCE_PARAMS):
                 dp_weights = embedding(all_idxs)
-
                 data = [(
                     dp_weight,
                     bool(disturb_flg.item()),
@@ -1783,19 +1793,20 @@ def train_DL(run_name, config, training_dataset):
                     sample['dataset_idx'],
                     sample['image'],
                     sample['label'],
-                    sample['modified_label']) for dp_weight, disturb_flg, sample in zip(dp_weights[train_idxs], disturbed_bool_vect[train_idxs], torch.utils.data.Subset(training_dataset,train_idxs))
+                    sample['modified_label'],
+                    inference_wrap(lraspp, sample['image'].cuda(), use_mind=config.use_mind)) for dp_weight, disturb_flg, sample in zip(dp_weights[train_idxs], disturbed_bool_vect[train_idxs], torch.utils.data.Subset(training_dataset,train_idxs)) # TODO add MIND featuress
                 ]
 
                 samples_sorted = sorted(data, key=lambda tpl: tpl[0])
                 (dp_weight, disturb_flags,
                  d_ids, dataset_idxs, _2d_imgs,
-                 _2d_labels, _2d_modified_labels) = zip(*samples_sorted)
+                 _2d_labels, _2d_modified_labels, _2d_predictions) = zip(*samples_sorted)
 
                 torch.save(
                     [
                         dp_weight, disturb_flags,
                         d_ids, torch.stack(dataset_idxs), torch.stack(_2d_labels),
-                        torch.stack(_2d_modified_labels)
+                        torch.stack(_2d_modified_labels), torch.stack(_2d_predictions)
                     ],
                     train_label_snapshot_path
                 )
@@ -1872,9 +1883,9 @@ def train_DL(run_name, config, training_dataset):
                 for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
 
             visualize_seg(in_type="batch_2D",
-                img=torch.stack(_2d_imgs).unsqueeze(1),
-                seg=4*torch.stack(_2d_modified_labels),
-                ground_truth=torch.stack(_2d_labels),
+                img=torch.stack(_2d_labels).unsqueeze(1),
+                seg=4*torch.stack(_2d_predictions).squeeze(1),
+                ground_truth=torch.stack(_2d_modified_labels),
                 crop_to_non_zero_seg=False,
                 alpha_seg = .3,
                 alpha_gt = .5,
