@@ -20,7 +20,7 @@ import random
 import glob
 import re
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars(select="* -3 -4"))
+os.environ.update(get_vars(select="* -4"))
 import pickle
 import copy
 from pathlib import Path
@@ -344,15 +344,6 @@ def spatial_augment(b_image=None, b_label=None,
 
     b_out_grid = grid
 
-    if pre_interpolation_factor:
-        b_image_out, b_label_out = interpolate_sample(
-            b_image_out, b_label_out,
-            1/pre_interpolation_factor, yield_2d
-        )
-
-        b_out_grid = F.interpolate(b_out_grid.permute(0,3,1,2),
-            scale_factor=1/pre_interpolation_factor, mode='bilinear',
-            align_corners=True, recompute_scale_factor=False).permute(0,2,3,1)
 
     return b_image_out, b_label_out, b_out_grid
 
@@ -668,13 +659,13 @@ class CrossMoDa_Data(Dataset):
         for key, label in list(self.label_data_2d.items()):
             uniq_vals = label.unique()
 
-            if uniq_vals.max() == 0:
-                # Delete empty 2D slices (but keep 3d data)
-                del self.img_data_2d[key]
-                del self.label_data_2d[key]
-                del self.modified_label_data_2d[key]
+            # if uniq_vals.max() == 0:
+            #     # Delete empty 2D slices (but keep 3d data)
+            #     del self.img_data_2d[key]
+            #     del self.label_data_2d[key]
+            #     del self.modified_label_data_2d[key]
 
-            elif sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
+            if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
                 # Delete 2D slices with less than n gt-pixels (but keep 3d data)
                 del self.img_data_2d[key]
                 del self.label_data_2d[key]
@@ -762,22 +753,28 @@ class CrossMoDa_Data(Dataset):
         else:
             modified_label = label.detach().clone()
 
-        if self.do_augment and not self.augment_at_collate:
-            b_image = image.unsqueeze(0).cuda()
-            b_label = label.unsqueeze(0).cuda()
-            b_modified_label = modified_label.unsqueeze(0).cuda()
+        b_image = image.unsqueeze(0).cuda()
+        b_label = label.unsqueeze(0).cuda()
+        b_modified_label = modified_label.unsqueeze(0).cuda()
 
+        if self.do_augment and not self.augment_at_collate:
             b_image, b_label, b_spat_augment_grid = self.augment(
-                b_image, b_label, yield_2d
+                b_image, b_label, yield_2d, pre_interpolation_factor=2.
             )
             _, b_modified_label, _ = spatial_augment(
-                b_label=b_modified_label, yield_2d=yield_2d, b_grid_override=b_spat_augment_grid
+                b_label=b_modified_label, yield_2d=yield_2d, b_grid_override=b_spat_augment_grid,
+                pre_interpolation_factor=2.
             )
 
-            image = b_image.squeeze(0).cpu()
-            label = b_label.squeeze(0).cpu()
-            modified_label = b_modified_label.squeeze(0).cpu()
-            spat_augment_grid = b_spat_augment_grid.squeeze(0).detach().cpu().clone()
+        elif not self.do_augment:
+            b_image, b_label = interpolate_sample(b_image, b_label, 2., yield_2d)
+            _, b_modified_label = interpolate_sample(b_label=b_modified_label, scale_factor=2.,
+                yield_2d=yield_2d)
+
+        image = b_image.squeeze(0).cpu()
+        label = b_label.squeeze(0).cpu()
+        modified_label = b_modified_label.squeeze(0).cpu()
+        spat_augment_grid = b_spat_augment_grid.squeeze(0).detach().cpu().clone()
 
         if yield_2d:
             assert image.dim() == label.dim() == 2
@@ -971,24 +968,24 @@ config_dict = DotDict({
     # 'fold_override': 0,
     # 'checkpoint_epx': 0,
 
-    'use_mind': True,
+    'use_mind': False,
     'epochs': 40,
 
-    'batch_size': 64,
+    'batch_size': 32,
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'combined',
+    'reg_state': None,
     'train_set_max_len': None,
-    'crop_3d_w_dim_range': (24, 110),
+    'crop_3d_w_dim_range': (35, 105),
     'crop_2d_slices_gt_num_threshold': 0,
     'yield_2d_normal_to': "W",
 
-    'lr': 0.0005,
+    'lr': 0.001,
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
         # init_class_param=0.01,
         # lr_class_param=0.1,
     'init_inst_param': 1.0,
@@ -1060,12 +1057,11 @@ def prepare_data(config):
             crop_3d_w_dim_range=config['crop_3d_w_dim_range'], crop_2d_slices_gt_num_threshold=config['crop_2d_slices_gt_num_threshold'],
             yield_2d_normal_to=config['yield_2d_normal_to'],
             modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
-            debug=config['debug'],
-            # inject_data_path = '/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/healing_polished-river.pth'
+            debug=config['debug']
         )
         training_dataset.eval()
-        print("Nonzero slice ratio: ",
-            sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)
+        print(f"Nonzero slices: " \
+            f"{sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)*100}%"
         )
         # validation_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
         #     domain="validation", state="l4", ensure_labeled_pairs=True)
@@ -1272,7 +1268,7 @@ def get_model(config, dataset_len, num_classes, _path=None, device='cpu'):
     lraspp.to(device)
     print(f"Param count lraspp: {sum(p.numel() for p in lraspp.parameters())}")
 
-    optimizer = torch.optim.Adam(lraspp.parameters(), lr=config.lr)
+    optimizer = torch.optim.AdamW(lraspp.parameters(), lr=config.lr)
     scaler = amp.GradScaler()
 
     # Add data paramters embedding and optimizer
@@ -1467,12 +1463,8 @@ def train_DL(run_name, config, training_dataset):
 
         _, all_segs = training_dataset.get_data()
 
-        # TODO add class weights again
-        # class_weight = torch.sqrt(1.0/(torch.bincount(all_segs.long().view(-1)).float()))
-        # class_weight = class_weight/class_weight.mean()
-        # class_weight[0] = 0.15
-        # class_weight = class_weight.cuda()
-        # print('inv sqrt class_weight', class_weight)
+        class_weights = 1/(torch.bincount(all_segs.reshape(-1).long())).float().pow(.35)
+        class_weights /= class_weights.mean()
 
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
@@ -1500,15 +1492,14 @@ def train_DL(run_name, config, training_dataset):
         (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), _path=_path, device='cuda')
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=200, T_mult=2, eta_min=config.lr*.1, last_epoch=- 1, verbose=False)
+            optimizer, T_0=500, T_mult=2)
 
         if optimizer_dp:
             scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer_dp, T_0=200, T_mult=2, eta_min=config.lr_inst_param*.1, last_epoch=- 1, verbose=False)
+                optimizer_dp, T_0=500, T_mult=2)
         else:
             scheduler_dp = None
 
-        criterion = nn.CrossEntropyLoss()
         _, all_segs = training_dataset.get_data()
 
         t0 = time.time()
@@ -1552,6 +1543,7 @@ def train_DL(run_name, config, training_dataset):
                 b_seg_modified = b_seg_modified.cuda()
                 b_idxs_dataset = b_idxs_dataset.cuda()
                 b_seg = b_seg.cuda()
+                class_weights = class_weights.cuda()
                 b_spat_aug_grid = b_spat_aug_grid.cuda()
 
                 if config.use_mind:
@@ -1604,7 +1596,7 @@ def train_DL(run_name, config, training_dataset):
                         logits_for_score = (logits*weight).argmax(1)
 
                     else:
-                        loss = nn.CrossEntropyLoss()(logits, b_seg_modified)
+                        loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
 
@@ -1633,7 +1625,12 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
-
+                    if epx == config.epochs//2:
+                        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                            optimizer, T_0=500, T_mult=2)
+                        if optimizer_dp:
+                            scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                                optimizer_dp, T_0=500, T_mult=2)
                 if config.debug:
                     break
 
