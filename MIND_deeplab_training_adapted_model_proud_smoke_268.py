@@ -1565,7 +1565,7 @@ def train_DL(run_name, config, training_dataset):
                         loss = (loss*weight).sum()
 
                         # Prepare logits for scoring
-                        logits_for_score = (logits*weight.view(-1,1,1,1)).argmax(1)
+                        logits_for_score = logits.argmax(1)
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
@@ -1596,18 +1596,19 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 10:
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     if config.use_dp_grad_weighting:
-                        p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1)).detach().clone()
-                        gt_num = (b_seg_modified > 0).sum(dim=(-2,-1)).detach().clone()
-                        grad_factors = (p_pred_num+gt_num)/(2*gt_mean[1])
+                        with torch.no_grad():
+                            p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1)).detach().clone()
+                            gt_num = (b_seg_modified > 0).sum(dim=(-2,-1)).detach().clone()
+                            grad_factors = ((p_pred_num+gt_num)/(2*gt_mean[1])).clamp(max=1.)
 
-                        sp_grad_factors = torch.sparse_coo_tensor(
-                            embedding.weight.grad._indices(),
-                            grad_factors.view(-1,1),
-                            (embedding.weight.numel(),1)
-                        )
-                        embedding.weight.grad *= sp_grad_factors
+                            sp_grad_factors = torch.sparse_coo_tensor(
+                                embedding.weight.grad._indices(),
+                                grad_factors.view(-1,1),
+                                (embedding.weight.numel(),1)
+                            )
+                            embedding.weight.grad *= sp_grad_factors
                     scaler.step(optimizer_dp)
 
                 scaler.update()
