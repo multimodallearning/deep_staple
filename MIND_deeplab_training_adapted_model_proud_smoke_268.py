@@ -659,11 +659,11 @@ class CrossMoDa_Data(Dataset):
         for key, label in list(self.label_data_2d.items()):
             uniq_vals = label.unique()
 
-            # if uniq_vals.max() == 0:
-            #     # Delete empty 2D slices (but keep 3d data)
-            #     del self.img_data_2d[key]
-            #     del self.label_data_2d[key]
-            #     del self.modified_label_data_2d[key]
+            if uniq_vals.max() == 0:
+                # Delete empty 2D slices (but keep 3d data)
+                del self.img_data_2d[key]
+                del self.label_data_2d[key]
+                del self.modified_label_data_2d[key]
 
             if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
                 # Delete 2D slices with less than n gt-pixels (but keep 3d data)
@@ -765,6 +765,7 @@ class CrossMoDa_Data(Dataset):
                 b_label=b_modified_label, yield_2d=yield_2d, b_grid_override=b_spat_augment_grid,
                 pre_interpolation_factor=2.
             )
+            spat_augment_grid = b_spat_augment_grid.squeeze(0).detach().cpu().clone()
 
         elif not self.do_augment:
             b_image, b_label = interpolate_sample(b_image, b_label, 2., yield_2d)
@@ -774,7 +775,6 @@ class CrossMoDa_Data(Dataset):
         image = b_image.squeeze(0).cpu()
         label = b_label.squeeze(0).cpu()
         modified_label = b_modified_label.squeeze(0).cpu()
-        spat_augment_grid = b_spat_augment_grid.squeeze(0).detach().cpu().clone()
 
         if yield_2d:
             assert image.dim() == label.dim() == 2
@@ -806,11 +806,13 @@ class CrossMoDa_Data(Dataset):
         if yield_2d:
             img_stack = torch.stack(list(self.img_data_2d.values()), dim=0)
             label_stack = torch.stack(list(self.label_data_2d.values()), dim=0)
+            modified_label_stack = torch.stack(list(self.modified_label_data_2d.values()), dim=0)
         else:
             img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
             label_stack = torch.stack(list(self.label_data_3d.values()), dim=0)
+            modified_label_stack = torch.stack(list(self.modified_label_data_3d.values()), dim=0)
 
-        return img_stack, label_stack
+        return img_stack, label_stack, modified_label_stack
 
     def disturb_idxs(self, all_idxs, disturbance_mode, disturbance_strength=1., yield_2d_override=None):
         if self.prevent_disturbance:
@@ -975,7 +977,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': None,
+    'reg_state': 'combined',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (35, 105),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -985,20 +987,10 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
-        # init_class_param=0.01,
-        # lr_class_param=0.1,
-    'init_inst_param': 1.0,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
-    # 'wd_inst_param': 0.01,
-        # wd_class_param=0.0,
-        # skip_clamp_data_param=False,
-    # 'clamp_sigma_min': 0.,
-    # 'clamp_sigma_max': 1.,
-        # optim_algorithm=DataParamOptim.ADAM,
-        # optim_options=dict(
-        #     betas=(0.9, 0.999)
-        # )
+    'use_dp_grad_weighting': True,
     'grid_size_y': 64,
     'grid_size_x': 64,
     # ),
@@ -1083,7 +1075,7 @@ def prepare_data(config):
 # %%
 if False:
     training_dataset = prepare_data(config_dict)
-    _, all_labels = training_dataset.get_data(yield_2d_override=False)
+    _, all_labels, _ = training_dataset.get_data(yield_2d_override=False)
     print(all_labels.shape)
     sum_over_w = torch.sum(all_labels, dim=(0,1,2))
     plt.xlabel("W")
@@ -1383,10 +1375,11 @@ def inference_wrap(lraspp, b_img, use_mind=True):
             b_out = lraspp(
                 mindssc(b_img.view(1,1,1,b_img.shape[-2],b_img.shape[-1]).float()).squeeze(2)
             )['out']
-            b_out = b_out.argmax(1)
-            return b_out
         else:
-            raise NotImplementedError()
+            b_out = lraspp(b_img.view(1,1,b_img.shape[-2],b_img.shape[-1]).float())['out']
+
+        b_out = b_out.argmax(1)
+        return b_out
 
 def train_DL(run_name, config, training_dataset):
     reset_determinism()
@@ -1461,10 +1454,11 @@ def train_DL(run_name, config, training_dataset):
         else:
             in_channels = 1
 
-        _, all_segs = training_dataset.get_data()
+        _, _, all_modified_segs = training_dataset.get_data()
 
-        class_weights = 1/(torch.bincount(all_segs.reshape(-1).long())).float().pow(.35)
+        class_weights = 1/(torch.bincount(all_modified_segs.reshape(-1).long())).float().pow(.35)
         class_weights /= class_weights.mean()
+        gt_mean = (torch.bincount(all_modified_segs.reshape(-1).long())).float()/all_modified_segs.shape[0]
 
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
@@ -1500,8 +1494,6 @@ def train_DL(run_name, config, training_dataset):
         else:
             scheduler_dp = None
 
-        _, all_segs = training_dataset.get_data()
-
         t0 = time.time()
 
         # Prepare corr coefficient scoring
@@ -1510,6 +1502,7 @@ def train_DL(run_name, config, training_dataset):
             for sample in training_dataset]))
         union_norm_mod_label = torch.logical_or(torch.stack(norm_label), torch.stack(mod_label))
         union_norm_mod_label = union_norm_mod_label.cuda()
+        gt_mean = gt_mean.cuda()
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -1604,6 +1597,17 @@ def train_DL(run_name, config, training_dataset):
                 scaler.step(optimizer)
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 10:
+                    if config.use_dp_grad_weighting:
+                        p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1)).detach().clone()
+                        gt_num = (b_seg_modified > 0).sum(dim=(-2,-1)).detach().clone()
+                        grad_factors = (p_pred_num+gt_num)/(2*gt_mean[1])
+
+                        sp_grad_factors = torch.sparse_coo_tensor(
+                            embedding.weight.grad._indices(),
+                            grad_factors.view(-1,1),
+                            (embedding.weight.numel(),1)
+                        )
+                        embedding.weight.grad *= sp_grad_factors
                     scaler.step(optimizer_dp)
 
                 scaler.update()
@@ -1880,9 +1884,9 @@ def train_DL(run_name, config, training_dataset):
                 for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
 
             visualize_seg(in_type="batch_2D",
-                img=torch.stack(_2d_labels).unsqueeze(1),
-                seg=4*torch.stack(_2d_predictions).squeeze(1),
-                ground_truth=torch.stack(_2d_modified_labels),
+                img=torch.stack(_2d_labels).unsqueeze(1).cpu(),
+                seg=4*torch.stack(_2d_predictions).squeeze(1).cpu(),
+                ground_truth=torch.stack(_2d_modified_labels).cpu(),
                 crop_to_non_zero_seg=False,
                 alpha_seg = .3,
                 alpha_gt = .5,
