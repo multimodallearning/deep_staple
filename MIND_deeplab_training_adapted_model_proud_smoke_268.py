@@ -1567,6 +1567,8 @@ def train_DL(run_name, config, training_dataset):
 
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
                         weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
+                        gt_num = (b_seg_modified > 0).sum(dim=(-2,-1)).detach()
+                        weight = weight*gt_num
                         weight = weight/weight.mean()
 
                         # Prepare logits for scoring
@@ -1608,8 +1610,7 @@ def train_DL(run_name, config, training_dataset):
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     if config.use_dp_grad_weighting:
                         with torch.no_grad():
-                            gt_num = (b_seg_modified > 0).sum(dim=(-2,-1)).detach()
-                            grad_factors = ((p_pred_num+gt_num)/(2*gt_mean[1])).clamp(max=1.)
+                            grad_factors = ((p_pred_num+gt_sum)/(2*gt_mean[1])).clamp(max=1.)
 
                             sp_grad_factors = torch.sparse_coo_tensor(
                                 embedding.weight.grad._indices(),
