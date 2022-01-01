@@ -589,6 +589,8 @@ class CrossMoDa_Data(Dataset):
                 self.modified_label_data_3d[_3d_id] = tmp.long()
 
         # Postprocessing of 3d volumes
+        orig_3d_num = len(self.label_data_3d.keys())
+
         for _3d_id in list(self.label_data_3d.keys()):
             if self.label_data_3d[_3d_id].unique().numel() != 2: #TODO use 3 classes again
                 del self.img_data_3d[_3d_id]
@@ -617,6 +619,8 @@ class CrossMoDa_Data(Dataset):
             for del_key in sorted(list(self.modified_label_data_3d.keys()))[max_load_num:]:
                 del self.modified_label_data_3d[del_key]
 
+        postprocessed_3d_num = len(self.label_data_3d.keys())
+        print(f"Removed {orig_3d_num - postprocessed_3d_num} 3D images in postprocessing")
         #check for consistency
         print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)} ({len(self.img_data_3d)})")
 
@@ -655,6 +659,7 @@ class CrossMoDa_Data(Dataset):
                     self.modified_label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
 
         # Postprocessing of 2d slices
+        orig_2d_num = len(self.label_data_2d.keys())
 
         for key, label in list(self.label_data_2d.items()):
             uniq_vals = label.unique()
@@ -671,6 +676,8 @@ class CrossMoDa_Data(Dataset):
                 del self.label_data_2d[key]
                 del self.modified_label_data_2d[key]
 
+        postprocessed_2d_num = len(self.label_data_2d.keys())
+        print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
         print("Data import finished.")
         print(f"CrossMoDa loader will yield {'2D' if self.yield_2d_normal_to else '3D'} samples")
 
@@ -999,8 +1006,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': 'disabled',
+    'debug': False,
+    'wandb_mode': 'online',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1564,7 +1571,7 @@ def train_DL(run_name, config, training_dataset):
 
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
-                        p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1))
+                        p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1)).detach()
                         risk_regularisation = -weight*p_pred_num/(256**2)
 
                         loss = (loss*weight).sum() + risk_regularisation.sum()
