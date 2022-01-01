@@ -999,8 +999,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': 'online',
+    'debug': True,
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1886,11 +1886,11 @@ def train_DL(run_name, config, training_dataset):
                 for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
 
             visualize_seg(in_type="batch_2D",
-                img=torch.stack(_2d_labels).unsqueeze(1).cpu(),
-                seg=4*torch.stack(_2d_predictions).squeeze(1).cpu(),
-                ground_truth=torch.stack(_2d_modified_labels).cpu(),
+                img=interpolate_sample(b_label=torch.stack(_2d_labels), scale_factor=.5, yield_2d=True)[1].unsqueeze(1),
+                seg=interpolate_sample(b_label=4*torch.stack(_2d_predictions).squeeze(1), scale_factor=.5, yield_2d=True)[1],
+                ground_truth=interpolate_sample(b_label=torch.stack(_2d_modified_labels), scale_factor=.5, yield_2d=True)[1],
                 crop_to_non_zero_seg=False,
-                alpha_seg = .3,
+                alpha_seg = .5,
                 alpha_gt = .5,
                 n_per_row=70,
                 overlay_text=overlay_text_list,
