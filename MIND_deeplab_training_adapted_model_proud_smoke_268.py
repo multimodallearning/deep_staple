@@ -1264,6 +1264,7 @@ def get_model(config, dataset_len, num_classes, _path=None, device='cpu'):
     # set_module(lraspp, 'classifier.scale.2',
     #     torch.nn.Identity()
     # )
+    lraspp.register_parameter('sigmoid_offset', nn.Parameter(torch.tensor([0.])))
     lraspp.to(device)
     print(f"Param count lraspp: {sum(p.numel() for p in lraspp.parameters())}")
 
@@ -1272,7 +1273,13 @@ def get_model(config, dataset_len, num_classes, _path=None, device='cpu'):
 
     # Add data paramters embedding and optimizer
     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
-        embedding = nn.Embedding(dataset_len, 1, sparse=True).to(device)
+        embedding = nn.Embedding(dataset_len, 1, sparse=True)
+        # p_offset = torch.zeros(1, layout=torch.strided, requires_grad=True)
+        # p_offset.grad = torch.sparse_coo_tensor([[0]], 1., size=(1,))
+
+        # embedding.register_parameter('sigmoid_offset', nn.Parameter(torch.tensor([0.])))
+        # embedding.sigmoid_offset.register_hook(lambda grad: torch.sparse_coo_tensor([[0]], grad, size=(1,)))
+        embedding = embedding.to(device)
 
     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
         embedding = nn.Embedding(dataset_len*config.grid_size_y*config.grid_size_x, 1, sparse=True).to(device)
@@ -1467,6 +1474,7 @@ def train_DL(run_name, config, training_dataset):
         class_weights /= class_weights.mean()
         gt_mean = all_modified_segs.sum(dim=(-2,-1)).float().mean()
         gt_max = all_modified_segs.sum(dim=(-2,-1)).float().max()
+        p_emb_offset = torch.nn.parameter.Parameter()
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
         # val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
@@ -1566,9 +1574,9 @@ def train_DL(run_name, config, training_dataset):
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
 
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
-                        weight = torch.sigmoid(embedding(b_idxs_dataset)).squeeze()
+                        weight = embedding(b_idxs_dataset).squeeze()
                         gt_num = (b_seg_modified > 0).sum(dim=(-2,-1)).detach()
-                        weight = weight*gt_num
+                        weight = torch.sigmoid(weight+lraspp.sigmoid_offset)
                         weight = weight/weight.mean()
 
                         # Prepare logits for scoring
