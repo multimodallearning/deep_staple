@@ -664,7 +664,7 @@ class CrossMoDa_Data(Dataset):
         for key, label in list(self.label_data_2d.items()):
             uniq_vals = label.unique()
 
-            if uniq_vals.max() == 0:
+            if uniq_vals.max() == 0 and False:
                 # Delete empty 2D slices (but keep 3d data)
                 del self.img_data_2d[key]
                 del self.label_data_2d[key]
@@ -1575,14 +1575,13 @@ def train_DL(run_name, config, training_dataset):
 
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
                         weight = embedding(b_idxs_dataset).squeeze()
-                        gt_num = (b_seg_modified > 0).sum(dim=(-2,-1)).detach()
-                        weight = torch.sigmoid(weight+lraspp.sigmoid_offset)
+                        weight = torch.sigmoid(weight)
                         weight = weight/weight.mean()
 
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
                         p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1)).detach()
-                        risk_regularisation = -weight*p_pred_num/(256**2)
+                        risk_regularisation = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
 
                         loss = (loss*weight).sum() + risk_regularisation.sum()
 
