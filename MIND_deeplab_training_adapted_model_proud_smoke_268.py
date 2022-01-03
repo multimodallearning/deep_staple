@@ -1500,6 +1500,16 @@ def train_DL(run_name, config, training_dataset):
 
         (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), _path=_path, device='cuda')
 
+        fixed_weightdata = torch.load('fixed_weights.pth')
+        fixed_weights = fixed_weightdata['reweighted_weigths']
+        fixed_d_ids = fixed_weightdata['d_ids']
+
+        corresp_dataset_idxs = [training_dataset.get_2d_ids().index(_id) for _id in fixed_d_ids]
+        embedding_weight_tensor = torch.zeros_like(embedding.weight)
+        embedding_weight_tensor[corresp_dataset_idxs] = fixed_weights.view(-1,1).cuda()
+        # embedding.weight.data = embedding_weight_tensor.clone()
+        embedding = nn.Embedding(len(training_dataset), 1, sparse=True, _weight=embedding_weight_tensor)
+
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, T_0=500, T_mult=2)
 
@@ -1523,7 +1533,6 @@ def train_DL(run_name, config, training_dataset):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
 
             lraspp.train()
-
             ### Disturb samples ###
             training_dataset.train(use_modified=(epx >= config.start_disturbing_after_ep))
             wandb.log({"use_modified": float(training_dataset.use_modified)}, step=global_idx)
@@ -1534,7 +1543,6 @@ def train_DL(run_name, config, training_dataset):
 
             # Load data
             for batch in train_dataloader:
-
                 optimizer.zero_grad()
                 if optimizer_dp:
                     optimizer_dp.zero_grad()
@@ -1574,16 +1582,17 @@ def train_DL(run_name, config, training_dataset):
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
 
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
-                        weight = embedding(b_idxs_dataset).squeeze()
-                        weight = torch.sigmoid(weight)
-                        weight = weight/weight.mean()
+                        bare_weight = embedding(b_idxs_dataset).squeeze()
+                        weight = bare_weight.exp()
+                        # weight = torch.sigmoid(bare_weight)
+                        # weight = weight/weight.mean()
 
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
                         p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1)).detach()
-                        risk_regularisation = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
+                        # risk_regularisation = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
 
-                        loss = (loss*weight).sum() + risk_regularisation.sum()
+                        loss = (loss*weight).sum() #+ risk_regularisation.sum()
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
@@ -1614,7 +1623,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and False:
                     if config.use_dp_grad_weighting:
                         with torch.no_grad():
                             grad_factors = ((p_pred_num+gt_sum)/(2*gt_mean[1])).clamp(max=1.)
