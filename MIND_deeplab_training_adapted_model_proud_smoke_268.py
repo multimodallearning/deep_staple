@@ -473,15 +473,88 @@ class CrossMoDa_Data(Dataset):
             files = files+sorted(glob.glob(os.path.join(path+add_directory , "*.nii.gz")))
             files = [i for i in files if "additionalLabel" not in i] #remove additional label files
 
-
-        # First read filepaths
+        # Populate data
         self.img_paths = {}
         self.label_paths = {}
+
+        self.img_data_3d = {}
+        self.label_data_3d = {}
+        self.modified_label_data_3d = {}
 
         if debug:
             files = files[:4]
 
+        self.load_and_process_3d_data(domain, files, modified_3d_label_override, resample, size, crop_3d_w_dim_range, normalize, ensure_labeled_pairs, max_load_num)
 
+        # Check for consistency
+        img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
+        img_mean, img_std = img_stack.mean(), img_stack.std()
+        label_stack = torch.stack(list(self.label_data_3d.values()), dim=0)
+
+        print("Image shape: {}, mean.: {:.2f}, std.: {:.2f}".format(img_stack.shape, img_mean, img_std))
+        print("Label shape: {}, max.: {}".format(label_stack.shape,torch.max(label_stack)))
+        print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)} ({len(self.img_data_3d)})")
+
+        self.img_data_2d = {}
+        self.label_data_2d = {}
+        self.modified_label_data_2d = {}
+
+        if yield_2d_normal_to:
+            self.populate_and_postprocess_2d_data(yield_2d_normal_to)
+            print("CrossMoDa loader will yield 2D samples")
+        else:
+            print("CrossMoDa loader will yield 3D samples")
+
+        print("Data import finished.")
+
+    def populate_and_postprocess_2d_data(self, yield_2d_normal_to):
+        if yield_2d_normal_to == "D":
+            slice_dim = -3
+        if yield_2d_normal_to == "H":
+            slice_dim = -2
+        if yield_2d_normal_to == "W":
+            slice_dim = -1
+
+        for _3d_id, image in self.img_data_3d.items():
+            for idx, img_slc in [(slice_idx, image.select(slice_dim, slice_idx)) \
+                                    for slice_idx in range(image.shape[slice_dim])]:
+                # Set data view for crossmoda id like "003rW100"
+                self.img_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = img_slc
+
+        for _3d_id, label in self.label_data_3d.items():
+            for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
+                                    for slice_idx in range(label.shape[slice_dim])]:
+                # Set data view for crossmoda id like "003rW100"
+                self.label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
+
+        for _3d_id, label in self.modified_label_data_3d.items():
+            for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
+                                    for slice_idx in range(label.shape[slice_dim])]:
+                # Set data view for crossmoda id like "003rW100"
+                self.modified_label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
+
+        # Postprocessing of 2d slices
+        orig_2d_num = len(self.label_data_2d.keys())
+
+        for key, label in list(self.label_data_2d.items()):
+            uniq_vals = label.unique()
+
+            if uniq_vals.max() == 0:
+                # Delete empty 2D slices (but keep 3d data)
+                del self.img_data_2d[key]
+                del self.label_data_2d[key]
+                del self.modified_label_data_2d[key]
+
+            if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
+                # Delete 2D slices with less than n gt-pixels (but keep 3d data)
+                del self.img_data_2d[key]
+                del self.label_data_2d[key]
+                del self.modified_label_data_2d[key]
+
+        postprocessed_2d_num = len(self.label_data_2d.keys())
+        print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
+
+    def load_and_process_3d_data(self, domain, files, modified_3d_label_override, resample, size, crop_3d_w_dim_range, normalize, ensure_labeled_pairs, max_load_num):
         for _path in files:
 
             numeric_id = int(re.findall(r'\d+', os.path.basename(_path))[0])
@@ -511,18 +584,7 @@ class CrossMoDa_Data(Dataset):
             self.label_paths = {_id: _path for _id, _path in self.label_paths.items() if _id in pair_idxs}
             self.img_paths = {_id: _path for _id, _path in self.img_paths.items() if _id in pair_idxs}
 
-
-        # Populate data
-        self.img_data_3d = {}
-        self.label_data_3d = {}
-        self.modified_label_data_3d = {}
-
-        self.img_data_2d = {}
-        self.label_data_2d = {}
-        self.modified_label_data_2d = {}
-
         #load data
-
         print("Loading CrossMoDa {} images and labels...".format(domain))
         id_paths_to_load = list(self.label_paths.items()) + list(self.img_paths.items())
 
@@ -565,7 +627,7 @@ class CrossMoDa_Data(Dataset):
 
                 self.img_data_3d[_3d_id] = tmp
 
-        # Initialize 3d modified labels as unmodified labels
+                # Initialize 3d modified labels as unmodified labels
         for label_id in self.label_data_3d.keys():
             self.modified_label_data_3d[label_id] = self.label_data_3d[label_id]
 
@@ -621,65 +683,6 @@ class CrossMoDa_Data(Dataset):
 
         postprocessed_3d_num = len(self.label_data_3d.keys())
         print(f"Removed {orig_3d_num - postprocessed_3d_num} 3D images in postprocessing")
-        #check for consistency
-        print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)} ({len(self.img_data_3d)})")
-
-        img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
-        img_mean, img_std = img_stack.mean(), img_stack.std()
-
-        label_stack = torch.stack(list(self.label_data_3d.values()), dim=0)
-
-        print("Image shape: {}, mean.: {:.2f}, std.: {:.2f}".format(img_stack.shape, img_mean, img_std))
-        print("Label shape: {}, max.: {}".format(label_stack.shape,torch.max(label_stack)))
-
-        if yield_2d_normal_to:
-            if yield_2d_normal_to == "D":
-                slice_dim = -3
-            if yield_2d_normal_to == "H":
-                slice_dim = -2
-            if yield_2d_normal_to == "W":
-                slice_dim = -1
-
-            for _3d_id, image in self.img_data_3d.items():
-                for idx, img_slc in [(slice_idx, image.select(slice_dim, slice_idx)) \
-                                     for slice_idx in range(image.shape[slice_dim])]:
-                    # Set data view for crossmoda id like "003rW100"
-                    self.img_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = img_slc
-
-            for _3d_id, label in self.label_data_3d.items():
-                for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
-                                     for slice_idx in range(label.shape[slice_dim])]:
-                    # Set data view for crossmoda id like "003rW100"
-                    self.label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
-
-            for _3d_id, label in self.modified_label_data_3d.items():
-                for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
-                                     for slice_idx in range(label.shape[slice_dim])]:
-                    # Set data view for crossmoda id like "003rW100"
-                    self.modified_label_data_2d[f"{_3d_id}{yield_2d_normal_to}{idx:03d}"] = lbl_slc
-
-        # Postprocessing of 2d slices
-        orig_2d_num = len(self.label_data_2d.keys())
-
-        for key, label in list(self.label_data_2d.items()):
-            uniq_vals = label.unique()
-
-            if uniq_vals.max() == 0 and False:
-                # Delete empty 2D slices (but keep 3d data)
-                del self.img_data_2d[key]
-                del self.label_data_2d[key]
-                del self.modified_label_data_2d[key]
-
-            if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
-                # Delete 2D slices with less than n gt-pixels (but keep 3d data)
-                del self.img_data_2d[key]
-                del self.label_data_2d[key]
-                del self.modified_label_data_2d[key]
-
-        postprocessed_2d_num = len(self.label_data_2d.keys())
-        print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
-        print("Data import finished.")
-        print(f"CrossMoDa loader will yield {'2D' if self.yield_2d_normal_to else '3D'} samples")
 
     def get_3d_ids(self):
         return sorted(list(
