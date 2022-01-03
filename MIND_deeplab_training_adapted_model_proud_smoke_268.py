@@ -664,7 +664,7 @@ class CrossMoDa_Data(Dataset):
         for key, label in list(self.label_data_2d.items()):
             uniq_vals = label.unique()
 
-            if uniq_vals.max() == 0 and False:
+            if uniq_vals.max() == 0:
                 # Delete empty 2D slices (but keep 3d data)
                 del self.img_data_2d[key]
                 del self.label_data_2d[key]
@@ -672,6 +672,16 @@ class CrossMoDa_Data(Dataset):
 
             if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
                 # Delete 2D slices with less than n gt-pixels (but keep 3d data)
+                del self.img_data_2d[key]
+                del self.label_data_2d[key]
+                del self.modified_label_data_2d[key]
+
+        fixed_weightdata = torch.load('fixed_weights.pth')
+        fixed_weights = fixed_weightdata['reweighted_weigths']
+        fixed_d_ids = fixed_weightdata['d_ids']
+
+        for key, weight in zip(fixed_d_ids, fixed_weights):
+            if weight < .85:
                 del self.img_data_2d[key]
                 del self.label_data_2d[key]
                 del self.modified_label_data_2d[key]
@@ -994,7 +1004,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_dp_grad_weighting': False,
