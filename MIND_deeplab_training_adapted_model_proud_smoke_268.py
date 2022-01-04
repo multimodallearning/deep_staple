@@ -1003,11 +1003,11 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': 'online',
     'checkpoint_name': None,
-    'do_sweep': False,
+    'do_sweep': True,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
-    'disturbance_strength': 1.,
-    'disturbed_percentage': .3,
+    'disturbance_strength': .0,
+    'disturbed_percentage': .0,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
