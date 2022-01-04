@@ -1446,16 +1446,6 @@ def train_DL(run_name, config, training_dataset):
         wandb.log({f'datasets/disturbed_idxs_fold{fold_idx}':wandb.Table(columns=['train_idxs'], data=[[idx] for idx in training_dataset.disturbed_idxs])},
             step=get_global_idx(fold_idx, 0, config.epochs))
 
-        ### Visualization ###
-        if config.do_plot:
-            print("Disturbed samples:")
-            for d_idx in training_dataset.disturbed_idxs:
-                display_seg(in_type="single_3D", reduce_dim="W",
-                    img=training_dataset[d_idx][0],
-                    ground_truth=disturb_seg(training_dataset[d_idx][1]),
-                    crop_to_non_zero_gt=True,
-                    alpha_gt = .0)
-
         ### Configure MIND ###
         if config.use_mind:
             in_channels = 12
@@ -1466,9 +1456,7 @@ def train_DL(run_name, config, training_dataset):
 
         class_weights = 1/(torch.bincount(all_modified_segs.reshape(-1).long())).float().pow(.35)
         class_weights /= class_weights.mean()
-        gt_mean = all_modified_segs.sum(dim=(-2,-1)).float().mean()
-        gt_max = all_modified_segs.sum(dim=(-2,-1)).float().max()
-        p_emb_offset = torch.nn.parameter.Parameter()
+
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
         # val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
@@ -1507,11 +1495,12 @@ def train_DL(run_name, config, training_dataset):
 
         # Prepare corr coefficient scoring
         training_dataset.eval(use_modified=True)
-        norm_label, mod_label = list(zip(*[(sample['label'], sample['modified_label']) \
-            for sample in training_dataset]))
-        union_norm_mod_label = torch.logical_or(torch.stack(norm_label), torch.stack(mod_label))
-        union_norm_mod_label = union_norm_mod_label.cuda()
-        gt_mean = gt_mean.cuda()
+        if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
+            norm_label, mod_label = list(zip(*[(sample['label'], sample['modified_label']) \
+                for sample in training_dataset]))
+
+            union_norm_mod_label = torch.logical_or(torch.stack(norm_label), torch.stack(mod_label))
+            union_norm_mod_label = union_norm_mod_label.cuda()
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -1796,7 +1785,6 @@ def train_DL(run_name, config, training_dataset):
                 )
 
                 for dp_weight, disturb_flg, sample in data_generator:
-                    save_data.append(data_tuple)
                     data_tuple = ( \
                         dp_weight,
                         bool(disturb_flg.item()),
@@ -1807,26 +1795,34 @@ def train_DL(run_name, config, training_dataset):
                         sample['modified_label'],
                         inference_wrap(lraspp, sample['image'].cuda(), use_mind=config.use_mind)
                     )
+                    save_data.append(data_tuple)
 
-                samples_sorted = sorted(data, key=lambda tpl: tpl[0])
+                save_data = sorted(save_data, key=lambda tpl: tpl[0])
                 (dp_weight, disturb_flags,
                  d_ids, dataset_idxs, _2d_imgs,
-                 _2d_labels, _2d_modified_labels, _2d_predictions) = zip(*samples_sorted)
+                 _2d_labels, _2d_modified_labels, _2d_predictions) = zip(*save_data)
+
+                dp_weight = torch.stack(dp_weight)
+                dataset_idxs = torch.stack(dataset_idxs)
+                _2d_imgs = torch.stack(_2d_imgs)
+                _2d_labels = torch.stack(_2d_labels)
+                _2d_modified_labels = torch.stack(_2d_modified_labels)
+                _2d_predictions = torch.stack(_2d_predictions)
 
                 # Reweight data parameters with log to improve dice correlation
-                gt_num = _2d_modified_labels.sum(dim=(-2,-1)).float()
+                gt_num = _2d_modified_labels.sum(dim=(-2,-1)).float().to(dp_weight.device)
                 reweighted_dps = dp_weight/(torch.log(gt_num+np.exp(1))+np.exp(1))
 
                 torch.save(
                     {
-                        'data_parameters': dp_weight,
-                        'reweighted_data_parameters': reweighted_dps,
+                        'data_parameters': dp_weight.cpu(),
+                        'reweighted_data_parameters': reweighted_dps.cpu(),
                         'disturb_flags': disturb_flags,
                         'd_ids': d_ids,
-                        'dataset_idxs': torch.stack(dataset_idxs),
-                        'labels': torch.stack(_2d_labels),
-                        'modified_labels': torch.stack(_2d_modified_labels),
-                        'train_predictions': torch.stack(_2d_predictions),
+                        'dataset_idxs': dataset_idxs.cpu(),
+                        'labels': _2d_labels.cpu(),
+                        'modified_labels': _2d_modified_labels.cpu(),
+                        'train_predictions': _2d_predictions.cpu(),
                     },
                     train_label_snapshot_path
                 )
@@ -1850,6 +1846,7 @@ def train_DL(run_name, config, training_dataset):
 
                 weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/data_parameter_weightmap.png")
 
+                save_data = []
                 data_generator = zip(
                     dp_weights[train_idxs],
                     all_weights[train_idxs],
@@ -1868,28 +1865,37 @@ def train_DL(run_name, config, training_dataset):
                         sample['label'],
                         sample['modified_label']
                     )
+                    save_data.append(data_tuple)
 
-                samples_sorted = sorted(data, key=lambda tpl: tpl[0])
+                save_data = sorted(save_data, key=lambda tpl: tpl[0])
 
                 (dp_weight, dp_weightmap, disturb_flags,
                  d_ids, dataset_idxs, _2d_imgs,
-                 _2d_labels, _2d_modified_labels) = zip(*samples_sorted)
+                 _2d_labels, _2d_modified_labels) = zip(*save_data)
+
+                dp_weight = torch.stack(dp_weight)
+                dp_weightmap = torch.stack(dp_weightmap)
+                dataset_idxs = torch.stack(dataset_idxs)
+                _2d_imgs = torch.stack(_2d_imgs)
+                _2d_labels = torch.stack(_2d_labels)
+                _2d_modified_labels = torch.stack(_2d_modified_labels)
+                _2d_predictions = torch.stack(_2d_predictions)
 
                  # Reweight data parameters with log to improve dice correlation
-                gt_num = _2d_modified_labels.sum(dim=(-2,-1)).float()
+                gt_num = _2d_modified_labels.sum(dim=(-2,-1)).float().to(dp_weight.device)
                 reweighted_dps = dp_weight/(torch.log(gt_num+np.exp(1))+np.exp(1))
 
                 torch.save(
                     {
-                        'data_parameters': dp_weight,
-                        'data_parameter_weightmaps': torch.stack(dp_weightmap),
-                        'reweighted_data_parameters': reweighted_dps,
+                        'data_parameters': dp_weight.cpu(),
+                        'data_parameter_weightmaps': dp_weightmap.cpu(),
+                        'reweighted_data_parameters': reweighted_dps.cpu(),
                         'disturb_flags': disturb_flags,
                         'd_ids': d_ids,
-                        'dataset_idxs': torch.stack(dataset_idxs),
-                        'labels': torch.stack(_2d_labels),
-                        'modified_labels': torch.stack(_2d_modified_labels),
-                        'train_predictions': torch.stack(_2d_predictions),
+                        'dataset_idxs': dataset_idxs.cpu(),
+                        'labels': _2d_labels.cpu(),
+                        'modified_labels': _2d_modified_labels.cpu(),
+                        'train_predictions': _2d_predictions.cpu(),
                     },
                     train_label_snapshot_path
                 )
@@ -1922,9 +1928,9 @@ def train_DL(run_name, config, training_dataset):
                 for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
 
             visualize_seg(in_type="batch_2D",
-                img=interpolate_sample(b_label=torch.stack(_2d_labels), scale_factor=.5, yield_2d=True)[1].unsqueeze(1),
-                seg=interpolate_sample(b_label=4*torch.stack(_2d_predictions).squeeze(1), scale_factor=.5, yield_2d=True)[1],
-                ground_truth=interpolate_sample(b_label=torch.stack(_2d_modified_labels), scale_factor=.5, yield_2d=True)[1],
+                img=interpolate_sample(b_label=_2d_labels, scale_factor=.5, yield_2d=True)[1].unsqueeze(1),
+                seg=interpolate_sample(b_label=4*_2d_predictions.squeeze(1), scale_factor=.5, yield_2d=True)[1],
+                ground_truth=interpolate_sample(b_label=_2d_modified_labels, scale_factor=.5, yield_2d=True)[1],
                 crop_to_non_zero_seg=False,
                 alpha_seg = .5,
                 alpha_gt = .5,
