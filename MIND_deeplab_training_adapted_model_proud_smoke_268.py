@@ -991,6 +991,7 @@ config_dict = DotDict({
     'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
+    'use_risk_regularization': True,
 
     'grid_size_y': 64,
     'grid_size_x': 64,
@@ -1565,10 +1566,13 @@ def train_DL(run_name, config, training_dataset):
 
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
-                        p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1)).detach()
-                        risk_regularisation = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
 
-                        loss = (loss*weight).sum() + risk_regularisation.sum()
+                        if config.use_risk_regularization:
+                            p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1)).detach()
+                            risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
+                            loss = (loss*weight).sum() + risk_regularization.sum()
+                        else:
+                            loss = (loss*weight).sum()
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
@@ -1973,6 +1977,9 @@ sweep_config_dict = dict(
                 DataParamMode.INSTANCE_PARAMS,
                 DataParamMode.DISABLED,
             ]
+        ),
+        use_risk_regularization=dict(
+            values=[False, True]
         )
     )
 )
