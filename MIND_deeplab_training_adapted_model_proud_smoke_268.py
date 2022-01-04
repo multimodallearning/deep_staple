@@ -997,7 +997,7 @@ config_dict = DotDict({
     'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
-    'use_dp_grad_weighting': False,
+
     'grid_size_y': 64,
     'grid_size_x': 64,
     # ),
@@ -1615,16 +1615,6 @@ def train_DL(run_name, config, training_dataset):
                 scaler.step(optimizer)
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
-                    if config.use_dp_grad_weighting:
-                        with torch.no_grad():
-                            grad_factors = ((p_pred_num+gt_sum)/(2*gt_mean[1])).clamp(max=1.)
-
-                            sp_grad_factors = torch.sparse_coo_tensor(
-                                embedding.weight.grad._indices(),
-                                grad_factors.view(-1,1),
-                                (embedding.weight.numel(),1)
-                            )
-                            embedding.weight.grad *= sp_grad_factors
                     scaler.step(optimizer_dp)
 
                 scaler.update()
@@ -1890,6 +1880,10 @@ def train_DL(run_name, config, training_dataset):
                 (dp_weight, dp_weightmap, disturb_flags,
                  d_ids, dataset_idxs, _2d_imgs,
                  _2d_labels, _2d_modified_labels) = zip(*samples_sorted)
+
+                 # Reweight data parameters with log to improve dice correlation
+                gt_num = _2d_modified_labels.sum(dim=(-2,-1)).float()
+                reweighted_dps = dp_weight/(torch.log(gt_num+np.exp(1))+np.exp(1))
 
                 torch.save(
                     {
