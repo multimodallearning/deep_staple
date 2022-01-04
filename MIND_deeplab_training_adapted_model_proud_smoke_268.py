@@ -984,7 +984,7 @@ config_dict = DotDict({
     'crop_2d_slices_gt_num_threshold': 0,
     'yield_2d_normal_to': "W",
 
-    'lr': 0.001,
+    'lr': 0.0005,
     'use_cosine_annealing': True,
 
     # Data parameter config
@@ -1619,12 +1619,12 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
-                    if epx == config.epochs//2:
-                        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                            optimizer, T_0=500, T_mult=2)
-                        if optimizer_dp:
-                            scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                                optimizer_dp, T_0=500, T_mult=2)
+                    # if epx == config.epochs//2:
+                    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                    #         optimizer, T_0=500, T_mult=2)
+                    #     if optimizer_dp:
+                    #         scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                    #             optimizer_dp, T_0=500, T_mult=2)
                 if config.debug:
                     break
 
