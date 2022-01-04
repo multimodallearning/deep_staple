@@ -1000,8 +1000,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': 'disabled',
+    'debug': False,
+    'wandb_mode': 'online',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1811,14 +1811,9 @@ def train_DL(run_name, config, training_dataset):
                 _2d_modified_labels = torch.stack(_2d_modified_labels)
                 _2d_predictions = torch.stack(_2d_predictions)
 
-                # Reweight data parameters with log to improve dice correlation
-                gt_num = _2d_modified_labels.sum(dim=(-2,-1)).float().to(dp_weight.device)
-                reweighted_dps = dp_weight/(torch.log(gt_num+np.exp(1))+np.exp(1))
-
                 torch.save(
                     {
                         'data_parameters': dp_weight.cpu(),
-                        'reweighted_data_parameters': reweighted_dps.cpu(),
                         'disturb_flags': disturb_flags,
                         'd_ids': d_ids,
                         'dataset_idxs': dataset_idxs.cpu(),
