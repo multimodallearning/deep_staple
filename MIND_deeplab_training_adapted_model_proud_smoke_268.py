@@ -978,7 +978,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'combined',
+    'reg_state': None,
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (35, 105),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1000,8 +1000,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': 'disabled',
+    'debug': False,
+    'wandb_mode': 'online',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1597,7 +1597,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 10:
                     scaler.step(optimizer_dp)
 
                 scaler.update()
