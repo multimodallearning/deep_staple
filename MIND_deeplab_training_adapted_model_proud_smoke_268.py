@@ -1804,28 +1804,46 @@ def train_DL(run_name, config, training_dataset):
 
             if str(config.data_param_mode) == str(DataParamMode.INSTANCE_PARAMS):
                 dp_weights = embedding(all_idxs)
-                data = [(
-                    dp_weight,
-                    bool(disturb_flg.item()),
-                    sample['id'],
-                    sample['dataset_idx'],
-                    sample['image'],
-                    sample['label'],
-                    sample['modified_label'],
-                    inference_wrap(lraspp, sample['image'].cuda(), use_mind=config.use_mind)) for dp_weight, disturb_flg, sample in zip(dp_weights[train_idxs], disturbed_bool_vect[train_idxs], torch.utils.data.Subset(training_dataset,train_idxs)) # TODO add MIND featuress
-                ]
+                save_data = []
+                data_generator = zip(
+                    dp_weights[train_idxs], \
+                    disturbed_bool_vect[train_idxs],
+                    torch.utils.data.Subset(training_dataset, train_idxs)
+                )
+
+                for dp_weight, disturb_flg, sample in data_generator:
+                    save_data.append(data_tuple)
+                    data_tuple = ( \
+                        dp_weight,
+                        bool(disturb_flg.item()),
+                        sample['id'],
+                        sample['dataset_idx'],
+                        sample['image'],
+                        sample['label'],
+                        sample['modified_label'],
+                        inference_wrap(lraspp, sample['image'].cuda(), use_mind=config.use_mind)
+                    )
 
                 samples_sorted = sorted(data, key=lambda tpl: tpl[0])
                 (dp_weight, disturb_flags,
                  d_ids, dataset_idxs, _2d_imgs,
                  _2d_labels, _2d_modified_labels, _2d_predictions) = zip(*samples_sorted)
 
+                # Reweight data parameters with log to improve dice correlation
+                gt_num = _2d_modified_labels.sum(dim=(-2,-1)).float()
+                reweighted_dps = dp_weight/(torch.log(gt_num+np.exp(1))+np.exp(1))
+
                 torch.save(
-                    [
-                        dp_weight, disturb_flags,
-                        d_ids, torch.stack(dataset_idxs), torch.stack(_2d_labels),
-                        torch.stack(_2d_modified_labels), torch.stack(_2d_predictions)
-                    ],
+                    {
+                        'data_parameters': dp_weight,
+                        'reweighted_data_parameters': reweighted_dps,
+                        'disturb_flags': disturb_flags,
+                        'd_ids': d_ids,
+                        'dataset_idxs': torch.stack(dataset_idxs),
+                        'labels': torch.stack(_2d_labels),
+                        'modified_labels': torch.stack(_2d_modified_labels),
+                        'train_predictions': torch.stack(_2d_predictions),
+                    },
                     train_label_snapshot_path
                 )
 
@@ -1848,32 +1866,47 @@ def train_DL(run_name, config, training_dataset):
 
                 weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/data_parameter_weightmap.png")
 
-                data = [(
-                    dp_weight,
-                    weightmap,
-                    bool(disturb_flg.item()),
-                    sample['id'],
-                    sample['dataset_idx'],
-                    sample['image'],
-                    sample['label'],
-                    sample['modified_label']) for dp_weight, weightmap, disturb_flg, sample in zip(dp_weights[train_idxs], all_weights[train_idxs], disturbed_bool_vect[train_idxs], torch.utils.data.Subset(training_dataset,train_idxs))
-                ]
+                data_generator = zip(
+                    dp_weights[train_idxs],
+                    all_weights[train_idxs],
+                    disturbed_bool_vect[train_idxs],
+                    torch.utils.data.Subset(training_dataset,train_idxs)
+                )
+
+                for dp_weight, weightmap, disturb_flg, sample in data_generator:
+                    data_tuple = (
+                        dp_weight,
+                        weightmap,
+                        bool(disturb_flg.item()),
+                        sample['id'],
+                        sample['dataset_idx'],
+                        sample['image'],
+                        sample['label'],
+                        sample['modified_label']
+                    )
 
                 samples_sorted = sorted(data, key=lambda tpl: tpl[0])
+
                 (dp_weight, dp_weightmap, disturb_flags,
                  d_ids, dataset_idxs, _2d_imgs,
                  _2d_labels, _2d_modified_labels) = zip(*samples_sorted)
 
                 torch.save(
-                    [
-                        dp_weight, torch.stack(dp_weightmap), disturb_flags,
-                        d_ids, torch.stack(dataset_idxs), torch.stack(_2d_labels),
-                        torch.stack(_2d_modified_labels)
-                    ],
+                    {
+                        'data_parameters': dp_weight,
+                        'data_parameter_weightmaps': torch.stack(dp_weightmap),
+                        'reweighted_data_parameters': reweighted_dps,
+                        'disturb_flags': disturb_flags,
+                        'd_ids': d_ids,
+                        'dataset_idxs': torch.stack(dataset_idxs),
+                        'labels': torch.stack(_2d_labels),
+                        'modified_labels': torch.stack(_2d_modified_labels),
+                        'train_predictions': torch.stack(_2d_predictions),
+                    },
                     train_label_snapshot_path
                 )
 
-                print("Writing weight map.")
+                print("Writing weight map image.")
                 weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_data_parameter_weightmap.png")
                 visualize_seg(in_type="batch_2D",
                     img=torch.stack(dp_weightmap).unsqueeze(1),
@@ -1895,7 +1928,7 @@ def train_DL(run_name, config, training_dataset):
                 wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
 
             # Write out data of modified and un-modified labels and an overview image
-            print("Writing out sample image.")
+            print("Writing train sample image.")
             # overlay text example: d_idx=0, dp_i=1.00, dist? False
             overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
                 for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
