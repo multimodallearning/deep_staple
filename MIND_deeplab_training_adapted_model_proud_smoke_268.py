@@ -980,7 +980,7 @@ config_dict = DotDict({
     'dataset': 'crossmoda',
     'reg_state': None,
     'train_set_max_len': None,
-    'crop_3d_w_dim_range': (35, 105),
+    'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
     'yield_2d_normal_to': "W",
 
@@ -1625,6 +1625,8 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
+                    if scheduler_dp:
+                        scheduler_dp.step()
                     # if epx == config.epochs//2:
                     #     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
                     #         optimizer, T_0=500, T_mult=2)
@@ -1693,7 +1695,7 @@ def train_DL(run_name, config, training_dataset):
                     _path,
                     lraspp=lraspp,
                     optimizer=optimizer, optimizer_dp=optimizer_dp,
-                    scheduler=scheduler, sheduler_dp=scheduler_dp,
+                    scheduler=scheduler, scheduler_dp=scheduler_dp,
                     embedding=embedding,
                     scaler=scaler)
                 (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), _path=_path, device='cuda')
