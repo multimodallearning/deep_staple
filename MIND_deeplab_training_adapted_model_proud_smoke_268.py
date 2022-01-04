@@ -664,12 +664,6 @@ class CrossMoDa_Data(Dataset):
         for key, label in list(self.label_data_2d.items()):
             uniq_vals = label.unique()
 
-            if uniq_vals.max() == 0 and False:
-                # Delete empty 2D slices (but keep 3d data)
-                del self.img_data_2d[key]
-                del self.label_data_2d[key]
-                del self.modified_label_data_2d[key]
-
             if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
                 # Delete 2D slices with less than n gt-pixels (but keep 3d data)
                 del self.img_data_2d[key]
@@ -1006,14 +1000,14 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': 'online',
+    'debug': True,
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
 
-    'disturbance_mode': None,
-    'disturbance_strength': 0.,
-    'disturbed_percentage': .0,
+    'disturbance_mode': LabelDisturbanceMode.AFFINE,
+    'disturbance_strength': 1.,
+    'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
