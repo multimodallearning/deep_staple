@@ -1000,8 +1000,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': 'online',
+    'debug': True,
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1426,8 +1426,12 @@ def train_DL(run_name, config, training_dataset):
         val_3d_idxs = set(range(training_dataset.__len__(yield_2d_override=False))) - trained_3d_dataset_idxs
         print("Will run validation with these 3D samples:", val_3d_idxs)
 
-        ### Disturb dataset ###
-        proposed_disturbed_idxs = np.random.choice(train_idxs, size=int(len(train_idxs)*config.disturbed_percentage), replace=False)
+        _, _, all_modified_segs = training_dataset.get_data()
+
+        non_empty_train_idxs = train_idxs[(all_modified_segs[train_idxs].sum(dim=(-2,-1)) > 0)]
+
+        ### Disturb dataset (only non-emtpy idxs)###
+        proposed_disturbed_idxs = np.random.choice(non_empty_train_idxs, size=int(len(non_empty_train_idxs)*config.disturbed_percentage), replace=False)
         proposed_disturbed_idxs = torch.tensor(proposed_disturbed_idxs)
         training_dataset.disturb_idxs(proposed_disturbed_idxs,
             disturbance_mode=config.disturbance_mode,
@@ -1451,8 +1455,6 @@ def train_DL(run_name, config, training_dataset):
             in_channels = 12
         else:
             in_channels = 1
-
-        _, _, all_modified_segs = training_dataset.get_data()
 
         class_weights = 1/(torch.bincount(all_modified_segs.reshape(-1).long())).float().pow(.35)
         class_weights /= class_weights.mean()
