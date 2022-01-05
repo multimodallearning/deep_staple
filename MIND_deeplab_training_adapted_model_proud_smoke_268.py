@@ -1007,8 +1007,8 @@ config_dict = DotDict({
     'do_sweep': True,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
-    'disturbance_strength': .0,
-    'disturbed_percentage': .0,
+    'disturbance_strength': 2.0,
+    'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
@@ -1965,9 +1965,13 @@ sweep_config_dict = dict(
         #        'LabelDisturbanceMode.AFFINE',
         #     ]
         # ),
-        reg_state=dict(
-            values=['best','combined']
-        ),
+        #     values=[
+        #        'LabelDisturbanceMode.AFFINE',
+        #     ]
+        # ),
+        # reg_state=dict(
+        #     values=['best','combined']
+        # ),
         # disturbance_strength=dict(
         #     values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
         # ),
