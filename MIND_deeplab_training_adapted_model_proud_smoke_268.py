@@ -533,9 +533,6 @@ class CrossMoDa_Data(Dataset):
             if "Label" in _file:
                 tmp = torch.from_numpy(nib.load(_file).get_fdata())
 
-                if crop_3d_w_dim_range:
-                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
-
                 if resample: #resample image to specified size
                     tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
 
@@ -544,15 +541,15 @@ class CrossMoDa_Data(Dataset):
                     pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
                     tmp = F.pad(tmp,pad)
 
+                if crop_3d_w_dim_range:
+                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
+
                 # Only use tumour class, remove TODO
                 tmp[tmp==2] = 0
                 self.label_data_3d[_3d_id] = tmp.long()
 
             elif domain in _file:
                 tmp = torch.from_numpy(nib.load(_file).get_fdata())
-
-                if crop_3d_w_dim_range:
-                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
 
                 if resample: #resample image to specified size
                     tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='trilinear',align_corners=False).squeeze()
@@ -561,6 +558,9 @@ class CrossMoDa_Data(Dataset):
                     difs = [size[0]-tmp.size(0),size[1]-tmp.size(1),size[2]-tmp.size(2)]
                     pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
                     tmp = F.pad(tmp,pad)
+
+                if crop_3d_w_dim_range:
+                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
 
                 if normalize: #normalize image to zero mean and unit std
                     tmp = (tmp - tmp.mean()) / tmp.std()
@@ -585,9 +585,6 @@ class CrossMoDa_Data(Dataset):
             for _mod_3d_id, modified_label in modified_3d_label_override.items():
                 tmp = modified_label
 
-                if crop_3d_w_dim_range:
-                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
-
                 if resample: #resample image to specified size
                     tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
 
@@ -595,6 +592,9 @@ class CrossMoDa_Data(Dataset):
                     difs = [size[0]-tmp.size(0),size[1]-tmp.size(1),size[2]-tmp.size(2)]
                     pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
                     tmp = F.pad(tmp,pad)
+
+                if crop_3d_w_dim_range:
+                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
 
                 # Only use tumour class, remove TODO
                 tmp[tmp==2] = 0
@@ -1007,7 +1007,7 @@ config_dict = DotDict({
     'reg_state': 'best_n',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
-    'crop_2d_slices_gt_num_threshold': 0,
+    'crop_2d_slices_gt_num_threshold': 1,
     'yield_2d_normal_to': "W",
 
     'lr': 0.0005,
@@ -1085,7 +1085,7 @@ def prepare_data(config):
         )
         training_dataset.eval()
         print(f"Nonzero slices: " \
-            f"{sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)*100}%"
+            f"{sum(training_dataset > 1 for b in training_dataset])/len(training_dataset)*100}%"
         )
         # validation_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
         #     domain="validation", state="l4", ensure_labeled_pairs=True)
@@ -1455,6 +1455,19 @@ def train_DL(run_name, config, training_dataset):
         trained_3d_dataset_idxs = {dct['3d_dataset_idx'] \
              for dct in training_dataset.get_id_dicts() if dct['2d_dataset_idx'] in train_idxs.tolist()}
         val_3d_idxs = set(range(training_dataset.__len__(yield_2d_override=False))) - trained_3d_dataset_idxs
+        val_3d_long_ids = {dct['3d_id'] \
+             for dct in training_dataset.get_id_dicts() if dct['3d_dataset_idx'] in val_3d_idxs}
+        val_3d_short_ids = set([_id[:4] for _id in val_3d_ids])
+
+        # Get only unique 3D val images and labels even if multiple
+        # lables for one 3D image exist
+        unique_img_val_3d_ids = []
+        for short_id in val_3d_short_ids:
+            for long_id in val_3d_long_ids:
+                if short_id in long_id:
+                    unique_img_val_3d_ids.append(long_id)
+                    break
+
         print("Will run validation with these 3D samples:", val_3d_idxs)
 
         _, _, all_modified_segs = training_dataset.get_data()
