@@ -670,6 +670,16 @@ class CrossMoDa_Data(Dataset):
                 del self.label_data_2d[key]
                 del self.modified_label_data_2d[key]
 
+            fixed_weightdata = torch.load('fixed_weights.pth')
+            fixed_weights = fixed_weightdata['reweighted_weigths']
+            fixed_d_ids = fixed_weightdata['d_ids']
+
+            for key, weight in zip(fixed_d_ids, fixed_weights):
+                if weight < .0:
+                    self.img_data_2d[key] = torch.zeros_like(self.img_data_2d[key])
+                    self.label_data_2d[key] = torch.zeros_like(self.label_data_2d[key])
+                    self.modified_label_data_2d[key] = torch.zeros_like(self.modified_label_data_2d[key])
+
         postprocessed_2d_num = len(self.label_data_2d.keys())
         print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
         print("Data import finished.")
