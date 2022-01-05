@@ -573,7 +573,14 @@ class CrossMoDa_Data(Dataset):
 
         # Now inject externally overriden labels (if any)
         if modified_3d_label_override:
-            stored_3d_ids = self.label_data_3d.keys()
+            stored_3d_ids = list(self.label_data_3d.keys())
+
+            # Delete all modified labels which have no base data keys
+            unmatched_keys = [key for key in modified_3d_label_override.keys() if key[:4] not in stored_3d_ids]
+            for del_key in unmatched_keys:
+                del modified_3d_label_override[del_key]
+            if len(stored_3d_ids) != len(modified_3d_label_override.keys()):
+                print(f"Expanding label data with modified_3d_label_override from {len(stored_3d_ids)} to {len(modified_3d_label_override.keys())} labels")
 
             for _mod_3d_id, modified_label in modified_3d_label_override.items():
                 tmp = modified_label
@@ -593,14 +600,18 @@ class CrossMoDa_Data(Dataset):
                 tmp[tmp==2] = 0
                 self.modified_label_data_3d[_mod_3d_id] = tmp.long()
 
-            # Now expand original _3d_ids with _mod_3d_id
-            _3d_id = _mod_3d_id[:4]
-            self.image_data_3d[_mod_3d_id] = self.image_data_3d[_3d_id]
-            self.label_data_3d[_mod_3d_id] = self.label_data_3d[_3d_id]
+                # Now expand original _3d_ids with _mod_3d_id
+                _3d_id = _mod_3d_id[:4]
+                self.img_paths[_mod_3d_id] = self.img_paths[_3d_id]
+                self.label_paths[_mod_3d_id] = self.label_paths[_3d_id]
+                self.img_data_3d[_mod_3d_id] = self.img_data_3d[_3d_id]
+                self.label_data_3d[_mod_3d_id] = self.label_data_3d[_3d_id]
 
         # Delete original 3d_ids as they got expanded
         for del_id in stored_3d_ids:
-            del self.image_data_3d[del_id]
+            del self.img_paths[del_id]
+            del self.label_paths[del_id]
+            del self.img_data_3d[del_id]
             del self.label_data_3d[del_id]
 
         # Postprocessing of 3d volumes
@@ -619,7 +630,7 @@ class CrossMoDa_Data(Dataset):
         if ensure_labeled_pairs:
             labelled_keys = set(self.label_data_3d.keys())
             unlabelled_imgs = set(self.img_data_3d.keys()) - labelled_keys
-            unlabelled_modified_labels = set(self.modified_label_data_3d.keys()) - labelled_keys
+            unlabelled_modified_labels = set([key[:4] for key in self.modified_label_data_3d.keys()]) - labelled_keys
 
             for del_key in unlabelled_imgs:
                 del self.img_data_3d[del_key]
@@ -1043,7 +1054,7 @@ def prepare_data(config):
         label_data_left = torch.load('./data/multiple_reg_left.pth')
         label_data_right = torch.load('./data/multiple_reg_right.pth')
 
-        loaded_identifier = label_data_left['valid_left_t1']+ label_data_right['valid_right_t1']
+        loaded_identifier = label_data_left[config.reg_state+'_all_files']+label_data_right[config.reg_state+'_all_files']
         label_data = torch.cat([label_data_left[config.reg_state+'_all'].to_dense(), label_data_right[config.reg_state+'_all'].to_dense()], dim=0)
 
         modified_3d_label_override = {}
@@ -1794,7 +1805,9 @@ def train_DL(run_name, config, training_dataset):
             if config.debug:
                 break
 
-        if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+        if str(config.data_param_mode) != str(DataParamMode.DISABLED) and False:
+            # Write sample data
+
             training_dataset.eval(use_modified=True)
             all_idxs = torch.tensor(range(len(training_dataset))).cuda()
             train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/train_label_snapshot.pth")
