@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'multiple',
+    'reg_state': 'best_n',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1045,7 +1045,7 @@ def prepare_data(config):
     if config.reg_state:
         print("Loading registered data.")
 
-        REG_STATES = ["combined", "best", "multiple"]
+        REG_STATES = ["combined", "best", "best_n", "multiple"]
         if config.reg_state in REG_STATES:
             pass
         else:
@@ -1054,8 +1054,8 @@ def prepare_data(config):
         label_data_left = torch.load('./data/multiple_reg_left.pth')
         label_data_right = torch.load('./data/multiple_reg_right.pth')
 
-        loaded_identifier = label_data_left[config.reg_state+'_all_files']+label_data_right[config.reg_state+'_all_files']
-        label_data = torch.cat([label_data_left[config.reg_state+'_all'].to_dense(), label_data_right[config.reg_state+'_all'].to_dense()], dim=0)
+        loaded_identifier = label_data_left[config.reg_state+'_files']+label_data_right[config.reg_state+'_files']
+        label_data = torch.cat([label_data_left[config.reg_state].to_dense(), label_data_right[config.reg_state].to_dense()], dim=0)
 
         modified_3d_label_override = {}
         for idx, identifier in enumerate(loaded_identifier):
@@ -1805,7 +1805,7 @@ def train_DL(run_name, config, training_dataset):
             if config.debug:
                 break
 
-        if str(config.data_param_mode) != str(DataParamMode.DISABLED) and False:
+        if str(config.data_param_mode) != str(DataParamMode.DISABLED):
             # Write sample data
 
             training_dataset.eval(use_modified=True)
