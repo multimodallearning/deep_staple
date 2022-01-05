@@ -1027,7 +1027,7 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
+    'debug': False,
     'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
@@ -1855,9 +1855,9 @@ def train_DL(run_name, config, training_dataset):
                         'disturb_flags': disturb_flags,
                         'd_ids': d_ids,
                         'dataset_idxs': dataset_idxs.cpu(),
-                        'labels': _2d_labels.cpu(),
-                        'modified_labels': _2d_modified_labels.cpu(),
-                        'train_predictions': _2d_predictions.cpu(),
+                        'labels': _2d_labels.cpu().to_sparse(),
+                        'modified_labels': _2d_modified_labels.cpu().to_sparse(),
+                        'train_predictions': _2d_predictions.cpu().to_sparse(),
                     },
                     train_label_snapshot_path
                 )
@@ -1916,21 +1916,16 @@ def train_DL(run_name, config, training_dataset):
                 _2d_modified_labels = torch.stack(_2d_modified_labels)
                 _2d_predictions = torch.stack(_2d_predictions)
 
-                 # Reweight data parameters with log to improve dice correlation
-                gt_num = _2d_modified_labels.sum(dim=(-2,-1)).float().to(dp_weight.device)
-                reweighted_dps = dp_weight/(torch.log(gt_num+np.exp(1))+np.exp(1))
-
                 torch.save(
                     {
                         'data_parameters': dp_weight.cpu(),
                         'data_parameter_weightmaps': dp_weightmap.cpu(),
-                        'reweighted_data_parameters': reweighted_dps.cpu(),
                         'disturb_flags': disturb_flags,
                         'd_ids': d_ids,
                         'dataset_idxs': dataset_idxs.cpu(),
-                        'labels': _2d_labels.cpu(),
-                        'modified_labels': _2d_modified_labels.cpu(),
-                        'train_predictions': _2d_predictions.cpu(),
+                        'labels': _2d_labels.cpu().to_sparse(),
+                        'modified_labels': _2d_modified_labels.cpu().to_sparse(),
+                        'train_predictions': _2d_predictions.cpu().to_sparse(),
                     },
                     train_label_snapshot_path
                 )
