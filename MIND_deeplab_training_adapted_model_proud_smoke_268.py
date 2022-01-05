@@ -1028,7 +1028,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': 'disabled',
+    'wandb_mode': 'online',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1085,7 +1085,7 @@ def prepare_data(config):
         )
         training_dataset.eval()
         print(f"Nonzero slices: " \
-            f"{sum(training_dataset > 1 for b in training_dataset])/len(training_dataset)*100}%"
+            f"{sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)*100}%"
         )
         # validation_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
         #     domain="validation", state="l4", ensure_labeled_pairs=True)
@@ -1457,7 +1457,7 @@ def train_DL(run_name, config, training_dataset):
         val_3d_idxs = set(range(training_dataset.__len__(yield_2d_override=False))) - trained_3d_dataset_idxs
         val_3d_long_ids = {dct['3d_id'] \
              for dct in training_dataset.get_id_dicts() if dct['3d_dataset_idx'] in val_3d_idxs}
-        val_3d_short_ids = set([_id[:4] for _id in val_3d_ids])
+        val_3d_short_ids = set([_id[:4] for _id in val_3d_long_ids])
 
         # Get only unique 3D val images and labels even if multiple
         # lables for one 3D image exist
@@ -1646,7 +1646,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 10:
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
