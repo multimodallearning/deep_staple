@@ -497,7 +497,7 @@ class CrossMoDa_Data(Dataset):
 
             # Skip file if we do not have modified labels for it when external labels were provided
             if modified_3d_label_override:
-                if crossmoda_id not in modified_3d_label_override.keys():
+                if crossmoda_id not in [var_id[:4] for var_id in modified_3d_label_override.keys()]:
                     continue
 
             if "Label" in _path:
@@ -532,6 +532,10 @@ class CrossMoDa_Data(Dataset):
             # tqdm.write(f"Loading {f}")
             if "Label" in _file:
                 tmp = torch.from_numpy(nib.load(_file).get_fdata())
+
+                if crop_3d_w_dim_range:
+                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
+
                 if resample: #resample image to specified size
                     tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
 
@@ -540,15 +544,16 @@ class CrossMoDa_Data(Dataset):
                     pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
                     tmp = F.pad(tmp,pad)
 
-                if crop_3d_w_dim_range:
-                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
-
                 # Only use tumour class, remove TODO
                 tmp[tmp==2] = 0
                 self.label_data_3d[_3d_id] = tmp.long()
 
             elif domain in _file:
                 tmp = torch.from_numpy(nib.load(_file).get_fdata())
+
+                if crop_3d_w_dim_range:
+                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
+
                 if resample: #resample image to specified size
                     tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='trilinear',align_corners=False).squeeze()
 
@@ -556,9 +561,6 @@ class CrossMoDa_Data(Dataset):
                     difs = [size[0]-tmp.size(0),size[1]-tmp.size(1),size[2]-tmp.size(2)]
                     pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
                     tmp = F.pad(tmp,pad)
-
-                if crop_3d_w_dim_range:
-                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
 
                 if normalize: #normalize image to zero mean and unit std
                     tmp = (tmp - tmp.mean()) / tmp.std()
@@ -571,8 +573,14 @@ class CrossMoDa_Data(Dataset):
 
         # Now inject externally overriden labels (if any)
         if modified_3d_label_override:
-            for _3d_id, modified_label in modified_3d_label_override.items():
+            stored_3d_ids = self.label_data_3d.keys()
+
+            for _mod_3d_id, modified_label in modified_3d_label_override.items():
                 tmp = modified_label
+
+                if crop_3d_w_dim_range:
+                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
+
                 if resample: #resample image to specified size
                     tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
 
@@ -581,12 +589,19 @@ class CrossMoDa_Data(Dataset):
                     pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
                     tmp = F.pad(tmp,pad)
 
-                if crop_3d_w_dim_range:
-                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
-
                 # Only use tumour class, remove TODO
                 tmp[tmp==2] = 0
-                self.modified_label_data_3d[_3d_id] = tmp.long()
+                self.modified_label_data_3d[_mod_3d_id] = tmp.long()
+
+            # Now expand original _3d_ids with _mod_3d_id
+            _3d_id = _mod_3d_id[:4]
+            self.image_data_3d[_mod_3d_id] = self.image_data_3d[_3d_id]
+            self.label_data_3d[_mod_3d_id] = self.label_data_3d[_3d_id]
+
+        # Delete original 3d_ids as they got expanded
+        for del_id in stored_3d_ids:
+            del self.image_data_3d[del_id]
+            del self.label_data_3d[del_id]
 
         # Postprocessing of 3d volumes
         orig_3d_num = len(self.label_data_3d.keys())
@@ -978,7 +993,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': None,
+    'reg_state': 'multiple',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1001,14 +1016,14 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': 'online',
+    'debug': True,
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
-    'do_sweep': True,
+    'do_sweep': False,
 
-    'disturbance_mode': LabelDisturbanceMode.AFFINE,
-    'disturbance_strength': 2.0,
-    'disturbed_percentage': .3,
+    'disturbance_mode': None,
+    'disturbance_strength': 0.,
+    'disturbed_percentage': .0,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
@@ -1017,25 +1032,29 @@ config_dict = DotDict({
 # %%
 def prepare_data(config):
     if config.reg_state:
-        REG_STATES = ["combined", "best"]
+        print("Loading registered data.")
+
+        REG_STATES = ["combined", "best", "multiple"]
         if config.reg_state in REG_STATES:
             pass
         else:
             raise Exception(f"Unknown registration version. Choose one of {REG_STATES}")
 
-        label_data_left = torch.load('./data/optimal_reg_left.pth')
-        label_data_right = torch.load('./data/optimal_reg_right.pth')
+        label_data_left = torch.load('./data/multiple_reg_left.pth')
+        label_data_right = torch.load('./data/multiple_reg_right.pth')
 
-        loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
-        label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
+        loaded_identifier = label_data_left['valid_left_t1']+ label_data_right['valid_right_t1']
+        label_data = torch.cat([label_data_left[config.reg_state+'_all'].to_dense(), label_data_right[config.reg_state+'_all'].to_dense()], dim=0)
 
         modified_3d_label_override = {}
         for idx, identifier in enumerate(loaded_identifier):
             nl_id = int(re.findall(r'\d+', identifier)[0])
-            lr_id = identifier[-8]
-            crossmoda_id = f"{nl_id:03d}{lr_id}"
-            loaded_identifier[idx] = crossmoda_id
-            modified_3d_label_override[crossmoda_id] = label_data[idx]
+            var_id = int(re.findall(r':var(\d+)$', identifier)[0])
+            lr_id = re.findall(r'([lr])\.nii\.gz', identifier)[0]
+
+            crossmoda_var_id = f"{nl_id:03d}{lr_id}:var{var_id:03d}"
+
+            modified_3d_label_override[crossmoda_var_id] = label_data[idx]
 
         prevent_disturbance = True
 
@@ -1562,7 +1581,7 @@ def train_DL(run_name, config, training_dataset):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
                         weight = embedding(b_idxs_dataset).squeeze()
                         weight = torch.sigmoid(weight)
-                        weight = weight/weight.mean()
+                        # weight = weight/weight.mean()
 
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
