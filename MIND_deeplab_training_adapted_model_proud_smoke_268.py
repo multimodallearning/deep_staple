@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'cummulate_combined_best',
+    'reg_state': None,
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1028,13 +1028,13 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': 'online',
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
-    'do_sweep': True,
+    'do_sweep': False,
 
-    'disturbance_mode': None,
-    'disturbance_strength': 0.,
-    'disturbed_percentage': .0,
+    'disturbance_mode': LabelDisturbanceMode.AFFINE,
+    'disturbance_strength': 2.,
+    'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
