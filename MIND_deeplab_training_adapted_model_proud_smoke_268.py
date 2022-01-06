@@ -1625,8 +1625,8 @@ def train_DL(run_name, config, training_dataset):
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
 
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
-                        weight = embedding(b_idxs_dataset).squeeze()
-                        weight = torch.sigmoid(weight)
+                        bare_weight = embedding(b_idxs_dataset).squeeze()
+                        weight = torch.sigmoid(bare_weight)
                         weight = weight/weight.mean()
 
                         # Prepare logits for scoring
@@ -1638,6 +1638,12 @@ def train_DL(run_name, config, training_dataset):
                             loss = (loss*weight).sum() + risk_regularization.sum()
                         else:
                             loss = (loss*weight).sum()
+
+                        gt_num = (b_seg_modified > 0).sum(dim=(-2,-1))
+                        metric = 1/(np.log(gt_num+np.exp(1))+np.exp(1))
+                        corr_coeff = np.corrcoef((bare_weight/metric).cpu().detach(), dice.detach())[0,1]
+
+                        print("dice vs. e_log_gt:", corr_coeff)
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
