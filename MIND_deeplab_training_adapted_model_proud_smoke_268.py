@@ -1621,8 +1621,7 @@ def train_DL(run_name, config, training_dataset):
                 with amp.autocast(enabled=True):
                     assert b_img.dim() == 4, \
                         f"Input image for model must be 4D: BxCxHxW but is {b_img.shape}"
-                    with torch.no_grad():
-                        logits = lraspp(b_img)['out']
+                    logits = lraspp(b_img)['out']
 
                     ### Calculate loss ###
                     assert logits.dim() == 4, \
@@ -1717,8 +1716,8 @@ def train_DL(run_name, config, training_dataset):
                     with amp.autocast(enabled=True):
                         assert b_img.dim() == 4, \
                             f"Input image for model must be 4D: BxCxHxW but is {b_img.shape}"
-
-                        logits = lraspp(b_img)['out']
+                        with torch.no_grad():
+                            logits = lraspp(b_img)['out']
 
                         ### Calculate loss ###
                         assert logits.dim() == 4, \
