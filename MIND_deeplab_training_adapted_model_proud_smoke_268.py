@@ -1594,7 +1594,6 @@ def train_DL(run_name, config, training_dataset):
 
             # Load data
             for batch in train_dataloader:
-
                 optimizer.zero_grad()
                 if optimizer_dp:
                     optimizer_dp.zero_grad()
@@ -1622,8 +1621,8 @@ def train_DL(run_name, config, training_dataset):
                 with amp.autocast(enabled=True):
                     assert b_img.dim() == 4, \
                         f"Input image for model must be 4D: BxCxHxW but is {b_img.shape}"
-
-                    logits = lraspp(b_img)['out']
+                    with torch.no_grad():
+                        logits = lraspp(b_img)['out']
 
                     ### Calculate loss ###
                     assert logits.dim() == 4, \
@@ -1638,12 +1637,9 @@ def train_DL(run_name, config, training_dataset):
                         weight = torch.sigmoid(bare_weight)
                         weight = weight/weight.mean()
 
-                        # Prepare logits for scoring
-                        logits_for_score = logits.argmax(1)
-
                         if config.use_risk_regularization:
-                            p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1)).detach()
-                            risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
+                            p_pred_num = (logits.argmax(1) > 0).sum(dim=(-2,-1)).detach()
+                            risk_regularization = -weight*p_pred_num/(logits.shape[-2]*logits.shape[-1])
                             loss = (loss*weight).sum() + risk_regularization.sum()
                         else:
                             loss = (loss*weight).sum()
@@ -1666,19 +1662,14 @@ def train_DL(run_name, config, training_dataset):
                             padding_mode='border', align_corners=False)
                         loss = (loss.unsqueeze(1)*weight).sum()
 
-                        # Prepare logits for scoring
-                        logits_for_score = (logits*weight).argmax(1)
-
                     else:
                         loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
-                        # Prepare logits for scoring
-                        logits_for_score = logits.argmax(1)
+
+                # Prepare logits for scoring
+                logits_for_score = logits.argmax(1)
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
-
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
-                    scaler.step(optimizer_dp)
 
                 scaler.update()
 
@@ -1699,16 +1690,83 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
-                    # if scheduler_dp:
-                    #     scheduler_dp.step()
-                    # if epx == config.epochs//2:
-                    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                    #         optimizer, T_0=500, T_mult=2)
-                    #     if optimizer_dp:
-                    #         scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                    #             optimizer_dp, T_0=500, T_mult=2)
+
                 if config.debug:
                     break
+
+            if config.data_param_mode != str(DataParamMode.DISABLED):
+                for batch in train_dataloader:
+
+                    b_img = batch['image']
+                    b_seg = batch['label']
+
+                    b_seg_modified = batch['modified_label']
+                    b_idxs_dataset = batch['dataset_idx']
+                    b_img = b_img.float()
+
+                    b_img = b_img.cuda()
+                    b_seg_modified = b_seg_modified.cuda()
+                    b_idxs_dataset = b_idxs_dataset.cuda()
+                    b_seg = b_seg.cuda()
+
+                    if config.use_mind:
+                        b_img = mindssc(b_img.unsqueeze(1).unsqueeze(1)).squeeze(2)
+                    else:
+                        b_img = b_img.unsqueeze(1)
+                    ### Forward pass ###
+                    with amp.autocast(enabled=True):
+                        assert b_img.dim() == 4, \
+                            f"Input image for model must be 4D: BxCxHxW but is {b_img.shape}"
+
+                        logits = lraspp(b_img)['out']
+
+                        ### Calculate loss ###
+                        assert logits.dim() == 4, \
+                            f"Input shape for loss must be BxNUM_CLASSESxHxW but is {logits.shape}"
+                        assert b_seg_modified.dim() == 3, \
+                            f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
+
+                        if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
+
+                            loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
+                            bare_weight = embedding(b_idxs_dataset).squeeze()
+                            weight = torch.sigmoid(bare_weight)
+                            weight = weight/weight.mean()
+
+                            if config.use_risk_regularization:
+                                p_pred_num = (logits.argmax(1) > 0).sum(dim=(-2,-1)).detach()
+                                risk_regularization = -weight*p_pred_num/(logits.shape[-2]*logits.shape[-1])
+                                loss = (loss*weight).sum() + risk_regularization.sum()
+                            else:
+                                loss = (loss*weight).sum()
+
+                        elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
+                            loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
+                            m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
+                            weight = embedding(m_dp_idxs)
+                            weight = weight.reshape(-1, config.grid_size_y, config.grid_size_x)
+                            weight = weight.unsqueeze(1)
+                            weight = torch.nn.functional.interpolate(
+                                weight,
+                                size=(b_seg_modified.shape[-2:]),
+                                mode='bilinear',
+                                align_corners=True
+                            )
+                            weight = torch.sigmoid(weight)
+                            weight = weight/weight.mean()
+                            weight = F.grid_sample(weight, b_spat_aug_grid,
+                                padding_mode='border', align_corners=False)
+                            loss = (loss.unsqueeze(1)*weight).sum()
+
+                        else:
+                            loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
+
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer_dp)
+                    scaler.update()
+
+                    if config.debug:
+                        break
 
             ### Logging ###
             print(f"### Log epoch {epx} @ {time.time()-t0:.2f}s")
