@@ -1027,8 +1027,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': 'disabled',
+    'debug': False,
+    'wandb_mode': 'online',
     'checkpoint_name': None,
     'do_sweep': False,
 
