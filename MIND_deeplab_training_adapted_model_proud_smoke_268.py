@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'mix_combined_best',
+    'reg_state': 'cummulate_combined_best',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1045,7 +1045,7 @@ def prepare_data(config):
     if config.reg_state:
         print("Loading registered data.")
 
-        REG_STATES = ["combined", "best_1", "best_n", "multiple", "mix_combined_best", "best"]
+        REG_STATES = ["combined", "best_1", "best_n", "multiple", "mix_combined_best", "best", "cummulate_combined_best"]
         if config.reg_state in REG_STATES:
             pass
         else:
@@ -1067,15 +1067,22 @@ def prepare_data(config):
             label_data = torch.zeros([107,128,128,128])
             label_data[best_choice] = best_label_data
             label_data[combined_choice] = combined_label_data
-        else:
+            loaded_identifier = [_id+':var000' for _id in loaded_identifier]
 
+        elif config.reg_state == "cummulate_combined_best":
+            best_label_data = torch.cat([label_data_left['best_all'][:44], label_data_right['best_all'][:63]], dim=0)
+            combined_label_data = torch.cat([label_data_left['combined_all'][:44], label_data_right['combined_all'][:63]], dim=0)
+            label_data = torch.cat([best_label_data, combined_label_data])
+            loaded_identifier = [_id+':var000' for _id in loaded_identifier] + [_id+':var001' for _id in loaded_identifier]
+
+        else:
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
+            loaded_identifier = [_id+':var000' for _id in loaded_identifier]
 
         modified_3d_label_override = {}
         for idx, identifier in enumerate(loaded_identifier):
             nl_id = int(re.findall(r'\d+', identifier)[0])
-            # var_id = int(re.findall(r':var(\d+)$', identifier)[0])
-            var_id = 0
+            var_id = int(re.findall(r':var(\d+)$', identifier)[0])
             lr_id = re.findall(r'([lr])\.nii\.gz', identifier)[0]
 
             crossmoda_var_id = f"{nl_id:03d}{lr_id}:var{var_id:03d}"
