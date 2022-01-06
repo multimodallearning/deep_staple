@@ -607,12 +607,12 @@ class CrossMoDa_Data(Dataset):
                 self.img_data_3d[_mod_3d_id] = self.img_data_3d[_3d_id]
                 self.label_data_3d[_mod_3d_id] = self.label_data_3d[_3d_id]
 
-        # Delete original 3d_ids as they got expanded
-        for del_id in stored_3d_ids:
-            del self.img_paths[del_id]
-            del self.label_paths[del_id]
-            del self.img_data_3d[del_id]
-            del self.label_data_3d[del_id]
+            # Delete original 3d_ids as they got expanded
+            for del_id in stored_3d_ids:
+                del self.img_paths[del_id]
+                del self.label_paths[del_id]
+                del self.img_data_3d[del_id]
+                del self.label_data_3d[del_id]
 
         # Postprocessing of 3d volumes
         orig_3d_num = len(self.label_data_3d.keys())
@@ -1028,7 +1028,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': 'disabled',
+    'wandb_mode': 'online',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1338,7 +1338,7 @@ def get_model(config, dataset_len, num_classes, _path=None, device='cpu'):
         optimizer_dp = torch.optim.SparseAdam(
             embedding.parameters(), lr=config.lr_inst_param,
             betas=(0.9, 0.999), eps=1e-08)
-        torch.nn.init.normal_(embedding.weight.data, mean=config.init_inst_param, std=0.01)
+        torch.nn.init.normal_(embedding.weight.data, mean=config.init_inst_param, std=0.00)
 
         if _path and _path.is_dir():
             print(f"Loading embedding and dp_optimizer from {_path}")
@@ -1563,12 +1563,21 @@ def train_DL(run_name, config, training_dataset):
 
         # Prepare corr coefficient scoring
         training_dataset.eval(use_modified=True)
-        if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-            norm_label, mod_label = list(zip(*[(sample['label'], sample['modified_label']) \
-                for sample in training_dataset]))
+        wise_labels, mod_labels = list(zip(*[(sample['label'], sample['modified_label']) \
+            for sample in training_dataset]))
+        wise_labels, mod_labels = torch.stack(wise_labels), torch.stack(mod_labels)
 
-            union_norm_mod_label = torch.logical_or(torch.stack(norm_label), torch.stack(mod_label))
-            union_norm_mod_label = union_norm_mod_label.cuda()
+        wise_dice = dice2d(
+            torch.nn.functional.one_hot(wise_labels, len(training_dataset.label_tags)),
+            torch.nn.functional.one_hot(mod_labels, len(training_dataset.label_tags)),
+            one_hot_torch_style=True, nan_for_unlabeled_target=False
+        )
+        gt_num = (mod_labels > 0).sum(dim=(-2,-1))
+
+        if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
+
+            union_wise_mod_label = torch.logical_or(wise_labels, mod_labels)
+            union_wise_mod_label = union_wise_mod_label.cuda()
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -1639,12 +1648,6 @@ def train_DL(run_name, config, training_dataset):
                         else:
                             loss = (loss*weight).sum()
 
-                        gt_num = (b_seg_modified > 0).sum(dim=(-2,-1))
-                        metric = 1/(np.log(gt_num+np.exp(1))+np.exp(1))
-                        corr_coeff = np.corrcoef((bare_weight/metric).cpu().detach(), dice.detach())[0,1]
-
-                        print("dice vs. e_log_gt:", corr_coeff)
-
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
                         m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
@@ -1674,7 +1677,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 10:
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
@@ -1724,13 +1727,17 @@ def train_DL(run_name, config, training_dataset):
 
             log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
 
+            metric = 1/(np.log(gt_num.cpu()+np.exp(1))+np.exp(1))
+            metric_corr_coeff = np.corrcoef((embedding.weight[train_idxs].cpu()/metric[train_idxs]).cpu().detach(), wise_dice[:,1][train_idxs].cpu().detach())[0,1]
+
+            print("dice vs. e_log_gt:", metric_corr_coeff)
             # Log data parameters of disturbed samples
             if len(training_dataset.disturbed_idxs) > 0 and str(config.data_param_mode) != str(DataParamMode.DISABLED):
                 if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                     m_tr_idxs = map_embedding_idxs(train_idxs,
                         config.grid_size_y, config.grid_size_x
                     ).cuda()
-                    masks = union_norm_mod_label[train_idxs].float()
+                    masks = union_wise_mod_label[train_idxs].float()
                     masked_weights = torch.nn.functional.interpolate(
                         embedding(m_tr_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
                         size=(masks.shape[-2:]),
@@ -1908,7 +1915,7 @@ def train_DL(run_name, config, training_dataset):
                 m_all_idxs = map_embedding_idxs(all_idxs,
                         config.grid_size_y, config.grid_size_x
                 ).cuda()
-                masks = union_norm_mod_label[all_idxs].float()
+                masks = union_wise_mod_label[all_idxs].float()
                 all_weights = torch.nn.functional.interpolate(
                     embedding(m_all_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
                     size=(masks.shape[-2:]),
