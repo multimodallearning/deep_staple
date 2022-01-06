@@ -1004,10 +1004,10 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'best_n',
+    'reg_state': 'mix_combined_best',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
-    'crop_2d_slices_gt_num_threshold': 1,
+    'crop_2d_slices_gt_num_threshold': 0,
     'yield_2d_normal_to': "W",
 
     'lr': 0.0005,
@@ -1027,8 +1027,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': 'online',
+    'debug': True,
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1045,7 +1045,7 @@ def prepare_data(config):
     if config.reg_state:
         print("Loading registered data.")
 
-        REG_STATES = ["combined", "best", "best_n", "multiple"]
+        REG_STATES = ["combined", "best", "best_n", "multiple", "mix_combined_best"]
         if config.reg_state in REG_STATES:
             pass
         else:
@@ -1054,8 +1054,20 @@ def prepare_data(config):
         label_data_left = torch.load('./data/multiple_reg_left.pth')
         label_data_right = torch.load('./data/multiple_reg_right.pth')
 
-        loaded_identifier = label_data_left[config.reg_state+'_files']+label_data_right[config.reg_state+'_files']
-        label_data = torch.cat([label_data_left[config.reg_state].to_dense(), label_data_right[config.reg_state].to_dense()], dim=0)
+        if config.reg_state == "mix_combined_best":
+            loaded_identifier = label_data_left['best_1_files']+label_data_right['best_1_files']
+            perm = np.random.permutation(len(loaded_identifier))
+            best_choice = perm[:int(.5*len(loaded_identifier))]
+            combined_choice = perm[int(.5*len(loaded_identifier)):]
+
+            best_label_data = torch.cat([label_data_left['best_1'].to_dense(), label_data_right['best_1'].to_dense()], dim=0)[best_choice]
+            combined_label_data = torch.cat([label_data_left['combined'].to_dense(), label_data_right['combined'].to_dense()], dim=0)[combined_choice]
+            label_data = torch.zeros([107,128,128,128])
+            label_data[best_choice] = best_label_data
+            label_data[combined_choice] = combined_label_data
+        else:
+            loaded_identifier = label_data_left[config.reg_state+'_files']+label_data_right[config.reg_state+'_files']
+            label_data = torch.cat([label_data_left[config.reg_state].to_dense(), label_data_right[config.reg_state].to_dense()], dim=0)
 
         modified_3d_label_override = {}
         for idx, identifier in enumerate(loaded_identifier):
@@ -1605,7 +1617,7 @@ def train_DL(run_name, config, training_dataset):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
                         weight = embedding(b_idxs_dataset).squeeze()
                         weight = torch.sigmoid(weight)
-                        # weight = weight/weight.mean()
+                        weight = weight/weight.mean()
 
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
