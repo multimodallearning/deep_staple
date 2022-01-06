@@ -1045,34 +1045,37 @@ def prepare_data(config):
     if config.reg_state:
         print("Loading registered data.")
 
-        REG_STATES = ["combined", "best", "best_n", "multiple", "mix_combined_best"]
+        REG_STATES = ["combined", "best_1", "best_n", "multiple", "mix_combined_best", "best"]
         if config.reg_state in REG_STATES:
             pass
         else:
             raise Exception(f"Unknown registration version. Choose one of {REG_STATES}")
 
-        label_data_left = torch.load('./data/multiple_reg_left.pth')
-        label_data_right = torch.load('./data/multiple_reg_right.pth')
+        label_data_left = torch.load('./data/optimal_reg_left.pth')
+        label_data_right = torch.load('./data/optimal_reg_right.pth')
+
+        loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
 
         if config.reg_state == "mix_combined_best":
-            loaded_identifier = label_data_left['best_1_files']+label_data_right['best_1_files']
             perm = np.random.permutation(len(loaded_identifier))
-            best_choice = perm[:int(.5*len(loaded_identifier))]
-            combined_choice = perm[int(.5*len(loaded_identifier)):]
+            _clen = int(.5*len(loaded_identifier))
+            best_choice = perm[:_clen]
+            combined_choice = perm[_clen:]
 
-            best_label_data = torch.cat([label_data_left['best_1'].to_dense(), label_data_right['best_1'].to_dense()], dim=0)[best_choice]
-            combined_label_data = torch.cat([label_data_left['combined'].to_dense(), label_data_right['combined'].to_dense()], dim=0)[combined_choice]
+            best_label_data = torch.cat([label_data_left['best_all'][:44], label_data_right['best_all'][:63]], dim=0)[best_choice]
+            combined_label_data = torch.cat([label_data_left['combined_all'][:44], label_data_right['combined_all'][:63]], dim=0)[combined_choice]
             label_data = torch.zeros([107,128,128,128])
             label_data[best_choice] = best_label_data
             label_data[combined_choice] = combined_label_data
         else:
-            loaded_identifier = label_data_left[config.reg_state+'_files']+label_data_right[config.reg_state+'_files']
-            label_data = torch.cat([label_data_left[config.reg_state].to_dense(), label_data_right[config.reg_state].to_dense()], dim=0)
+
+            label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
 
         modified_3d_label_override = {}
         for idx, identifier in enumerate(loaded_identifier):
             nl_id = int(re.findall(r'\d+', identifier)[0])
-            var_id = int(re.findall(r':var(\d+)$', identifier)[0])
+            # var_id = int(re.findall(r':var(\d+)$', identifier)[0])
+            var_id = 0
             lr_id = re.findall(r'([lr])\.nii\.gz', identifier)[0]
 
             crossmoda_var_id = f"{nl_id:03d}{lr_id}:var{var_id:03d}"
@@ -1658,7 +1661,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 10:
                     scaler.step(optimizer_dp)
 
                 scaler.update()
@@ -1680,8 +1683,8 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
-                    if scheduler_dp:
-                        scheduler_dp.step()
+                    # if scheduler_dp:
+                    #     scheduler_dp.step()
                     # if epx == config.epochs//2:
                     #     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
                     #         optimizer, T_0=500, T_mult=2)
