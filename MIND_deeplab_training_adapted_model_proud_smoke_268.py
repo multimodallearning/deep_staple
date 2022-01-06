@@ -1027,10 +1027,10 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': 'disabled',
+    'debug': False,
+    'wandb_mode': 'online',
     'checkpoint_name': None,
-    'do_sweep': False,
+    'do_sweep': True,
 
     'disturbance_mode': None,
     'disturbance_strength': 0.,
@@ -2036,9 +2036,9 @@ sweep_config_dict = dict(
                 DataParamMode.DISABLED,
             ]
         ),
-        use_risk_regularization=dict(
-            values=[False, True]
-        )
+        # use_risk_regularization=dict(
+        #     values=[False, True]
+        # )
     )
 )
 
