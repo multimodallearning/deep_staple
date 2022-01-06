@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': None,
+    'reg_state': 'combined',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1027,8 +1027,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': 'online',
+    'debug': True,
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1423,6 +1423,18 @@ def log_class_dices(log_prefix, log_postfix, class_dices, log_idx):
         print(log_path, f"{mean_per_class*100:.2f}%")
         wandb.log({log_path: mean_per_class}, step=log_idx)
 
+def CELoss(logits, targets, bin_weight=None):
+    # -logits[0,targets[0,0,0],0,0]+torch.log(logits[0,:,0,0].exp().sum())
+    targets = torch.nn.functional.one_hot(targets).permute(0,3,1,2)
+    loss = -targets*F.log_softmax(logits, 1)
+
+    if bin_weight is not None:
+        brdcast_shape = torch.Size((loss.shape[0], loss.shape[1], *((loss.dim()-2)*[1])))
+        inv_weight = 1/((bin_weight+np.exp(1)).log()+np.exp(1))
+        inv_weight = inv_weight/inv_weight.mean()
+        loss = inv_weight.view(brdcast_shape)*loss
+
+    return loss.sum(dim=1)
 
 # %%
 def map_embedding_idxs(idxs, grid_size_y, grid_size_x):
@@ -1632,8 +1644,15 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
 
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
+                        batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
+                        bin_list = [slc.view(-1).bincount() for slc in b_seg_modified]
+                        for b_idx, _bins in enumerate(bin_list):
+                            batch_bins[b_idx][:len(_bins)] = _bins
 
-                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified).mean((-1,-2))
+                        # loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
+                        loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
+                        loss = loss.mean((-1,-2))
+
                         bare_weight = embedding(b_idxs_dataset).squeeze()
                         weight = torch.sigmoid(bare_weight)
                         weight = weight/weight.mean()
