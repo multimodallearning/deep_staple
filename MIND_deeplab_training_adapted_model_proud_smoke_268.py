@@ -1027,8 +1027,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': 'online',
+    'debug': True,
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1430,7 +1430,7 @@ def CELoss(logits, targets, bin_weight=None):
 
     if bin_weight is not None:
         brdcast_shape = torch.Size((loss.shape[0], loss.shape[1], *((loss.dim()-2)*[1])))
-        inv_weight = 1/((bin_weight+np.exp(1)).log()+np.exp(1))
+        inv_weight = (bin_weight+np.exp(1)).log()+np.exp(1)
         inv_weight = inv_weight/inv_weight.mean()
         loss = inv_weight.view(brdcast_shape)*loss
 
@@ -1649,13 +1649,14 @@ def train_DL(run_name, config, training_dataset):
                         for b_idx, _bins in enumerate(bin_list):
                             batch_bins[b_idx][:len(_bins)] = _bins
 
-                        # loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
-                        loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
+                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
+                        # loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
                         loss = loss.mean((-1,-2))
 
                         bare_weight = embedding(b_idxs_dataset).squeeze()
+                        t_metric = (gt_num.cuda()[b_idxs_dataset]+np.exp(1)).log()+np.exp(1)
                         weight = torch.sigmoid(bare_weight)
-                        weight = weight/weight.mean()
+                        weight = weight/weight.mean()/t_metric
 
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
@@ -1679,7 +1680,6 @@ def train_DL(run_name, config, training_dataset):
                             mode='bilinear',
                             align_corners=True
                         )
-                        weight = torch.sigmoid(weight)
                         weight = weight/weight.mean()
                         weight = F.grid_sample(weight, b_spat_aug_grid,
                             padding_mode='border', align_corners=False)
@@ -1746,10 +1746,14 @@ def train_DL(run_name, config, training_dataset):
 
             log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
 
-            metric = 1/(np.log(gt_num.cpu()+np.exp(1))+np.exp(1))
-            metric_corr_coeff = np.corrcoef((embedding.weight[train_idxs].cpu()/metric[train_idxs]).cpu().detach(), wise_dice[:,1][train_idxs].cpu().detach())[0,1]
+            metric = 1/(np.log(gt_num[train_idxs].cpu()+np.exp(1))+np.exp(1))
+            train_params = embedding.weight[train_idxs].squeeze()
+            order = np.argsort(train_params.cpu().detach())
+            metric_corr_coeff = np.corrcoef((train_params[order].cpu()/metric[order]).cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())[0,1]
+            wanted_corr_coeff = np.corrcoef(train_params[order].cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())[0,1]
 
             print("dice vs. e_log_gt:", metric_corr_coeff)
+            print("wanted corr coeff:", wanted_corr_coeff)
             # Log data parameters of disturbed samples
             if len(training_dataset.disturbed_idxs) > 0 and str(config.data_param_mode) != str(DataParamMode.DISABLED):
                 if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
