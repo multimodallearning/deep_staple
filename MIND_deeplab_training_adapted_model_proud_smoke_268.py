@@ -1747,14 +1747,13 @@ def train_DL(run_name, config, training_dataset):
 
             log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
 
+            # Calculate dice score corr coeff (unknown to network)
             metric = 1/(np.log(gt_num[train_idxs].cpu()+np.exp(1))+np.exp(1))
             train_params = embedding.weight[train_idxs].squeeze()
             order = np.argsort(train_params.cpu().detach())
-            metric_corr_coeff = np.corrcoef((train_params[order].cpu()/metric[order]).cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())[0,1]
-            wanted_corr_coeff = np.corrcoef(train_params[order].cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())[0,1]
+            wise_corr_coeff = np.corrcoef(train_params[order].cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())[0,1]
+            print("DP vs. wise_dice corr coeff:", wise_corr_coeff)
 
-            print("dice vs. e_log_gt:", metric_corr_coeff)
-            print("wanted corr coeff:", wanted_corr_coeff)
             # Log data parameters of disturbed samples
             if len(training_dataset.disturbed_idxs) > 0 and str(config.data_param_mode) != str(DataParamMode.DISABLED):
                 if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
