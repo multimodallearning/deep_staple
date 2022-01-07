@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'combined',
+    'reg_state': None,
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1027,8 +1027,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': 'online',
+    'debug': True,
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1600,6 +1600,10 @@ def train_DL(run_name, config, training_dataset):
         gt_num = (mod_labels > 0).sum(dim=(-2,-1))
         t_metric = (gt_num+np.exp(1)).log()+np.exp(1)
 
+        EMBEDDING_GRAD_STORAGE_SIZE = 5
+
+        embedding_grad_storage = torch.empty(embedding.weight.numel(), EMBEDDING_GRAD_STORAGE_SIZE).fill_(float('nan')).cuda()
+
         if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
             union_wise_mod_label = torch.logical_or(wise_labels, mod_labels)
             union_wise_mod_label = union_wise_mod_label.cuda()
@@ -1680,12 +1684,21 @@ def train_DL(run_name, config, training_dataset):
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
 
+                        # Add regularization
+                        regularization = 0.
+
                         if config.use_risk_regularization:
                             p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1)).detach()
                             risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
-                            loss = (loss*weight).sum() + risk_regularization.sum()
-                        else:
-                            loss = (loss*weight).sum()
+                            regularization = regularization + risk_regularization.sum()
+
+                        if True and not embedding_grad_storage[b_idxs_dataset].isnan().any():
+                            fear = embedding_grad_storage[b_idxs_dataset].std(dim=1).detach()
+                            fear = fear/(fear.mean()+1e-6)
+                            fear_regularization = weight*fear
+                            regularization = regularization + fear_regularization.sum()
+
+                        loss = (loss*weight).sum() + regularization
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
@@ -1713,6 +1726,21 @@ def train_DL(run_name, config, training_dataset):
                         logits_for_score = logits.argmax(1)
 
                 scaler.scale(loss).backward()
+
+                with torch.no_grad():
+                    current_storage = embedding_grad_storage[b_idxs_dataset]
+                    emb_grads = embedding.weight.grad._values()
+                    emb_grads = emb_grads/scaler.get_scale()
+
+                    if current_storage.isnan().any():
+                        current_storage[:,:] = emb_grads.view(-1)[:, None]
+                    else:
+                        current_storage = \
+                            torch.roll(current_storage, shifts=1, dims=1)
+                        current_storage[:, -1] = emb_grads.view(-1)
+
+                    embedding_grad_storage[b_idxs_dataset] = current_storage
+
                 scaler.step(optimizer)
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
@@ -1749,7 +1777,7 @@ def train_DL(run_name, config, training_dataset):
                     save_parameter_figure(dp_figure_path, wandb.run.name, f"corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
                         train_params[order], train_params[order]/t_metric[train_idxs][order], dices=wise_dice[train_idxs][:,1][order])
 
-                if config.debug:
+                if config.debug and False:
                     break
 
             ### Logging ###
@@ -1883,7 +1911,7 @@ def train_DL(run_name, config, training_dataset):
             print()
             # End of training loop
 
-            if config.debug:
+            if config.debug and False:
                 break
 
         if str(config.data_param_mode) != str(DataParamMode.DISABLED):
