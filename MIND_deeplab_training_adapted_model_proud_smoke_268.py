@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': None,
+    'reg_state': 'combined',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1028,7 +1028,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': 'online',
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1736,20 +1736,15 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
-                    # if scheduler_dp:
-                    #     scheduler_dp.step()
-                    # if epx == config.epochs//2:
-                    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                    #         optimizer, T_0=500, T_mult=2)
-                    #     if optimizer_dp:
-                    #         scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                    #             optimizer_dp, T_0=500, T_mult=2)
+
                 if batch_idx % 10 == 0:
                     # Output data parameter figure
+                    train_params = embedding.weight[train_idxs].squeeze()
+                    wise_corr_coeff = np.corrcoef(train_params.cpu().detach(), wise_dice[train_idxs][:,1].cpu().detach())[0,1]
                     dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
                     dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
                     save_parameter_figure(dp_figure_path, wandb.run.name, f"corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
-                        train_params[order], t_metric[train_idxs][order], sorted_dices=wise_dice[train_idxs][:,1][order])
+                        train_params, t_metric[train_idxs], dices=wise_dice[train_idxs][:,1])
 
                 if config.debug:
                     break
