@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'combined',
+    'reg_state': None,
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1387,6 +1387,7 @@ def save_parameter_figure(_path, title, text, parameters, reweighted_parameters,
     plt.colorbar(sc2)
     plt.savefig(_path)
     plt.clf()
+    plt.close()
 
 
 
@@ -1745,7 +1746,7 @@ def train_DL(run_name, config, training_dataset):
                     dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
                     dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
                     save_parameter_figure(dp_figure_path, wandb.run.name, f"corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
-                        train_params[order], t_metric[train_idxs][order], dices=wise_dice[train_idxs][:,1][order])
+                        train_params[order], train_params[order]/t_metric[train_idxs][order], dices=wise_dice[train_idxs][:,1][order])
 
                 if config.debug:
                     break
