@@ -1370,7 +1370,7 @@ def get_global_idx(fold_idx, epoch_idx, max_epochs):
 
 def save_parameter_figure(_path, title, text, parameters, reweighted_parameters, dices):
     # Show weights and weights with compensation
-    fig, axs = plt.subplots(1,2, figsize=(12, 4), dpi=80)
+    fig, axs = plt.subplots(1, 4, figsize=(16, 4), dpi=80)
     sc1 = axs[0].scatter(
         range(len(parameters)),
         parameters.cpu().detach(), c=dices,s=1, cmap='plasma', vmin=0., vmax=1.)
@@ -1378,13 +1378,25 @@ def save_parameter_figure(_path, title, text, parameters, reweighted_parameters,
         range(len(reweighted_parameters)),
         reweighted_parameters.cpu().detach(), s=1,c=dices, cmap='plasma', vmin=0., vmax=1.)
 
+    order = np.argsort(train_params.cpu().detach()) # Order by DP value
+    sc3 = axs[2].scatter(
+        range(len(parameters)),
+        parameters[order].cpu().detach(), c=dices[order],s=1, cmap='plasma', vmin=0., vmax=1.)
+    sc4 = axs[3].scatter(
+        range(len(reweighted_parameters)),
+        reweighted_parameters[order].cpu().detach(), s=1,c=dices[order], cmap='plasma', vmin=0., vmax=1.)
+
     fig.suptitle(title, fontsize=14)
     fig.text(0, 0, text)
     axs[0].set_title('Bare parameters')
     axs[1].set_title('Reweighted parameters')
+    axs[2].set_title('Sorted bare parameters')
+    axs[3].set_title('Sorted reweighted parameters')
     axs[0].set_ylim(-10, 10)
     axs[1].set_ylim(-3, 1)
-    plt.colorbar(sc2)
+    axs[2].set_ylim(-10, 10)
+    axs[3].set_ylim(-3, 1)
+    plt.colorbar(sc4)
     plt.savefig(_path)
     plt.clf()
     plt.close()
@@ -1769,13 +1781,11 @@ def train_DL(run_name, config, training_dataset):
                 if batch_idx % 10 == 0:
                     # Output data parameter figure
                     train_params = embedding.weight[train_idxs].squeeze()
-                    # order = np.argsort(train_params.cpu().detach()) # Order by DP value
-                    order = torch.arange(len(train_params))
                     wise_corr_coeff = np.corrcoef(train_params.cpu().detach(), wise_dice[train_idxs][:,1].cpu().detach())[0,1]
                     dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
                     dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
-                    save_parameter_figure(dp_figure_path, wandb.run.name, f"corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
-                        train_params[order], train_params[order]/t_metric[train_idxs][order], dices=wise_dice[train_idxs][:,1][order])
+                    save_parameter_figure(dp_figure_path, wandb.run.name, f"epx {epx:04d}; corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
+                        train_params, train_params/t_metric[train_idxs], dices=wise_dice[train_idxs][:,1])
 
                 if config.debug and False:
                     break
