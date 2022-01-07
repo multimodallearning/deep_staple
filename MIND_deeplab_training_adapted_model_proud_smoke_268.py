@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': None,
+    'reg_state': 'combined',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1027,8 +1027,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': 'disabled',
+    'debug': False,
+    'wandb_mode': 'online',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1707,9 +1707,10 @@ def train_DL(run_name, config, training_dataset):
 
                         if True and not embedding_grad_storage[b_idxs_dataset].isnan().any():
                             fear = embedding_grad_storage[b_idxs_dataset].sign().std(dim=1).detach()
-                            fear = fear/(fear.mean()+1e-6)
-                            fear_regularization = weight*fear
-                            regularization = regularization + fear_regularization.sum()
+                            # fear = fear/(fear.mean()+1e-6)
+                            # fear_regularization = weight*fear
+                            # regularization = regularization + fear_regularization.sum()
+                            weight = weight*fear
 
                         loss = (loss*weight).sum() + regularization
 
