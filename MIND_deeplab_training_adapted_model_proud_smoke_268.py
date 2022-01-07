@@ -1368,7 +1368,7 @@ def get_global_idx(fold_idx, epoch_idx, max_epochs):
 
 
 
-def save_parameter_figure(_path, sorted_parameters, sorted_reweighted_parameters, sorted_dices):
+def save_parameter_figure(_path, title, sorted_parameters, sorted_reweighted_parameters, sorted_dices):
     # Show weights and weights with compensation
     fig, axs = plt.subplots(1,2, figsize=(12, 4), dpi=80)
     sc1 = axs[0].scatter(
@@ -1378,6 +1378,7 @@ def save_parameter_figure(_path, sorted_parameters, sorted_reweighted_parameters
         range(len(sorted_reweighted_parameters)),
         sorted_reweighted_parameters.cpu().detach(), s=1,c=sorted_dices, cmap='plasma', vmin=0., vmax=1.)
 
+    fig.suptitle(title, fontsize=14)
     axs[0].set_title('Bare parameters')
     axs[1].set_title('Reweighted parameters')
     axs[0].set_ylim(-10, 10)
@@ -1779,7 +1780,8 @@ def train_DL(run_name, config, training_dataset):
                 log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
                 dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
                 dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
-                save_parameter_figure(dp_figure_path, train_params[order], t_metric[train_idxs][order], sorted_dices=wise_dice[train_idxs][:,1][order])
+                save_parameter_figure(dp_figure_path, wandb.run.name,
+                    train_params[order], t_metric[train_idxs][order], sorted_dices=wise_dice[train_idxs][:,1][order])
 
                 # Map gridded instance parameters
                 if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
