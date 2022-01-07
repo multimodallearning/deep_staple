@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': None,
+    'reg_state': 'combined',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1741,7 +1741,8 @@ def train_DL(run_name, config, training_dataset):
                 if batch_idx % 10 == 0:
                     # Output data parameter figure
                     train_params = embedding.weight[train_idxs].squeeze()
-                    order = np.argsort(train_params.cpu().detach())
+                    # order = np.argsort(train_params.cpu().detach()) # Order by DP value
+                    order = torch.arange(len(train_params))
                     wise_corr_coeff = np.corrcoef(train_params.cpu().detach(), wise_dice[train_idxs][:,1].cpu().detach())[0,1]
                     dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
                     dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
