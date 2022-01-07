@@ -1747,15 +1747,19 @@ def train_DL(run_name, config, training_dataset):
 
             log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
 
-            # Calculate dice score corr coeff (unknown to network)
-            metric = 1/(np.log(gt_num[train_idxs].cpu()+np.exp(1))+np.exp(1))
-            train_params = embedding.weight[train_idxs].squeeze()
-            order = np.argsort(train_params.cpu().detach())
-            wise_corr_coeff = np.corrcoef(train_params[order].cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())[0,1]
-            print("DP vs. wise_dice corr coeff:", wise_corr_coeff)
-
             # Log data parameters of disturbed samples
-            if len(training_dataset.disturbed_idxs) > 0 and str(config.data_param_mode) != str(DataParamMode.DISABLED):
+            if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+                # Calculate dice score corr coeff (unknown to network)
+                train_params = embedding.weight[train_idxs].squeeze()
+                order = np.argsort(train_params.cpu().detach())
+                wise_corr_coeff = np.corrcoef(train_params[order].cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())[0,1]
+
+                wandb.log(
+                    {f'data_parameters/wise_corr_coeff_fold{fold_idx}': wise_corr_coeff},
+                    step=global_idx
+                )
+                print(f'data_parameters/wise_corr_coeff_fold{fold_idx}', f"{wise_corr_coeff:.2f}")
+
                 if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                     m_tr_idxs = map_embedding_idxs(train_idxs,
                         config.grid_size_y, config.grid_size_x
@@ -1768,23 +1772,6 @@ def train_DL(run_name, config, training_dataset):
                         align_corners=True
                     ).squeeze(1) * masks
                     masked_weights[masked_weights==0.] = float('nan')
-
-                    corr_coeff = np.corrcoef(
-                        np.nanmean(masked_weights.detach().cpu(), axis=(-2,-1)),
-                        disturbed_bool_vect[train_idxs].cpu().numpy()
-                    )[0,1]
-
-                elif str(config.data_param_mode) == str(DataParamMode.INSTANCE_PARAMS):
-                    corr_coeff = np.corrcoef(
-                        embedding(train_idxs.cuda()).detach().cpu().view(train_idxs.numel()).numpy(),
-                        disturbed_bool_vect[train_idxs].cpu().numpy()
-                    )[0,1]
-
-                wandb.log(
-                    {f'data_parameters/corr_coeff_fold{fold_idx}': corr_coeff},
-                    step=global_idx
-                )
-                print(f'data_parameters/corr_coeff_fold{fold_idx}', f"{corr_coeff:.2f}")
 
             if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                 log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
