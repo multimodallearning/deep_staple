@@ -1028,7 +1028,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'debug': False,
-    'wandb_mode': 'disabled',
+    'wandb_mode': 'online',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1383,7 +1383,7 @@ def save_parameter_figure(_path, title, text, parameters, reweighted_parameters,
     axs[0].set_title('Bare parameters')
     axs[1].set_title('Reweighted parameters')
     axs[0].set_ylim(-10, 10)
-    axs[1].set_ylim(-10, 10)
+    axs[1].set_ylim(-3, 1)
     plt.colorbar(sc2)
     plt.savefig(_path)
     plt.clf()
@@ -1740,11 +1740,12 @@ def train_DL(run_name, config, training_dataset):
                 if batch_idx % 10 == 0:
                     # Output data parameter figure
                     train_params = embedding.weight[train_idxs].squeeze()
+                    order = np.argsort(train_params.cpu().detach())
                     wise_corr_coeff = np.corrcoef(train_params.cpu().detach(), wise_dice[train_idxs][:,1].cpu().detach())[0,1]
                     dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
                     dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
                     save_parameter_figure(dp_figure_path, wandb.run.name, f"corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
-                        train_params, t_metric[train_idxs], dices=wise_dice[train_idxs][:,1])
+                        train_params[order], t_metric[train_idxs][order], dices=wise_dice[train_idxs][:,1][order])
 
                 if config.debug:
                     break
