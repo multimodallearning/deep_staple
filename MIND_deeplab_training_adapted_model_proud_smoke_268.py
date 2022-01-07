@@ -998,7 +998,7 @@ config_dict = DotDict({
     # 'checkpoint_epx': 0,
 
     'use_mind': False,
-    'epochs': 40,
+    'epochs': 60,
 
     'batch_size': 32,
     'val_batch_size': 1,
@@ -1654,8 +1654,8 @@ def train_DL(run_name, config, training_dataset):
                         loss = loss.mean((-1,-2))
 
                         bare_weight = embedding(b_idxs_dataset).squeeze()
-                        t_metric = (gt_num.cuda()[b_idxs_dataset]+np.exp(1)).log()+np.exp(1)
-                        # t_metric = (gt_num.cuda()[b_idxs_dataset]+1.).log()+1.
+                        # t_metric = (gt_num.cuda()[b_idxs_dataset]+np.exp(1)).log()+np.exp(1)
+                        t_metric = (gt_num.cuda()[b_idxs_dataset]+1.).log()+1.
                         weight = torch.sigmoid(bare_weight)
                         weight = weight/weight.mean()/t_metric
 
@@ -2036,9 +2036,9 @@ def train_DL(run_name, config, training_dataset):
 # config_dict['wandb_mode'] = 'disabled'
 # config_dict['debug'] = True
 # Model loading
-# config_dict['checkpoint_name'] = 'treasured-water-717'
+config_dict['checkpoint_name'] = 'rose-bird-1016'
 # # config_dict['fold_override'] = 0
-# config_dict['checkpoint_epx'] = 39
+config_dict['checkpoint_epx'] = 39
 
 # Define sweep override dict
 sweep_config_dict = dict(
