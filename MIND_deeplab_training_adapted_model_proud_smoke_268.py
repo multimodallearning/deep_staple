@@ -1027,8 +1027,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': 'disabled',
+    'debug': False,
+    'wandb_mode': 'online',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1654,7 +1654,8 @@ def train_DL(run_name, config, training_dataset):
                         loss = loss.mean((-1,-2))
 
                         bare_weight = embedding(b_idxs_dataset).squeeze()
-                        t_metric = (gt_num.cuda()[b_idxs_dataset]+np.exp(1)).log()+np.exp(1)
+                        # t_metric = (gt_num.cuda()[b_idxs_dataset]+np.exp(1)).log()+np.exp(1)
+                        t_metric = (gt_num.cuda()[b_idxs_dataset]+1.).log()+1.
                         weight = torch.sigmoid(bare_weight)
                         weight = weight/weight.mean()/t_metric
 
