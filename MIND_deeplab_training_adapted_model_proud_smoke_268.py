@@ -1027,8 +1027,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': 'online',
+    'debug': True,
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1368,12 +1368,23 @@ def get_global_idx(fold_idx, epoch_idx, max_epochs):
 
 
 
-def log_data_parameters(log_path, parameter_idxs, parameters):
-    data = [[idx, param] for (idx, param) in \
-        zip(parameter_idxs, torch.exp(parameters).tolist())]
+def save_parameter_figure(_path, sorted_parameters, sorted_reweighted_parameters, sorted_dices):
+    # Show weights and weights with compensation
+    fig, axs = plt.subplots(1,2, figsize=(12, 4), dpi=80)
+    sc1 = axs[0].scatter(
+        range(len(sorted_parameters)),
+        sorted_parameters.cpu().detach(), c=sorted_dices,s=1, cmap='plasma', vmin=0., vmax=1.)
+    sc2 = axs[1].scatter(
+        range(len(sorted_reweighted_parameters)),
+        sorted_reweighted_parameters.cpu().detach(), s=1,c=sorted_dices, cmap='plasma', vmin=0., vmax=1.)
 
-    table = wandb.Table(data=data, columns = ["parameter_idx", "value"])
-    wandb.log({log_path:wandb.plot.bar(table, "parameter_idx", "value", title=log_path)})
+    axs[0].set_title('Bare parameters')
+    axs[1].set_title('Reweighted parameters')
+    axs[0].set_ylim(-10, 10)
+    axs[1].set_ylim(-10, 10)
+    plt.colorbar(sc2)
+    plt.savefig(_path)
+    plt.clf()
 
 
 
@@ -1394,7 +1405,6 @@ def calc_inst_parameters_in_target_pos_ratio(dpm, disturbed_inst_idxs, target_po
 
 def log_data_parameter_stats(log_path, epx, data_parameters):
     """Log stats for data parameters on wandb."""
-    data_parameters = data_parameters.exp()
     wandb.log({f'{log_path}/highest': torch.max(data_parameters).item()}, step=epx)
     wandb.log({f'{log_path}/lowest': torch.min(data_parameters).item()}, step=epx)
     wandb.log({f'{log_path}/mean': torch.mean(data_parameters).item()}, step=epx)
@@ -1585,11 +1595,15 @@ def train_DL(run_name, config, training_dataset):
             one_hot_torch_style=True, nan_for_unlabeled_target=False
         )
         gt_num = (mod_labels > 0).sum(dim=(-2,-1))
+        t_metric = (gt_num+np.exp(1)).log()+np.exp(1)
 
         if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-
             union_wise_mod_label = torch.logical_or(wise_labels, mod_labels)
             union_wise_mod_label = union_wise_mod_label.cuda()
+
+        class_weights = class_weights.cuda()
+        gt_num = gt_num.cuda()
+        t_metric = t_metric.cuda()
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -1605,7 +1619,7 @@ def train_DL(run_name, config, training_dataset):
             class_dices = []
 
             # Load data
-            for batch in train_dataloader:
+            for batch_idx, batch in enumerate(train_dataloader):
 
                 optimizer.zero_grad()
                 if optimizer_dp:
@@ -1623,7 +1637,6 @@ def train_DL(run_name, config, training_dataset):
                 b_seg_modified = b_seg_modified.cuda()
                 b_idxs_dataset = b_idxs_dataset.cuda()
                 b_seg = b_seg.cuda()
-                class_weights = class_weights.cuda()
                 b_spat_aug_grid = b_spat_aug_grid.cuda()
 
                 if config.use_mind:
@@ -1654,10 +1667,12 @@ def train_DL(run_name, config, training_dataset):
                         loss = loss.mean((-1,-2))
 
                         bare_weight = embedding(b_idxs_dataset).squeeze()
-                        t_metric = (gt_num.cuda()[b_idxs_dataset]+np.exp(1)).log()+np.exp(1)
-                        # t_metric = (gt_num.cuda()[b_idxs_dataset]+1.).log()+1.
+
                         weight = torch.sigmoid(bare_weight)
-                        weight = weight/weight.mean()/t_metric
+                        weight = weight/weight.mean()
+
+                        # This improves scores significantly: Reweight with log(gt_numel)
+                        weight = weight/t_metric[b_idxs_dataset]
 
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
@@ -1760,6 +1775,13 @@ def train_DL(run_name, config, training_dataset):
                 )
                 print(f'data_parameters/wise_corr_coeff_fold{fold_idx}', f"{wise_corr_coeff:.2f}")
 
+                # Log stats of data parameters and figure
+                log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
+                dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
+                dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
+                save_parameter_figure(dp_figure_path, train_params[order], t_metric[train_idxs][order], sorted_dices=wise_dice[train_idxs][:,1][order])
+
+                # Map gridded instance parameters
                 if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                     m_tr_idxs = map_embedding_idxs(train_idxs,
                         config.grid_size_y, config.grid_size_x
@@ -1772,9 +1794,6 @@ def train_DL(run_name, config, training_dataset):
                         align_corners=True
                     ).squeeze(1) * masks
                     masked_weights[masked_weights==0.] = float('nan')
-
-            if str(config.data_param_mode) != str(DataParamMode.DISABLED):
-                log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
 
             if (epx % config.save_every == 0 and epx != 0) \
                 or (epx+1 == config.epochs):
