@@ -1027,7 +1027,7 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
+    'debug': False,
     'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
@@ -1693,7 +1693,7 @@ def train_DL(run_name, config, training_dataset):
                             regularization = regularization + risk_regularization.sum()
 
                         if True and not embedding_grad_storage[b_idxs_dataset].isnan().any():
-                            fear = embedding_grad_storage[b_idxs_dataset].std(dim=1).detach()
+                            fear = embedding_grad_storage[b_idxs_dataset].sign().std(dim=1).detach()
                             fear = fear/(fear.mean()+1e-6)
                             fear_regularization = weight*fear
                             regularization = regularization + fear_regularization.sum()
