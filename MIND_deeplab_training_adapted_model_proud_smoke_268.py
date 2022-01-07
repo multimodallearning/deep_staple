@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'combined',
+    'reg_state': None,
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1027,8 +1027,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': 'disabled',
+    'debug': False,
+    'wandb_mode': 'online',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1368,15 +1368,15 @@ def get_global_idx(fold_idx, epoch_idx, max_epochs):
 
 
 
-def save_parameter_figure(_path, title, text, sorted_parameters, sorted_reweighted_parameters, sorted_dices):
+def save_parameter_figure(_path, title, text, parameters, reweighted_parameters, dices):
     # Show weights and weights with compensation
     fig, axs = plt.subplots(1,2, figsize=(12, 4), dpi=80)
     sc1 = axs[0].scatter(
-        range(len(sorted_parameters)),
-        sorted_parameters.cpu().detach(), c=sorted_dices,s=1, cmap='plasma', vmin=0., vmax=1.)
+        range(len(parameters)),
+        parameters.cpu().detach(), c=dices,s=1, cmap='plasma', vmin=0., vmax=1.)
     sc2 = axs[1].scatter(
-        range(len(sorted_reweighted_parameters)),
-        sorted_reweighted_parameters.cpu().detach(), s=1,c=sorted_dices, cmap='plasma', vmin=0., vmax=1.)
+        range(len(reweighted_parameters)),
+        reweighted_parameters.cpu().detach(), s=1,c=dices, cmap='plasma', vmin=0., vmax=1.)
 
     fig.suptitle(title, fontsize=14)
     fig.text(0, 0, text)
@@ -1744,6 +1744,13 @@ def train_DL(run_name, config, training_dataset):
                     #     if optimizer_dp:
                     #         scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
                     #             optimizer_dp, T_0=500, T_mult=2)
+                if batch_idx % 10 == 0:
+                    # Output data parameter figure
+                    dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
+                    dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
+                    save_parameter_figure(dp_figure_path, wandb.run.name, f"corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
+                        train_params[order], t_metric[train_idxs][order], sorted_dices=wise_dice[train_idxs][:,1][order])
+
                 if config.debug:
                     break
 
@@ -1779,10 +1786,6 @@ def train_DL(run_name, config, training_dataset):
 
                 # Log stats of data parameters and figure
                 log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
-                dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
-                dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
-                save_parameter_figure(dp_figure_path, wandb.run.name, f"corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
-                    train_params[order], t_metric[train_idxs][order], sorted_dices=wise_dice[train_idxs][:,1][order])
 
                 # Map gridded instance parameters
                 if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
