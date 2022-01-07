@@ -1027,7 +1027,7 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
+    'debug': True,
     'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
@@ -1378,7 +1378,8 @@ def save_parameter_figure(_path, title, text, parameters, reweighted_parameters,
         range(len(reweighted_parameters)),
         reweighted_parameters.cpu().detach(), s=1,c=dices, cmap='plasma', vmin=0., vmax=1.)
 
-    order = np.argsort(train_params.cpu().detach()) # Order by DP value
+    # Order by DP value
+    order = np.argsort(parameters.cpu().detach())
     sc3 = axs[2].scatter(
         range(len(parameters)),
         parameters[order].cpu().detach(), c=dices[order],s=1, cmap='plasma', vmin=0., vmax=1.)
@@ -1787,7 +1788,7 @@ def train_DL(run_name, config, training_dataset):
                     save_parameter_figure(dp_figure_path, wandb.run.name, f"epx {epx:04d}; corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
                         train_params, train_params/t_metric[train_idxs], dices=wise_dice[train_idxs][:,1])
 
-                if config.debug and False:
+                if config.debug:
                     break
 
             ### Logging ###
@@ -1921,7 +1922,7 @@ def train_DL(run_name, config, training_dataset):
             print()
             # End of training loop
 
-            if config.debug and False:
+            if config.debug:
                 break
 
         if str(config.data_param_mode) != str(DataParamMode.DISABLED):
