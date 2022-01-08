@@ -788,8 +788,8 @@ class CrossMoDa_Data(Dataset):
         assert retrn in ['id', 'idx']
         if isinstance(_2d_identifiers, (torch.Tensor, np.ndarray)):
             _2d_identifiers = _2d_identifiers.tolist()
-        elif not isinstance(_2d_identifiers, Iterable):
-            _2d_identifiers = list(_2d_identifiers)
+        elif not isinstance(_2d_identifiers, Iterable) or isinstance(_2d_identifiers, str):
+            _2d_identifiers = [_2d_identifiers]
 
         if isinstance(_2d_identifiers[0], int):
             _2d_identifiers = self.switch_2d_identifiers(_2d_identifiers)
@@ -818,7 +818,8 @@ class CrossMoDa_Data(Dataset):
         return len(self.img_data_3d)
 
     def __getitem__(self, dataset_idx, use_2d_override=None):
-        if self.use_2d(use_2d_override):
+        use_2d = self.use_2d(use_2d_override)
+        if use_2d:
             all_ids = self.get_2d_ids()
             _id = all_ids[dataset_idx]
             image = self.img_data_2d.get(_id, torch.tensor([]))
