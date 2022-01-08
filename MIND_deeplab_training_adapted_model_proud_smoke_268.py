@@ -1027,8 +1027,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': True,
-    'wandb_mode': 'disabled',
+    'debug': False,
+    'wandb_mode': 'online',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1708,7 +1708,7 @@ def train_DL(run_name, config, training_dataset):
                             risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
                             regularization = regularization + risk_regularization.sum()
 
-                        if epx > 3 and False:
+                        if epx > 3 and True:
                             with torch.no_grad():
                                 grads = embedding_grad_storage[b_idxs_dataset]
                                 grads_grads = F.conv1d(
@@ -1716,7 +1716,8 @@ def train_DL(run_name, config, training_dataset):
                                     weight=torch.tensor([[[-0.5,0.0,0.5]]]).to(grads),
                                     padding='same'
                                 )
-                                fear = (grads_grads.squeeze()**2).mean(-1)
+                                fear = grads_grads.squeeze().abs().mean(-1)
+                                fear = fear/(fear.mean()+1e-6)
                             fear_regularization = (fear*weight).sum()
                             regularization = regularization + fear_regularization
                             # loss = loss*-torch.maximum(
