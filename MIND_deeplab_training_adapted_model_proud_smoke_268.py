@@ -1027,8 +1027,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'debug': False,
-    'wandb_mode': 'online',
+    'debug': True,
+    'wandb_mode': 'disabled',
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -1708,7 +1708,7 @@ def train_DL(run_name, config, training_dataset):
                             risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
                             regularization = regularization + risk_regularization.sum()
 
-                        if epx > 3 and True:
+                        if epx > 3 and False:
                             with torch.no_grad():
                                 grads = embedding_grad_storage[b_idxs_dataset]
                                 grads_grads = F.conv1d(
@@ -1716,9 +1716,13 @@ def train_DL(run_name, config, training_dataset):
                                     weight=torch.tensor([[[-0.5,0.0,0.5]]]).to(grads),
                                     padding='same'
                                 )
-                                fear = (grads_grads**2).mean(-1)
-
-                            loss = loss*torch.maximum(-(1.+fear)*grads.sign(), torch.tensor([1.]))
+                                fear = (grads_grads.squeeze()**2).mean(-1)
+                            fear_regularization = (fear*weight).sum()
+                            regularization = regularization + fear_regularization
+                            # loss = loss*-torch.maximum(
+                            #     -(1.+fear)*grads[:,-1].sign(),
+                            #     torch.tensor([1.], device=loss.device)
+                            # )
 
                         loss = (loss*weight).sum() + regularization
 
@@ -1755,7 +1759,7 @@ def train_DL(run_name, config, training_dataset):
                     emb_grads = emb_grads/scaler.get_scale()
 
                     current_storage = \
-                        torch.roll(current_storage, shifts=1, dims=1)
+                        torch.roll(current_storage, shifts=-1, dims=1)
                     current_storage[:, -1] = emb_grads.view(-1)
 
                     embedding_grad_storage[b_idxs_dataset] = current_storage
@@ -1794,7 +1798,7 @@ def train_DL(run_name, config, training_dataset):
                     save_parameter_figure(dp_figure_path, wandb.run.name, f"epx {epx:04d}; corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
                         train_params, train_params/t_metric[train_idxs], dices=wise_dice[train_idxs][:,1])
 
-                if config.debug:
+                if config.debug and False:
                     break
 
             ### Logging ###
@@ -1928,7 +1932,7 @@ def train_DL(run_name, config, training_dataset):
             print()
             # End of training loop
 
-            if config.debug:
+            if config.debug and False:
                 break
 
         if str(config.data_param_mode) != str(DataParamMode.DISABLED):
