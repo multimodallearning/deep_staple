@@ -1708,13 +1708,13 @@ def train_DL(run_name, config, training_dataset):
                             risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
                             regularization = regularization + risk_regularization.sum()
 
-                        if True:
+                        if epx > 3 and True:
                             with torch.no_grad():
                                 grads = embedding_grad_storage[b_idxs_dataset]
                                 grads_grads = F.conv1d(grads.unsqueeze(1), weight=torch.tensor([[[-0.5,0.0,0.5]]]).to(grads), padding='same')
                                 fear = (grads_grads**2).mean(-1)
 
-                            weight = weight*(1.+fear)
+                            weight = weight*fear
 
                         loss = (loss*weight).sum() + regularization
 
