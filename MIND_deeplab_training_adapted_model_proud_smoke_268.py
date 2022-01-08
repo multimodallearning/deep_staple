@@ -1027,6 +1027,7 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
+    'save_dp_figures': False
     'debug': False,
     'wandb_mode': 'online',
     'checkpoint_name': None,
@@ -1743,7 +1744,7 @@ def train_DL(run_name, config, training_dataset):
                 if config.use_cosine_annealing:
                     scheduler.step()
 
-                if batch_idx % 10 == 0:
+                if config.save_dp_figures and batch_idx % 10 == 0:
                     # Output data parameter figure
                     train_params = embedding.weight[train_idxs].squeeze()
                     # order = np.argsort(train_params.cpu().detach()) # Order by DP value
