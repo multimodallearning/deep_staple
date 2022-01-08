@@ -1004,7 +1004,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'mix_combined_best',
+    'reg_state': 'combined',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1033,9 +1033,9 @@ config_dict = DotDict({
     'checkpoint_name': None,
     'do_sweep': False,
 
-    'disturbance_mode': None,
-    'disturbance_strength': 0.,
-    'disturbed_percentage': .0,
+    'disturbance_mode': LabelDisturbanceMode.AFFINE,
+    'disturbance_strength': 2.,
+    'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
@@ -1704,7 +1704,6 @@ def train_DL(run_name, config, training_dataset):
                             mode='bilinear',
                             align_corners=True
                         )
-                        weight = torch.sigmoid(weight)
                         weight = weight/weight.mean()
                         weight = F.grid_sample(weight, b_spat_aug_grid,
                             padding_mode='border', align_corners=False)
