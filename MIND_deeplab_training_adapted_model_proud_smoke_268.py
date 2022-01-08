@@ -1714,7 +1714,7 @@ def train_DL(run_name, config, training_dataset):
                                 grads_grads = F.conv1d(grads.unsqueeze(1), weight=torch.tensor([[[-0.5,0.0,0.5]]]).to(grads), padding='same')
                                 fear = (grads_grads**2).mean(-1)
 
-                            weight = weight*fear
+                            weight = weight*F.softplus(fear)
 
                         loss = (loss*weight).sum() + regularization
 
