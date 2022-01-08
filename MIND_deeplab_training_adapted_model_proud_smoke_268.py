@@ -1713,11 +1713,10 @@ def train_DL(run_name, config, training_dataset):
                                 grads = embedding_grad_storage[b_idxs_dataset]
                                 grads_grads = F.conv1d(
                                     grads.unsqueeze(1),
-                                    weight=torch.tensor([[[-0.5,0.0,0.5]]]).to(grads),
+                                    weight=torch.tensor([[[-0.5,0.5]]]).to(grads),
                                     padding='same'
                                 )
                                 fear = grads_grads.squeeze().abs().mean(-1)
-                                fear = fear/(fear.mean()+1e-6)
                             fear_regularization = (fear*weight).sum()
                             regularization = regularization + fear_regularization
                             # loss = loss*-torch.maximum(
