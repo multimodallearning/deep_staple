@@ -1615,7 +1615,10 @@ def train_DL(run_name, config, training_dataset):
 
         EMBEDDING_GRAD_STORAGE_SIZE = 5
 
-        embedding_grad_storage = torch.empty(embedding.weight.numel(), EMBEDDING_GRAD_STORAGE_SIZE).fill_(float('nan')).cuda()
+        embedding_grad_storage = torch.zeros(
+            embedding.weight.numel(),
+            EMBEDDING_GRAD_STORAGE_SIZE
+        ).cuda()
 
         if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
             union_wise_mod_label = torch.logical_or(wise_labels, mod_labels)
@@ -1705,12 +1708,13 @@ def train_DL(run_name, config, training_dataset):
                             risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
                             regularization = regularization + risk_regularization.sum()
 
-                        if True and not embedding_grad_storage[b_idxs_dataset].isnan().any():
-                            fear = embedding_grad_storage[b_idxs_dataset].sign().std(dim=1).detach()
-                            # fear = fear/(fear.mean()+1e-6)
-                            # fear_regularization = weight*fear
-                            # regularization = regularization + fear_regularization.sum()
-                            weight = weight*fear
+                        if True:
+                            with torch.no_grad():
+                                grads = embedding_grad_storage[b_idxs_dataset]
+                                grads_grads = F.conv1d(grads.unsqueeze(1), weight=torch.tensor([[[-0.5,0.0,0.5]]]).to(grads), padding='same')
+                                fear = (grads_grads**2).mean(-1)
+
+                            weight = weight*(1.+fear)
 
                         loss = (loss*weight).sum() + regularization
 
@@ -1746,12 +1750,9 @@ def train_DL(run_name, config, training_dataset):
                     emb_grads = embedding.weight.grad._values()
                     emb_grads = emb_grads/scaler.get_scale()
 
-                    if current_storage.isnan().any():
-                        current_storage[:,:] = emb_grads.view(-1)[:, None]
-                    else:
-                        current_storage = \
-                            torch.roll(current_storage, shifts=1, dims=1)
-                        current_storage[:, -1] = emb_grads.view(-1)
+                    current_storage = \
+                        torch.roll(current_storage, shifts=1, dims=1)
+                    current_storage[:, -1] = emb_grads.view(-1)
 
                     embedding_grad_storage[b_idxs_dataset] = current_storage
 
