@@ -7,8 +7,8 @@ Args:
     high_channels (int): the number of channels of the high level features.
     num_classes (int): number of output classes of the model (including the background).
     inter_channels (int, optional): the number of channels for intermediate computations.
-input:
-    Input should be a dictionary like this: {'low': low_level_feature_map, 'high': high_level_feature_map}
+ctx:
+    ctx should be a dictionary like this: {'low': low_level_feature_map, 'high': high_level_feature_map}
     with feature maps coming from a backbone network used to compute the features for the model
 """
 import torch
@@ -39,9 +39,9 @@ class LRASPPHead_3d(nn.Module):
         self.low_classifier = nn.Conv3d(low_channels, num_classes, 1)
         self.high_classifier = nn.Conv3d(inter_channels, num_classes, 1)
 
-    def forward(self, input):
-        low = input["low"]
-        high = input["high"]
+    def forward(self, ctx):
+        low = ctx["low"]
+        high = ctx["high"]
 
         x = self.cbr(high)
         s = self.scale(high)
@@ -118,17 +118,18 @@ class ResBlock(torch.nn.Module):
         super().__init__()
         self.module = module
 
-    def forward(self, inputs):
-        return self.module(inputs) + inputs
+    def forward(self, ctx):
+        return self.module(ctx) + ctx
 
 
 
-class Backbone_3d(torch.nn.Module):
+class Backbone_3d(torch.nn.Sequential):
     def __init__(self, in_channels, mid_channels, out_channels, mid_stride):
         super().__init__()
 
         self.backbone = []
         self.backbone.append(nn.Identity())
+
         for i in range(len(in_channels)):
             inc = int(in_channels[i])
             midc = int(mid_channels[i])
@@ -152,8 +153,11 @@ class Backbone_3d(torch.nn.Module):
 
         self.backbone = nn.Sequential(*self.backbone)
 
-    def forward(self, inputs):
-        return self.backbone(inputs)
+    def forward(self, ctx):
+        return self.backbone(ctx)
+
+    def __getitem__(self, idx):
+        return self.backbone[idx]
 
 
 
@@ -186,21 +190,22 @@ class MobileNet_ASPP_3D(torch.nn.Module):
         # Do I need to call this?
         self.apply()
 
-    def forward(self, inputs):
+    def forward(self, ctx):
         if self.use_checkpointing:
-            x1 = checkpoint(self.backbone[:2], inputs)
-            x2 = checkpoint(self.backbone[2:], x1)
-            y = checkpoint(self.aspp, x2)
+            high = checkpoint(self.backbone[:2], ctx)
+            low = checkpoint(self.backbone[2:], high)
+            low = checkpoint(self.aspp, low)
             # Skip-connection
-            y = torch.cat((x1, F.interpolate(y, scale_factor=2)), 1)
-            y1 = checkpoint(head, y)
+            # y = torch.cat((x1, F.interpolate(low, scale_factor=2)), 1)
+            y1 = checkpoint(self.head, {"low": low, "high": high})
+
         else:
-            x1 = self.backbone[:2](inputs)
+            x1 = self.backbone[:2](ctx)
             x2 = self.backbone[2:](x1)
             y = self.aspp(x2)
             # Skip-connection
             y = torch.cat((x1, F.interpolate(y, scale_factor=2)), 1)
-            y1 = head(y)
+            y1 = self.head(y)
 
         output = F.interpolate(y1, scale_factor=2, mode='trilinear', align_corners=False)
         return output
@@ -238,5 +243,5 @@ class MobileNet_LRASPP_3D(MobileNet_ASPP_3D):
             num_classes=num_classes,
         )
 
-    def forward(self, inputs):
-        return super().forward(inputs)
+    def forward(self, ctx):
+        return super().forward(ctx)
