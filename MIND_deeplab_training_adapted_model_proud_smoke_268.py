@@ -17,18 +17,14 @@
 import os
 import time
 import random
-import glob
 import re
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
 os.environ.update(get_vars(select="* -4"))
 import pickle
 import copy
 from pathlib import Path
-from contextlib import contextmanager
-import warnings
 
 import functools
-from collections.abc import Iterable
 
 import numpy as np
 import torch
@@ -39,27 +35,15 @@ import torchvision
 from torch.utils.data import Dataset, DataLoader
 import nibabel as nib
 
+from curriculum_deeplab.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader
 import wandb
-from tqdm import tqdm
 import matplotlib.pyplot as plt
 from IPython.display import display
 from sklearn.model_selection import KFold
 from mdl_seg_class.metrics import dice3d, dice2d
 from mdl_seg_class.visualization import visualize_seg
 from curriculum_deeplab.mindssc import mindssc
-
-print(torch.__version__)
-print(torch.backends.cudnn.version())
-print(torch.cuda.get_device_name(0))
-
-
-# %%
-def in_notebook():
-    try:
-        get_ipython().__class__.__name__
-        return True
-    except NameError:
-        return False
+from curriculum_deeplab.utils import interpolate_sample, in_notebook, dilate_label_class
 
 if in_notebook:
     THIS_SCRIPT_DIR = os.path.abspath('')
@@ -67,64 +51,10 @@ else:
     THIS_SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 print(f"Running in: {THIS_SCRIPT_DIR}")
 
+print(torch.__version__)
+print(torch.backends.cudnn.version())
+print(torch.cuda.get_device_name(0))
 
-# %%
-def interpolate_sample(b_image=None, b_label=None, scale_factor=1.,
-                       use_2d=False):
-    if use_2d:
-        scale = [scale_factor]*2
-        im_mode = 'bilinear'
-    else:
-        scale = [scale_factor]*3
-        im_mode = 'trilinear'
-
-    if b_image is not None:
-        b_image = F.interpolate(
-            b_image.unsqueeze(1), scale_factor=scale, mode=im_mode, align_corners=True,
-            recompute_scale_factor=False
-        )
-        b_image = b_image.squeeze(1)
-
-    if b_label is not None:
-        b_label = F.interpolate(
-            b_label.unsqueeze(1).float(), scale_factor=scale, mode='nearest',
-            recompute_scale_factor=False
-        ).long()
-        b_label = b_label.squeeze(1)
-
-    return b_image, b_label
-
-
-
-def dilate_label_class(b_label, class_max_idx, class_dilate_idx,
-                       use_2d, kernel_sz=3):
-
-    if kernel_sz < 2:
-        return b_label
-
-    b_dilated_label = b_label
-
-    b_onehot = torch.nn.functional.one_hot(b_label.long(), class_max_idx+1)
-    class_slice = b_onehot[...,class_dilate_idx]
-
-    if use_2d:
-        B, H, W = class_slice.shape
-        kernel = torch.ones([kernel_sz,kernel_sz]).long()
-        kernel = kernel.view(1,1,kernel_sz,kernel_sz)
-        class_slice = torch.nn.functional.conv2d(
-            class_slice.view(B,1,H,W), kernel, padding='same')
-
-    else:
-        B, D, H, W = class_slice.shape
-        kernel = torch.ones([kernel_sz,kernel_sz,kernel_sz])
-        kernel = kernel.long().view(1,1,kernel_sz,kernel_sz,kernel_sz)
-        class_slice = torch.nn.functional.conv3d(
-            class_slice.view(B,1,D,H,W), kernel, padding='same')
-
-    dilated_class_slice = torch.clamp(class_slice.squeeze(0), 0, 1)
-    b_dilated_label[dilated_class_slice.bool()] = class_dilate_idx
-
-    return b_dilated_label
 
 
 def get_batch_dice_per_class(b_dice, class_tags, exclude_bg=True) -> dict:
@@ -193,838 +123,6 @@ def make_3d_from_2d_stack(b_input, stack_dim, orig_stack_size):
     else:
         raise ValueError(f"stack_dim is '{stack_dim}' but must be 'D' or 'H' or 'W'.")
 
-
-# %%
-def spatial_augment(b_image=None, b_label=None,
-    bspline_num_ctl_points=6, bspline_strength=0.005, bspline_probability=.9,
-    affine_strength=0.08, add_affine_translation=0., affine_probability=.45,
-    pre_interpolation_factor=None,
-    use_2d=False,
-    b_grid_override=None):
-
-    """
-    2D/3D b-spline augmentation on image and segmentation mini-batch on GPU.
-    :input: b_image batch (torch.cuda.FloatTensor), b_label batch (torch.cuda.LongTensor)
-    :return: augmented Bx(D)xHxW image batch (torch.cuda.FloatTensor),
-    augmented Bx(D)xHxW seg batch (torch.cuda.LongTensor)
-    """
-
-    do_bspline = (np.random.rand() < bspline_probability)
-    do_affine = (np.random.rand() < affine_probability)
-
-    if pre_interpolation_factor:
-        b_image, b_label = interpolate_sample(b_image, b_label, pre_interpolation_factor, use_2d)
-
-    KERNEL_SIZE = 3
-
-    if b_image is None:
-        common_shape = b_label.shape
-        common_device = b_label.device
-
-    elif b_label is None:
-        common_shape = b_image.shape
-        common_device = b_image.device
-    else:
-        assert b_image.shape == b_label.shape, \
-            f"Image and label shapes must match but are {b_image.shape} and {b_label.shape}."
-        common_shape = b_image.shape
-        common_device = b_image.device
-
-    if b_grid_override is None:
-        if use_2d:
-            assert len(common_shape) == 3, \
-                f"Augmenting 2D. Input batch " \
-                f"should be BxHxW but is {common_shape}."
-            B,H,W = common_shape
-
-            identity = torch.eye(2,3).expand(B,2,3).to(common_device)
-            id_grid = F.affine_grid(identity, torch.Size((B,2,H,W)),
-                align_corners=False)
-
-            grid = id_grid
-
-            if do_bspline:
-                bspline = torch.nn.Sequential(
-                    nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-                    nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-                    nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
-                ).to(common_device)
-                # Add an extra *.5 factor to dim strength to make strength fit 3D case
-                dim_strength = (torch.tensor([H,W]).float()*bspline_strength*.5).to(common_device)
-                rand_control_points = dim_strength.view(1,2,1,1) * \
-                    (
-                        torch.randn(B, 2, bspline_num_ctl_points, bspline_num_ctl_points)
-                    ).to(common_device)
-
-                bspline_disp = bspline(rand_control_points)
-                bspline_disp = torch.nn.functional.interpolate(
-                    bspline_disp, size=(H,W), mode='bilinear', align_corners=True
-                ).permute(0,2,3,1)
-
-                grid += bspline_disp
-
-            if do_affine:
-                affine_matrix = (torch.eye(2,3).unsqueeze(0) + \
-                    affine_strength * torch.randn(B,2,3)).to(common_device)
-                # Add additional x,y offset
-                alpha = np.random.rand() * 2 * np.pi
-                offset_dir =  torch.tensor([np.cos(alpha), np.sin(alpha)])
-                affine_matrix[:,:,-1] = add_affine_translation * offset_dir
-                affine_disp = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
-                                        align_corners=False)
-                grid += (affine_disp-id_grid)
-
-        else:
-            assert len(common_shape) == 4, \
-                f"Augmenting 3D. Input batch " \
-                f"should be BxDxHxW but is {common_shape}."
-            B,D,H,W = common_shape
-
-            identity = torch.eye(3,4).expand(B,3,4).to(common_device)
-            id_grid = F.affine_grid(identity, torch.Size((B,3,D,H,W)),
-                align_corners=False)
-
-            grid = id_grid
-
-            if do_bspline:
-                bspline = torch.nn.Sequential(
-                    nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-                    nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
-                    nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
-                ).to(b_image.device)
-                dim_strength = (torch.tensor([D,H,W]).float()*bspline_strength).to(common_device)
-
-                rand_control_points = dim_strength.view(1,3,1,1,1)  * \
-                    (
-                        torch.randn(B, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points)
-                    ).to(b_image.device)
-
-                bspline_disp = bspline(rand_control_points)
-
-                bspline_disp = torch.nn.functional.interpolate(
-                    bspline_disp, size=(D,H,W), mode='trilinear', align_corners=True
-                ).permute(0,2,3,4,1)
-
-                grid += bspline_disp
-
-            if do_affine:
-                affine_matrix = (torch.eye(3,4).unsqueeze(0) + \
-                    affine_strength * torch.randn(B,3,4)).to(common_device)
-
-                # Add additional x,y,z offset
-                theta = np.random.rand() * 2 * np.pi
-                phi = np.random.rand() * 2 * np.pi
-                offset_dir =  torch.tensor([
-                    np.cos(phi)*np.sin(theta),
-                    np.sin(phi)*np.sin(theta),
-                    np.cos(theta)])
-                affine_matrix[:,:,-1] = add_affine_translation * offset_dir
-
-                affine_disp = F.affine_grid(affine_matrix,torch.Size((B,1,D,H,W)),
-                                        align_corners=False)
-
-                grid += (affine_disp-id_grid)
-    else:
-        # Override grid with external value
-        grid = b_grid_override
-
-    if b_image is not None:
-        b_image_out = F.grid_sample(
-            b_image.unsqueeze(1).float(), grid,
-            padding_mode='border', align_corners=False)
-        b_image_out = b_image_out.squeeze(1)
-    else:
-        b_image_out = None
-
-    if b_label is not None:
-        b_label_out = F.grid_sample(
-            b_label.unsqueeze(1).float(), grid,
-            mode='nearest', align_corners=False)
-        b_label_out = b_label_out.squeeze(1).long()
-    else:
-        b_label_out = None
-
-    b_out_grid = grid
-
-
-    return b_image_out, b_label_out, b_out_grid
-
-
-
-def augmentNoise(b_image, strength=0.05):
-    return b_image + strength*torch.randn_like(b_image)
-
-
-@contextmanager
-def torch_manual_seeded(seed):
-    saved_state = torch.get_rng_state()
-    yield
-    torch.set_rng_state(saved_state)
-
-
-
-# %%
-class CrossMoDa_Data(Dataset):
-    def __init__(self,
-        base_dir, domain, state,
-        ensure_labeled_pairs=True, use_additional_data=False, resample=True,
-        size:tuple=(96,96,60), normalize:bool=True,
-        max_load_num=None, crop_3d_w_dim_range=None, crop_2d_slices_gt_num_threshold=None,
-        modified_3d_label_override=None, prevent_disturbance=False,
-        use_2d_normal_to=None, flip_r_samples=True,
-        debug=False
-    ):
-
-        """
-        Function to create Dataset structure with crossMoDa data.
-        The function allows to use different preproccessing steps of the crossMoDa data set
-        and using additinal data from TCIA database.
-        The data can also be resampled to a desired size and normalized to mean=0 and std=1.
-
-        Parameters:
-                base_dir (os.Pathlike): provide the directory which contains "L1..." to "L4..." directories
-                domain (str): choose which domain to load. Can be set to "source", "target" or "validation". Source are ceT1, target and validation hrT2 images.
-
-                state (str): state of preprocessing:    "l1" = original data,
-                                                        "l2" = resampled data @ 0.5mm,
-                                                        "l3" = center-cropped data,
-                                                        "l4" = image specific crops for desired anatomy
-
-                ensure_labeled_pairs (bool): Only images with corresponding labels will be loaded (default: True)
-
-                use_additional_data (bool): set to True to use additional data from TCIA (default: False)
-
-                resample (bool): set to False to disable resampling to desired size (default: True)
-
-                size (tuple): 3d-tuple(int) to which the data is resampled. Unused if resample=False. (default: (96,96,60)).
-                    WARNING: choosing large sizes or not resampling can lead to excess memory usage
-
-                normalize (bool): set to False to disable normalization to mean=0, std=1 for each image (default: True)
-                max_load_num (int): maximum number of pairs to load (uses first max_load_num samples for either images and labels found)
-                crop_3d_w_dim_range (tuple): Tuple of ints defining the range to which dimension W of (D,H,W) is cropped
-                use_2d_normal_to (bool):
-
-        Returns:
-                torch.utils.data.Dataset containing CrossMoDa data
-
-        Useful Links:
-        CrossMoDa challenge:
-        https://crossmoda.grand-challenge.org/
-
-        ToDos:
-            extend to other preprocessing states
-
-        Example:
-            dataset = CrossMoDa_source('original')
-
-            data = dataset.get_data()
-
-        """
-        self.label_tags = ['background', 'tumour']
-        self.use_2d_normal_to = use_2d_normal_to
-        self.crop_2d_slices_gt_num_threshold = crop_2d_slices_gt_num_threshold
-        self.prevent_disturbance = prevent_disturbance
-        self.do_augment = False
-        self.use_modified = False
-        self.disturbed_idxs = []
-        self.augment_at_collate = False
-
-        #define finished preprocessing states here with subpath and default size
-        states = {
-            'l1':('L1_original/', (512,512,160)),
-            'l2':('L2_resampled_05mm/', (420,420,360)),
-            'l3':('L3_coarse_fixed_crop/', (128,128,192)),
-            'l4':('L4_fine_localized_crop/', (128,128,128))
-        }
-        t0 = time.time()
-        #choose directory with data according to chosen preprocessing state
-        if state not in states: raise Exception("Unknown state. Choose one of: "+str(states.keys))
-
-        state_dir = states[state.lower()][0] #get sub directory
-
-        if not resample: size = states[state.lower()][1] #set size to default defined at top of file
-
-        path = base_dir + state_dir
-
-        #get file list
-        if domain.lower() =="ceT1" or domain.lower() =="source":
-            directory = "source_training_labeled/"
-            add_directory = "__additional_data_source_domain__"
-            domain = "ceT1"
-
-        elif domain.lower() =="hrT2" or domain.lower() =="target":
-            directory = "target_training_unlabeled/"
-            add_directory = "__additional_data_target_domain__"
-            domain = "hrT2"
-
-        elif domain.lower() =="validation":
-            directory = "target_validation_unlabeled/"
-
-        else:
-            raise Exception("Unknown domain. Choose either 'source', 'target' or 'validation'")
-
-        files = sorted(glob.glob(os.path.join(path+directory , "*.nii.gz")))
-
-        if domain == "hrT2":
-            files = files+sorted(glob.glob(os.path.join(path+"__omitted_labels_target_training__" , "*.nii.gz")))
-
-        if domain.lower() == "validation":
-            files = files+sorted(glob.glob(os.path.join(path+"__omitted_labels_target_validation__" , "*.nii.gz")))
-
-        if use_additional_data and domain.lower() != "validation": #add additional data to file list
-            files = files+sorted(glob.glob(os.path.join(path+add_directory , "*.nii.gz")))
-            files = [i for i in files if "additionalLabel" not in i] #remove additional label files
-
-
-        # First read filepaths
-        self.img_paths = {}
-        self.label_paths = {}
-
-        if debug:
-            files = files[:4]
-
-
-        for _path in files:
-
-            numeric_id = int(re.findall(r'\d+', os.path.basename(_path))[0])
-            if "_l.nii.gz" in _path or "_l_Label.nii.gz" in _path:
-                lr_id = 'l'
-            elif "_r.nii.gz" in _path or "_r_Label.nii.gz" in _path:
-                lr_id = 'r'
-            else:
-                lr_id = ""
-
-            # Generate crossmoda id like 004r
-            crossmoda_id = f"{numeric_id:03d}{lr_id}"
-
-            # Skip file if we do not have modified labels for it when external labels were provided
-            if modified_3d_label_override:
-                if crossmoda_id not in \
-                    [self.extract_short_3d_id(var_id) for var_id in modified_3d_label_override.keys()]:
-                    continue
-
-            if "Label" in _path:
-                self.label_paths[crossmoda_id] = _path
-
-            elif domain in _path:
-                self.img_paths[crossmoda_id] = _path
-
-        if ensure_labeled_pairs:
-            pair_idxs = set(self.img_paths).intersection(set(self.label_paths))
-            self.label_paths = {_id: _path for _id, _path in self.label_paths.items() if _id in pair_idxs}
-            self.img_paths = {_id: _path for _id, _path in self.img_paths.items() if _id in pair_idxs}
-
-
-        # Populate data
-        self.img_data_3d = {}
-        self.label_data_3d = {}
-        self.modified_label_data_3d = {}
-
-        self.img_data_2d = {}
-        self.label_data_2d = {}
-        self.modified_label_data_2d = {}
-
-        #load data
-
-        print("Loading CrossMoDa {} images and labels...".format(domain))
-        id_paths_to_load = list(self.label_paths.items()) + list(self.img_paths.items())
-
-        description = f"{len(self.img_paths)} images, {len(self.label_paths)} labels"
-
-        for _3d_id, _file in tqdm(id_paths_to_load, desc=description):
-            # tqdm.write(f"Loading {f}")
-            if "Label" in _file:
-                tmp = torch.from_numpy(nib.load(_file).get_fdata())
-
-                if resample: #resample image to specified size
-                    tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
-
-                if tmp.shape != size: #for size missmatch use symmetric padding with 0
-                    difs = [size[0]-tmp.size(0),size[1]-tmp.size(1),size[2]-tmp.size(2)]
-                    pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
-                    tmp = F.pad(tmp,pad)
-
-                if crop_3d_w_dim_range:
-                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
-
-                # Only use tumour class, remove TODO
-                tmp[tmp==2] = 0
-                self.label_data_3d[_3d_id] = tmp.long()
-
-            elif domain in _file:
-                tmp = torch.from_numpy(nib.load(_file).get_fdata())
-
-                if resample: #resample image to specified size
-                    tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='trilinear',align_corners=False).squeeze()
-
-                if tmp.shape != size: #for size missmatch use symmetric padding with 0
-                    difs = [size[0]-tmp.size(0),size[1]-tmp.size(1),size[2]-tmp.size(2)]
-                    pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
-                    tmp = F.pad(tmp,pad)
-
-                if crop_3d_w_dim_range:
-                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
-
-                if normalize: #normalize image to zero mean and unit std
-                    tmp = (tmp - tmp.mean()) / tmp.std()
-
-                self.img_data_3d[_3d_id] = tmp
-
-        # Initialize 3d modified labels as unmodified labels
-        for label_id in self.label_data_3d.keys():
-            self.modified_label_data_3d[label_id] = self.label_data_3d[label_id]
-
-        # Now inject externally overriden labels (if any)
-        if modified_3d_label_override:
-            stored_3d_ids = list(self.label_data_3d.keys())
-
-            # Delete all modified labels which have no base data keys
-            unmatched_keys = [key for key in modified_3d_label_override.keys() \
-                if self.extract_short_3d_id(key) not in stored_3d_ids]
-            for del_key in unmatched_keys:
-                del modified_3d_label_override[del_key]
-            if len(stored_3d_ids) != len(modified_3d_label_override.keys()):
-                print(f"Expanding label data with modified_3d_label_override from {len(stored_3d_ids)} to {len(modified_3d_label_override.keys())} labels")
-
-            for _mod_3d_id, modified_label in modified_3d_label_override.items():
-                tmp = modified_label
-
-                if resample: #resample image to specified size
-                    tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
-
-                if tmp.shape != size: #for size missmatch use symmetric padding with 0
-                    difs = [size[0]-tmp.size(0),size[1]-tmp.size(1),size[2]-tmp.size(2)]
-                    pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
-                    tmp = F.pad(tmp,pad)
-
-                if crop_3d_w_dim_range:
-                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
-
-                # Only use tumour class, remove TODO
-                tmp[tmp==2] = 0
-                self.modified_label_data_3d[_mod_3d_id] = tmp.long()
-
-                # Now expand original _3d_ids with _mod_3d_id
-                _3d_id = self.extract_short_3d_id(_mod_3d_id)
-                self.img_paths[_mod_3d_id] = self.img_paths[_3d_id]
-                self.label_paths[_mod_3d_id] = self.label_paths[_3d_id]
-                self.img_data_3d[_mod_3d_id] = self.img_data_3d[_3d_id]
-                self.label_data_3d[_mod_3d_id] = self.label_data_3d[_3d_id]
-
-            # Delete original 3d_ids as they got expanded
-            for del_id in stored_3d_ids:
-                del self.img_paths[del_id]
-                del self.label_paths[del_id]
-                del self.img_data_3d[del_id]
-                del self.label_data_3d[del_id]
-
-        # Postprocessing of 3d volumes
-        orig_3d_num = len(self.label_data_3d.keys())
-
-        for _3d_id in list(self.label_data_3d.keys()):
-            if self.label_data_3d[_3d_id].unique().numel() != 2: #TODO use 3 classes again
-                del self.img_data_3d[_3d_id]
-                del self.label_data_3d[_3d_id]
-                del self.modified_label_data_3d[_3d_id]
-            elif "r" in _3d_id:
-                self.img_data_3d[_3d_id] = self.img_data_3d[_3d_id].flip(dims=(1,))
-                self.label_data_3d[_3d_id] = self.label_data_3d[_3d_id].flip(dims=(1,))
-                self.modified_label_data_3d[_3d_id] = self.modified_label_data_3d[_3d_id].flip(dims=(1,))
-
-        if ensure_labeled_pairs:
-            labelled_keys = set(self.label_data_3d.keys())
-            unlabelled_imgs = set(self.img_data_3d.keys()) - labelled_keys
-            unlabelled_modified_labels = set([self.extract_3d_id(key) for key in self.modified_label_data_3d.keys()]) - labelled_keys
-
-            for del_key in unlabelled_imgs:
-                del self.img_data_3d[del_key]
-            for del_key in unlabelled_modified_labels:
-                del self.modified_label_data_3d[del_key]
-
-        if max_load_num:
-            for del_key in sorted(list(self.img_data_3d.keys()))[max_load_num:]:
-                del self.img_data_3d[del_key]
-            for del_key in sorted(list(self.label_data_3d.keys()))[max_load_num:]:
-                del self.label_data_3d[del_key]
-            for del_key in sorted(list(self.modified_label_data_3d.keys()))[max_load_num:]:
-                del self.modified_label_data_3d[del_key]
-
-        postprocessed_3d_num = len(self.label_data_3d.keys())
-        print(f"Removed {orig_3d_num - postprocessed_3d_num} 3D images in postprocessing")
-        #check for consistency
-        print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)} ({len(self.img_data_3d)})")
-
-        img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
-        img_mean, img_std = img_stack.mean(), img_stack.std()
-
-        label_stack = torch.stack(list(self.label_data_3d.values()), dim=0)
-
-        print("Image shape: {}, mean.: {:.2f}, std.: {:.2f}".format(img_stack.shape, img_mean, img_std))
-        print("Label shape: {}, max.: {}".format(label_stack.shape,torch.max(label_stack)))
-
-        if use_2d_normal_to:
-            if use_2d_normal_to == "D":
-                slice_dim = -3
-            if use_2d_normal_to == "H":
-                slice_dim = -2
-            if use_2d_normal_to == "W":
-                slice_dim = -1
-
-            for _3d_id, image in self.img_data_3d.items():
-                for idx, img_slc in [(slice_idx, image.select(slice_dim, slice_idx)) \
-                                     for slice_idx in range(image.shape[slice_dim])]:
-                    # Set data view for crossmoda id like "003rW100"
-                    self.img_data_2d[f"{_3d_id}{use_2d_normal_to}{idx:03d}"] = img_slc
-
-            for _3d_id, label in self.label_data_3d.items():
-                for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
-                                     for slice_idx in range(label.shape[slice_dim])]:
-                    # Set data view for crossmoda id like "003rW100"
-                    self.label_data_2d[f"{_3d_id}{use_2d_normal_to}{idx:03d}"] = lbl_slc
-
-            for _3d_id, label in self.modified_label_data_3d.items():
-                for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
-                                     for slice_idx in range(label.shape[slice_dim])]:
-                    # Set data view for crossmoda id like "003rW100"
-                    self.modified_label_data_2d[f"{_3d_id}{use_2d_normal_to}{idx:03d}"] = lbl_slc
-
-        # Postprocessing of 2d slices
-        orig_2d_num = len(self.label_data_2d.keys())
-
-        for key, label in list(self.label_data_2d.items()):
-            uniq_vals = label.unique()
-
-            if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
-                # Delete 2D slices with less than n gt-pixels (but keep 3d data)
-                del self.img_data_2d[key]
-                del self.label_data_2d[key]
-                del self.modified_label_data_2d[key]
-
-        postprocessed_2d_num = len(self.label_data_2d.keys())
-        print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
-        print("Data import finished.")
-        print(f"CrossMoDa loader will yield {'2D' if self.use_2d_normal_to else '3D'} samples")
-
-    def extract_3d_id(self, _input):
-        # Match sth like 100r:var020
-        return "".join(re.findall(r'^(\d{3}[lr])(:var\d{3})?', _input)[0])
-
-    def extract_short_3d_id(self, _input):
-        # Match sth like 100r:var020 and returns 100r
-        return re.findall(r'^\d{3}[lr]', _input)[0]
-
-    def get_short_3d_ids(self):
-        return [self.extract_short_3d_id(_id) for _id in self.get_3d_ids()]
-
-    def get_3d_ids(self):
-        return sorted(list(
-            set(self.img_data_3d.keys())
-            .union(set(self.label_data_3d.keys()))
-        ))
-
-    def get_2d_ids(self):
-        return sorted(list(
-            set(self.img_data_2d.keys())
-            .union(set(self.label_data_2d.keys()))
-        ))
-
-    def get_id_dicts(self, use_2d_override=None):
-        all_3d_ids = self.get_3d_ids()
-        id_dicts = []
-        if self.use_2d(use_2d_override):
-            for _2d_dataset_idx, _2d_id in enumerate(self.get_2d_ids()):
-                _3d_id = _2d_id[:-4]
-                id_dicts.append(
-                    {
-                        '2d_id': _2d_id,
-                        '2d_dataset_idx': _2d_dataset_idx,
-                        '3d_id': _3d_id,
-                        '3d_dataset_idx': all_3d_ids.index(_3d_id),
-                    }
-                )
-        else:
-            for _3d_dataset_idx, _3d_id in enumerate(self.get_3d_ids()):
-                id_dicts.append(
-                    {
-                        '3d_id': _3d_id,
-                        '3d_dataset_idx': all_3d_ids.index(_3d_id),
-                    }
-                )
-
-        return id_dicts
-
-    def switch_2d_identifiers(self, _2d_identifiers):
-        if isinstance(_2d_identifiers, (torch.Tensor, np.ndarray)):
-            _2d_identifiers = _2d_identifiers.tolist()
-        elif not isinstance(_2d_identifiers, Iterable) or isinstance(_2d_identifiers, str):
-            _2d_identifiers = [_2d_identifiers]
-
-        _ids = self.get_2d_ids()
-        if all([isinstance(elem, int) for elem in _2d_identifiers]):
-            vals = [_ids[elem] for elem in _2d_identifiers]
-        elif all([isinstance(elem, str) for elem in _2d_identifiers]):
-            vals = [_ids.index(elem) for elem in _2d_identifiers]
-        else:
-            raise ValueError
-        return vals[0] if len(vals) == 1 else vals
-
-    def switch_3d_identifiers(self, _3d_identifiers):
-        if isinstance(_3d_identifiers, (torch.Tensor, np.ndarray)):
-            _3d_identifiers = _3d_identifiers.tolist()
-        elif not isinstance(_3d_identifiers, Iterable) or isinstance(_3d_identifiers, str):
-            _3d_identifiers = [_3d_identifiers]
-
-        _ids = self.get_3d_ids()
-        if all([isinstance(elem, int) for elem in _3d_identifiers]):
-            vals = [_ids[elem] for elem in _3d_identifiers]
-        elif all([isinstance(elem, str) for elem in _3d_identifiers]):
-            vals = [_ids.index(elem) if elem in _ids else None for elem in _3d_identifiers]
-        else:
-            raise ValueError
-        return vals[0] if len(vals) == 1 else vals
-
-    def get_3d_from_2d_identifiers(self, _2d_identifiers, retrn='id'):
-        assert retrn in ['id', 'idx']
-        if isinstance(_2d_identifiers, (torch.Tensor, np.ndarray)):
-            _2d_identifiers = _2d_identifiers.tolist()
-        elif not isinstance(_2d_identifiers, Iterable) or isinstance(_2d_identifiers, str):
-            _2d_identifiers = [_2d_identifiers]
-
-        if isinstance(_2d_identifiers[0], int):
-            _2d_identifiers = self.switch_2d_identifiers(_2d_identifiers)
-
-        vals = []
-        for item in _2d_identifiers:
-            _3d_id = self.extract_3d_id(item)
-            if retrn == 'id':
-                vals.append(_3d_id)
-            elif retrn == 'idx':
-                vals.append(self.switch_3d_identifiers(_3d_id))
-
-        return vals[0] if len(vals) == 1 else vals
-
-    def use_2d(self, override=None):
-        if not self.use_2d_normal_to:
-            return False
-        elif override is not None:
-            return override
-        else:
-            return True
-
-    def __len__(self, use_2d_override=None):
-        if self.use_2d(use_2d_override):
-            return len(self.img_data_2d)
-        return len(self.img_data_3d)
-
-    def __getitem__(self, dataset_idx, use_2d_override=None):
-        use_2d = self.use_2d(use_2d_override)
-        if use_2d:
-            all_ids = self.get_2d_ids()
-            _id = all_ids[dataset_idx]
-            image = self.img_data_2d.get(_id, torch.tensor([]))
-            label = self.label_data_2d.get(_id, torch.tensor([]))
-
-            # For 2D crossmoda id cut last 4 "003rW100"
-            _3d_id = self.get_3d_from_2d_identifiers(_id)
-            image_path = self.img_paths[_3d_id]
-            label_path = self.label_paths[_3d_id]
-
-        else:
-            all_ids = self.get_3d_ids()
-            _id = all_ids[dataset_idx]
-            image = self.img_data_3d.get(_id, torch.tensor([]))
-            label = self.label_data_3d.get(_id, torch.tensor([]))
-
-            image_path = self.img_paths[_id]
-            label_path = self.label_paths[_id]
-
-        spat_augment_grid = []
-
-        if self.use_modified:
-            if use_2d:
-                modified_label = self.modified_label_data_2d.get(_id, label.detach().clone())
-            else:
-                modified_label = self.modified_label_data_3d.get(_id, label.detach().clone())
-        else:
-            modified_label = label.detach().clone()
-
-        b_image = image.unsqueeze(0).cuda()
-        b_label = label.unsqueeze(0).cuda()
-        b_modified_label = modified_label.unsqueeze(0).cuda()
-
-        if self.do_augment and not self.augment_at_collate:
-            b_image, b_label, b_spat_augment_grid = self.augment(
-                b_image, b_label, use_2d, pre_interpolation_factor=2.
-            )
-            _, b_modified_label, _ = spatial_augment(
-                b_label=b_modified_label, use_2d=use_2d, b_grid_override=b_spat_augment_grid,
-                pre_interpolation_factor=2.
-            )
-            spat_augment_grid = b_spat_augment_grid.squeeze(0).detach().cpu().clone()
-
-        elif not self.do_augment:
-            b_image, b_label = interpolate_sample(b_image, b_label, 2., use_2d)
-            _, b_modified_label = interpolate_sample(b_label=b_modified_label, scale_factor=2.,
-                use_2d=use_2d)
-
-        image = b_image.squeeze(0).cpu()
-        label = b_label.squeeze(0).cpu()
-        modified_label = b_modified_label.squeeze(0).cpu()
-
-        if use_2d:
-            assert image.dim() == label.dim() == 2
-        else:
-            assert image.dim() == label.dim() == 3
-
-        return {
-            'image': image,
-            'label': label,
-            'modified_label': modified_label,
-            # if disturbance is off, modified label is equals label
-            'dataset_idx': dataset_idx,
-            'id': _id,
-            'image_path': image_path,
-            'label_path': label_path,
-            'spat_augment_grid': spat_augment_grid
-        }
-
-    def get_3d_item(self, _3d_dataset_idx):
-        return self.__getitem__(_3d_dataset_idx, use_2d_override=False)
-
-    def get_data(self, use_2d_override=None):
-        if self.use_2d(use_2d_override):
-            img_stack = torch.stack(list(self.img_data_2d.values()), dim=0)
-            label_stack = torch.stack(list(self.label_data_2d.values()), dim=0)
-            modified_label_stack = torch.stack(list(self.modified_label_data_2d.values()), dim=0)
-        else:
-            img_stack = torch.stack(list(self.img_data_3d.values()), dim=0)
-            label_stack = torch.stack(list(self.label_data_3d.values()), dim=0)
-            modified_label_stack = torch.stack(list(self.modified_label_data_3d.values()), dim=0)
-
-        return img_stack, label_stack, modified_label_stack
-
-    def disturb_idxs(self, all_idxs, disturbance_mode, disturbance_strength=1., use_2d_override=None):
-        if self.prevent_disturbance:
-            warnings.warn("Disturbed idxs shall be set but disturbance is prevented for dataset.")
-            return
-
-        use_2d = self.use_2d(use_2d_override)
-
-        if all_idxs is not None:
-            if isinstance(all_idxs, (np.ndarray, torch.Tensor)):
-                all_idxs = all_idxs.tolist()
-
-            self.disturbed_idxs = all_idxs
-        else:
-            self.disturbed_idxs = []
-
-        # Reset modified data
-        for idx in range(self.__len__(use_2d_override=use_2d)):
-            if use_2d:
-                label_id = self.get_2d_ids()[idx]
-                self.modified_label_data_2d[label_id] = self.label_data_2d[label_id]
-            else:
-                label_id = self.get_3d_ids()[idx]
-                self.modified_label_data_3d[label_id] = self.label_data_3d[label_id]
-
-            # Now apply disturbance
-            if idx in self.disturbed_idxs:
-                label = self.modified_label_data_2d[label_id].detach().clone()
-
-                with torch_manual_seeded(idx):
-                    if str(disturbance_mode)==str(LabelDisturbanceMode.FLIP_ROLL):
-                        roll_strength = 10*disturbance_strength
-                        if use_2d:
-                            modified_label = \
-                                torch.roll(
-                                    label.transpose(-2,-1),
-                                    (
-                                        int(torch.randn(1)*roll_strength),
-                                        int(torch.randn(1)*roll_strength)
-                                    ),(-2,-1)
-                                )
-                        else:
-                            modified_label = \
-                                torch.roll(
-                                    label.permute(1,2,0),
-                                    (
-                                        int(torch.randn(1)*roll_strength),
-                                        int(torch.randn(1)*roll_strength),
-                                        int(torch.randn(1)*roll_strength)
-                                    ),(-3,-2,-1)
-                                )
-
-                    elif str(disturbance_mode)==str(LabelDisturbanceMode.AFFINE):
-                        b_modified_label = label.unsqueeze(0).cuda()
-                        _, b_modified_label, _ = spatial_augment(b_label=b_modified_label, use_2d=use_2d,
-                            bspline_num_ctl_points=6, bspline_strength=0., bspline_probability=0.,
-                            affine_strength=0.09*disturbance_strength,
-                            add_affine_translation=0.18*disturbance_strength, affine_probability=1.)
-                        modified_label = b_modified_label.squeeze(0).cpu()
-
-                    else:
-                        raise ValueError(f"Disturbance mode {disturbance_mode} is not implemented.")
-
-                    if use_2d:
-                        self.modified_label_data_2d[label_id] = modified_label
-                    else:
-                        self.modified_label_data_2d[label_id] = modified_label
-
-
-    def train(self, augment=True, use_modified=True):
-        self.do_augment = augment
-        self.use_modified = use_modified
-
-    def eval(self, augment=False, use_modified=False):
-        self.train(augment, use_modified)
-
-    def set_augment_at_collate(self, augment_at_collate=True):
-        self.augment_at_collate = augment_at_collate
-
-    def get_efficient_augmentation_collate_fn(self):
-        use_2d = True if self.use_2d_normal_to else False
-
-        def collate_closure(batch):
-            batch = torch.utils.data._utils.collate.default_collate(batch)
-            if self.augment_at_collate:
-                # Augment the whole batch not just one sample
-                b_image = batch['image'].cuda()
-                b_label = batch['label'].cuda()
-                b_image, b_label = self.augment(b_image, b_label, use_2d)
-                batch['image'], batch['label'] = b_image.cpu(), b_label.cpu()
-
-            return batch
-
-        return collate_closure
-
-    def augment(self, b_image, b_label, use_2d,
-        noise_strength=0.05,
-        bspline_num_ctl_points=6, bspline_strength=0.004, bspline_probability=.95,
-        affine_strength=0.07, affine_probability=.45,
-        pre_interpolation_factor=2.):
-
-        if use_2d:
-            assert b_image.dim() == b_label.dim() == 3, \
-                f"Augmenting 2D. Input batch of image and " \
-                f"label should be BxHxW but are {b_image.shape} and {b_label.shape}"
-        else:
-            assert b_image.dim() == b_label.dim() == 4, \
-                f"Augmenting 3D. Input batch of image and " \
-                f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
-
-        b_image = augmentNoise(b_image, strength=noise_strength)
-        b_image, b_label, b_spat_augment_grid = spatial_augment(
-            b_image, b_label,
-            bspline_num_ctl_points=bspline_num_ctl_points, bspline_strength=bspline_strength, bspline_probability=bspline_probability,
-            affine_strength=affine_strength, affine_probability=affine_probability,
-            pre_interpolation_factor=2., use_2d=use_2d)
-
-        b_label = b_label.long()
-
-        return b_image, b_label, b_spat_augment_grid
-
-# %%
-
 from enum import Enum, auto
 class LabelDisturbanceMode(Enum):
     FLIP_ROLL = auto()
@@ -1086,10 +184,10 @@ config_dict = DotDict({
 
     'do_plot': False,
     'save_dp_figures': False,
-    'debug': False,
-    'wandb_mode': 'online', # e.g. online, disabled
+    'debug': True,
+    'wandb_mode': 'disabled', # e.g. online, disabled
     'checkpoint_name': None,
-    'do_sweep': True,
+    'do_sweep': False,
 
     'disturbance_mode': None,
     'disturbance_strength': 0.,
@@ -1159,7 +257,7 @@ def prepare_data(config):
         prevent_disturbance = False
 
     if config.dataset == 'crossmoda':
-        training_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
+        training_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
             domain="source", state="l4", size=(128, 128, 128),
             ensure_labeled_pairs=True,
             max_load_num=config['train_set_max_len'],
@@ -1172,9 +270,9 @@ def prepare_data(config):
         print(f"Nonzero slices: " \
             f"{sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)*100}%"
         )
-        # validation_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
+        # validation_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
         #     domain="validation", state="l4", ensure_labeled_pairs=True)
-        # target_dataset = CrossMoDa_Data("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
+        # target_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
         #     domain="target", state="l4", ensure_labeled_pairs=True)
 
     elif config['dataset'] == 'organmnist3d':
@@ -1331,7 +429,11 @@ def get_module(module, keychain):
 
 def set_module(module, keychain, replacee):
     """Replaces any module inside a pytorch module for a given keychain with "replacee".
-       Use get_named_layers_leaves(module) to retrieve valid keychains for layers.
+       Use module.named_modules() to retrieve valid keychains for layers.
+       e.g.
+       first_keychain = list(module.keys())[0]
+       new_first_replacee = torch.nn.Conv1d(1,2,3)
+       set_module(first_keychain, torch.nn.Conv1d(1,2,3))
     """
 
     key_list = keychain.split('.')
@@ -1354,7 +456,7 @@ def save_model(_path, **statefuls):
 
 
 
-def get_model(config, dataset_len, num_classes, _path=None, device='cpu'):
+def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, device='cpu'):
     _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
 
     if config.use_mind:
@@ -1626,7 +728,8 @@ def train_DL(run_name, config, training_dataset):
         else:
             _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
 
-        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), _path=_path, device='cuda')
+        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
+            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, T_0=500, T_mult=2)
@@ -1862,7 +965,12 @@ def train_DL(run_name, config, training_dataset):
                     scheduler=scheduler, scheduler_dp=scheduler_dp,
                     embedding=embedding,
                     scaler=scaler)
-                (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), _path=_path, device='cuda')
+                (lraspp, optimizer, optimizer_dp, embedding, scaler) = \
+                    get_model(
+                        config, len(training_dataset),
+                        len(training_dataset.label_tags),
+                        THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
+                        _path=_path, device='cuda')
 
             print()
             print("### Validation")

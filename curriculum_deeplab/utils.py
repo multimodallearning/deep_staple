@@ -1,215 +1,233 @@
+import os
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-##### misc #####
+def dilate_label_class(b_label, class_max_idx, class_dilate_idx,
+                       use_2d, kernel_sz=3):
 
-def parameter_count(model):
-    print('# Parameters:', sum(p.numel() for p in model.parameters() if p.requires_grad))
+    if kernel_sz < 2:
+        return b_label
 
-def gpu_usage():
-    print('GPU usage (current/max): {:.2f} / {:.2f} GB'.format(torch.cuda.memory_allocated()*1e-9, torch.cuda.max_memory_allocated()*1e-9))
+    b_dilated_label = b_label
 
-##### kpts / graph #####
+    b_onehot = torch.nn.functional.one_hot(b_label.long(), class_max_idx+1)
+    class_slice = b_onehot[...,class_dilate_idx]
 
-def kpts_pt(kpts_world, shape, align_corners=None):
-    dtype = kpts_world.dtype
-    device = kpts_world.device
-    D, H, W = shape
+    if use_2d:
+        B, H, W = class_slice.shape
+        kernel = torch.ones([kernel_sz,kernel_sz]).long()
+        kernel = kernel.view(1,1,kernel_sz,kernel_sz)
+        class_slice = torch.nn.functional.conv2d(
+            class_slice.view(B,1,H,W), kernel, padding='same')
 
-    kpts_pt_ = (kpts_world.flip(-1) / (torch.tensor([W, H, D], dtype=dtype, device=device) - 1)) * 2 - 1
-    if not align_corners:
-        kpts_pt_ *= (torch.tensor([W, H, D], dtype=dtype, device=device) - 1)/torch.tensor([W, H, D], dtype=dtype, device=device)
-
-    return kpts_pt_
-
-def kpts_world(kpts_pt, shape, align_corners=None):
-    dtype = kpts_pt.dtype
-    device = kpts_pt.device
-    D, H, W = shape
-
-    if not align_corners:
-        kpts_pt /= (torch.tensor([W, H, D], dtype=dtype, device=device) - 1)/torch.tensor([W, H, D], dtype=dtype, device=device)
-    kpts_world_ = (((kpts_pt + 1) / 2) * (torch.tensor([W, H, D], dtype=dtype, device=device) - 1)).flip(-1)
-
-    return kpts_world_
-
-def flow_pt(flow_world, shape, align_corners=None):
-    dtype = flow_world.dtype
-    device = flow_world.device
-    D, H, W = shape
-
-    flow_pt_ = (flow_world.flip(-1) / (torch.tensor([W, H, D], dtype=dtype, device=device) - 1)) * 2
-    if not align_corners:
-        flow_pt_ *= (torch.tensor([W, H, D], dtype=dtype, device=device) - 1)/torch.tensor([W, H, D], dtype=dtype, device=device)
-
-    return flow_pt_
-
-def flow_world(flow_pt, shape, align_corners=None):
-    dtype = flow_pt.dtype
-    device = flow_pt.device
-    D, H, W = shape
-
-    if not align_corners:
-        flow_pt /= (torch.tensor([W, H, D], dtype=dtype, device=device) - 1)/torch.tensor([W, H, D], dtype=dtype, device=device)
-    flow_world_ = ((flow_pt / 2) * (torch.tensor([W, H, D], dtype=dtype, device=device) - 1)).flip(-1)
-
-    return flow_world_
-
-def random_kpts(mask, d, num_points=None):
-    _, _, D, H, W = mask.shape
-    device = mask.device
-
-    kpts = torch.nonzero(mask[:, :, ::d, ::d, ::d]).unsqueeze(0).float()[:, :, 2:]
-
-    if not num_points is None:
-        kpts = kpts[:, torch.randperm(kpts.shape[1])[:num_points], :]
-
-    return kpts_pt(kpts, (D//d, H//d, W//d))
-
-def knn_graph(kpts, k, include_self=False):
-    B, N, D = kpts.shape
-    device = kpts.device
-
-    dist = pdist(kpts)
-    ind = (-dist).topk(k + (1 - int(include_self)), dim=-1)[1][:, :, 1 - int(include_self):]
-    A = torch.zeros(B, N, N).to(device)
-    A[:, torch.arange(N).repeat(k), ind[0].t().contiguous().view(-1)] = 1
-    A[:, ind[0].t().contiguous().view(-1), torch.arange(N).repeat(k)] = 1
-
-    return ind, dist*A, A
-
-def lbp_graph(kpts_fixed, k):
-    device = kpts_fixed.device
-
-    A = knn_graph(kpts_fixed, k, include_self=False)[2][0]
-    edges = A.nonzero()
-    edges_idx = torch.zeros_like(A).long()
-    edges_idx[A.bool()] = torch.arange(edges.shape[0]).to(device)
-    edges_reverse_idx = edges_idx.t()[A.bool()]
-
-    return edges, edges_reverse_idx
-
-##### filter #####
-
-def filter1D(img, weight, dim, padding_mode='replicate'):
-    B, C, D, H, W = img.shape
-    N = weight.shape[0]
-
-    padding = torch.zeros(6,)
-    padding[[4 - 2 * dim, 5 - 2 * dim]] = N//2
-    padding = padding.long().tolist()
-
-    view = torch.ones(5,)
-    view[dim + 2] = -1
-    view = view.long().tolist()
-
-    return F.conv3d(F.pad(img.view(B*C, 1, D, H, W), padding, mode=padding_mode), weight.view(view)).view(B, C, D, H, W)
-
-def smooth(img, sigma):
-    device = img.device
-
-    sigma = torch.tensor([sigma]).to(device)
-    N = torch.ceil(sigma * 3.0 / 2.0).long().item() * 2 + 1
-
-    weight = torch.exp(-torch.pow(torch.linspace(-(N // 2), N // 2, N).to(device), 2) / (2 * torch.pow(sigma, 2)))
-    weight /= weight.sum()
-
-    img = filter1D(img, weight, 0)
-    img = filter1D(img, weight, 1)
-    img = filter1D(img, weight, 2)
-
-    return img
-
-def mean_filter(img, r):
-    device = img.device
-
-    weight = torch.ones((2*r+1,), device=device)/(2*r+1)
-
-    img = filter1D(img, weight, 0)
-    img = filter1D(img, weight, 1)
-    img = filter1D(img, weight, 2)
-
-    return img
-
-##### distance #####
-
-def pdist(x, p=2):
-    if p==1:
-        dist = torch.abs(x.unsqueeze(2) - x.unsqueeze(1)).sum(dim=3)
-    elif p==2:
-        xx = (x**2).sum(dim=2).unsqueeze(2)
-        yy = xx.permute(0, 2, 1)
-        dist = xx + yy - 2.0 * torch.bmm(x, x.permute(0, 2, 1))
-        dist[:, torch.arange(dist.shape[1]), torch.arange(dist.shape[2])] = 0
-    return dist
-
-def pdist2(x, y, p=2):
-    if p==1:
-        dist = torch.abs(x.unsqueeze(2) - y.unsqueeze(1)).sum(dim=3)
-    elif p==2:
-        xx = (x**2).sum(dim=2).unsqueeze(2)
-        yy = (y**2).sum(dim=2).unsqueeze(1)
-        dist = xx + yy - 2.0 * torch.bmm(x, y.permute(0, 2, 1))
-    return dist
-
-def ssd(kpts_fixed, feat_fixed, feat_moving, orig_shape, disp_radius=16, disp_step=2, patch_radius=3, alpha=1, unroll_factor=100):
-    device = kpts_fixed.device
-    N = kpts_fixed.shape[1]
-    C = feat_fixed.shape[1]
-    D, H, W = orig_shape
-
-    patch_step = disp_step # same stride necessary for fast implementation
-    patch = torch.stack(torch.meshgrid(torch.arange(0, 2 * patch_radius + 1, patch_step, device=device),
-                                       torch.arange(0, 2 * patch_radius + 1, patch_step, device=device),
-                                       torch.arange(0, 2 * patch_radius + 1, patch_step, device=device)), dim=3).view(1, -1, 3) - patch_radius
-    patch = flow_pt(patch, (D, H, W), align_corners=True).view(1, 1, -1, 1, 3)
-
-    patch_width = round(patch.shape[2] ** (1.0 / 3))
-
-    if patch_width % 2 == 0:
-        pad = [(patch_width - 1) // 2, (patch_width - 1) // 2 + 1]
     else:
-        pad = [(patch_width - 1) // 2, (patch_width - 1) // 2]
+        B, D, H, W = class_slice.shape
+        kernel = torch.ones([kernel_sz,kernel_sz,kernel_sz])
+        kernel = kernel.long().view(1,1,kernel_sz,kernel_sz,kernel_sz)
+        class_slice = torch.nn.functional.conv3d(
+            class_slice.view(B,1,D,H,W), kernel, padding='same')
 
-    disp = torch.stack(torch.meshgrid(torch.arange(- disp_step * (disp_radius + ((pad[0] + pad[1]) / 2)), (disp_step * (disp_radius + ((pad[0] + pad[1]) / 2))) + 1, disp_step, device=device),
-                                      torch.arange(- disp_step * (disp_radius + ((pad[0] + pad[1]) / 2)), (disp_step * (disp_radius + ((pad[0] + pad[1]) / 2))) + 1, disp_step, device=device),
-                                      torch.arange(- disp_step * (disp_radius + ((pad[0] + pad[1]) / 2)), (disp_step * (disp_radius + ((pad[0] + pad[1]) / 2))) + 1, disp_step, device=device)), dim=3).view(1, -1, 3)
-    disp = flow_pt(disp, (D, H, W), align_corners=True).view(1, 1, -1, 1, 3)
+    dilated_class_slice = torch.clamp(class_slice.squeeze(0), 0, 1)
+    b_dilated_label[dilated_class_slice.bool()] = class_dilate_idx
 
-    disp_width = disp_radius * 2 + 1
+    return b_dilated_label
 
-    cost = torch.zeros((1, N, disp_width, disp_width, disp_width), device=device)
-    split = np.array_split(np.arange(N), unroll_factor)
-    for i in range(unroll_factor):
-        feat_fixed_patch = F.grid_sample(feat_fixed, kpts_fixed[:, split[i], :].view(1, -1, 1, 1, 3) + patch, padding_mode='border', align_corners=True)
-        feat_moving_disp = F.grid_sample(feat_moving, kpts_fixed[:, split[i], :].view(1, -1, 1, 1, 3) + disp, padding_mode='border', align_corners=True)
-        corr = F.conv3d(feat_moving_disp.view(1, -1, disp_width + pad[0] + pad[1], disp_width + pad[0] + pad[1], disp_width + pad[0] + pad[1]), feat_fixed_patch.view(-1, 1, patch_width, patch_width, patch_width), groups = C * split[i].shape[0]).view(C, split[i].shape[0], disp_width, disp_width, disp_width)
-        patch_sum = (feat_fixed_patch ** 2).sum(dim=3).view(C, split[i].shape[0], 1, 1, 1)
-        disp_sum = (patch_width ** 3) * F.avg_pool3d((feat_moving_disp ** 2).view(C, -1, disp_width + pad[0] + pad[1], disp_width + pad[0] + pad[1], disp_width + pad[0] + pad[1]), patch_width, stride=1).view(C, split[i].shape[0], disp_width, disp_width, disp_width)
-        cost[0, split[i], :, :, :] = ((- 2 * corr + patch_sum + disp_sum)).sum(0)
 
-    cost *= (alpha/(patch_width ** 3))
 
-    return cost
+    # %%
+def in_notebook():
+    try:
+        get_ipython().__class__.__name__
+        return True
+    except NameError:
+        return False
 
-##### message passing #####
 
-def minconv(input):
-    device = input.device
-    disp_width = input.shape[-1]
 
-    disp1d = torch.linspace(-(disp_width//2), disp_width//2, disp_width, device=device)
-    regular1d = (disp1d.view(1,-1) - disp1d.view(-1,1)) ** 2
+# %%
+def interpolate_sample(b_image=None, b_label=None, scale_factor=1.,
+                       use_2d=False):
+    if use_2d:
+        scale = [scale_factor]*2
+        im_mode = 'bilinear'
+    else:
+        scale = [scale_factor]*3
+        im_mode = 'trilinear'
 
-    output = torch.min( input.view(-1, disp_width, 1, disp_width, disp_width) + regular1d.view(1, disp_width, disp_width, 1, 1), 1)[0]
-    output = torch.min(output.view(-1, disp_width, disp_width, 1, disp_width) + regular1d.view(1, 1, disp_width, disp_width, 1), 2)[0]
-    output = torch.min(output.view(-1, disp_width, disp_width, disp_width, 1) + regular1d.view(1, 1, 1, disp_width, disp_width), 3)[0]
+    if b_image is not None:
+        b_image = F.interpolate(
+            b_image.unsqueeze(1), scale_factor=scale, mode=im_mode, align_corners=True,
+            recompute_scale_factor=False
+        )
+        b_image = b_image.squeeze(1)
 
-    output = output - (torch.min(output.view(-1, disp_width**3), 1)[0]).view(-1, 1, 1, 1)
+    if b_label is not None:
+        b_label = F.interpolate(
+            b_label.unsqueeze(1).float(), scale_factor=scale, mode='nearest',
+            recompute_scale_factor=False
+        ).long()
+        b_label = b_label.squeeze(1)
 
-    return output.view_as(input)
+    return b_image, b_label
 
-def sparse_minconv(multi_data_cost, candidates_edges0, candidates_edges1):
-    regularised = torch.min(multi_data_cost.unsqueeze(1) + (candidates_edges0.unsqueeze(1) - candidates_edges1.unsqueeze(2)).pow(2).sum(3), 2)[0]
-    return regularised
+
+
+def augmentNoise(b_image, strength=0.05):
+    return b_image + strength*torch.randn_like(b_image)
+
+
+
+def spatial_augment(b_image=None, b_label=None,
+    bspline_num_ctl_points=6, bspline_strength=0.005, bspline_probability=.9,
+    affine_strength=0.08, add_affine_translation=0., affine_probability=.45,
+    pre_interpolation_factor=None,
+    use_2d=False,
+    b_grid_override=None):
+
+    """
+    2D/3D b-spline augmentation on image and segmentation mini-batch on GPU.
+    :input: b_image batch (torch.cuda.FloatTensor), b_label batch (torch.cuda.LongTensor)
+    :return: augmented Bx(D)xHxW image batch (torch.cuda.FloatTensor),
+    augmented Bx(D)xHxW seg batch (torch.cuda.LongTensor)
+    """
+
+    do_bspline = (np.random.rand() < bspline_probability)
+    do_affine = (np.random.rand() < affine_probability)
+
+    if pre_interpolation_factor:
+        b_image, b_label = interpolate_sample(b_image, b_label, pre_interpolation_factor, use_2d)
+
+    KERNEL_SIZE = 3
+
+    if b_image is None:
+        common_shape = b_label.shape
+        common_device = b_label.device
+
+    elif b_label is None:
+        common_shape = b_image.shape
+        common_device = b_image.device
+    else:
+        assert b_image.shape == b_label.shape, \
+            f"Image and label shapes must match but are {b_image.shape} and {b_label.shape}."
+        common_shape = b_image.shape
+        common_device = b_image.device
+
+    if b_grid_override is None:
+        if use_2d:
+            assert len(common_shape) == 3, \
+                f"Augmenting 2D. Input batch " \
+                f"should be BxHxW but is {common_shape}."
+            B,H,W = common_shape
+
+            identity = torch.eye(2,3).expand(B,2,3).to(common_device)
+            id_grid = F.affine_grid(identity, torch.Size((B,2,H,W)),
+                align_corners=False)
+
+            grid = id_grid
+
+            if do_bspline:
+                bspline = torch.nn.Sequential(
+                    torch.nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    torch.nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    torch.nn.AvgPool2d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
+                ).to(common_device)
+                # Add an extra *.5 factor to dim strength to make strength fit 3D case
+                dim_strength = (torch.tensor([H,W]).float()*bspline_strength*.5).to(common_device)
+                rand_control_points = dim_strength.view(1,2,1,1) * \
+                    (
+                        torch.randn(B, 2, bspline_num_ctl_points, bspline_num_ctl_points)
+                    ).to(common_device)
+
+                bspline_disp = bspline(rand_control_points)
+                bspline_disp = torch.nn.functional.interpolate(
+                    bspline_disp, size=(H,W), mode='bilinear', align_corners=True
+                ).permute(0,2,3,1)
+
+                grid += bspline_disp
+
+            if do_affine:
+                affine_matrix = (torch.eye(2,3).unsqueeze(0) + \
+                    affine_strength * torch.randn(B,2,3)).to(common_device)
+                # Add additional x,y offset
+                alpha = np.random.rand() * 2 * np.pi
+                offset_dir =  torch.tensor([np.cos(alpha), np.sin(alpha)])
+                affine_matrix[:,:,-1] = add_affine_translation * offset_dir
+                affine_disp = F.affine_grid(affine_matrix, torch.Size((B,1,H,W)),
+                                        align_corners=False)
+                grid += (affine_disp-id_grid)
+
+        else:
+            assert len(common_shape) == 4, \
+                f"Augmenting 3D. Input batch " \
+                f"should be BxDxHxW but is {common_shape}."
+            B,D,H,W = common_shape
+
+            identity = torch.eye(3,4).expand(B,3,4).to(common_device)
+            id_grid = F.affine_grid(identity, torch.Size((B,3,D,H,W)),
+                align_corners=False)
+
+            grid = id_grid
+
+            if do_bspline:
+                bspline = torch.nn.Sequential(
+                    torch.nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    torch.nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2)),
+                    torch.nn.AvgPool3d(KERNEL_SIZE,stride=1,padding=int(KERNEL_SIZE//2))
+                ).to(b_image.device)
+                dim_strength = (torch.tensor([D,H,W]).float()*bspline_strength).to(common_device)
+
+                rand_control_points = dim_strength.view(1,3,1,1,1)  * \
+                    (
+                        torch.randn(B, 3, bspline_num_ctl_points, bspline_num_ctl_points, bspline_num_ctl_points)
+                    ).to(b_image.device)
+
+                bspline_disp = bspline(rand_control_points)
+
+                bspline_disp = torch.nn.functional.interpolate(
+                    bspline_disp, size=(D,H,W), mode='trilinear', align_corners=True
+                ).permute(0,2,3,4,1)
+
+                grid += bspline_disp
+
+            if do_affine:
+                affine_matrix = (torch.eye(3,4).unsqueeze(0) + \
+                    affine_strength * torch.randn(B,3,4)).to(common_device)
+
+                # Add additional x,y,z offset
+                theta = np.random.rand() * 2 * np.pi
+                phi = np.random.rand() * 2 * np.pi
+                offset_dir =  torch.tensor([
+                    np.cos(phi)*np.sin(theta),
+                    np.sin(phi)*np.sin(theta),
+                    np.cos(theta)])
+                affine_matrix[:,:,-1] = add_affine_translation * offset_dir
+
+                affine_disp = F.affine_grid(affine_matrix,torch.Size((B,1,D,H,W)),
+                                        align_corners=False)
+
+                grid += (affine_disp-id_grid)
+    else:
+        # Override grid with external value
+        grid = b_grid_override
+
+    if b_image is not None:
+        b_image_out = F.grid_sample(
+            b_image.unsqueeze(1).float(), grid,
+            padding_mode='border', align_corners=False)
+        b_image_out = b_image_out.squeeze(1)
+    else:
+        b_image_out = None
+
+    if b_label is not None:
+        b_label_out = F.grid_sample(
+            b_label.unsqueeze(1).float(), grid,
+            mode='nearest', align_corners=False)
+        b_label_out = b_label_out.squeeze(1).long()
+    else:
+        b_label_out = None
+
+    b_out_grid = grid
+
+
+    return b_image_out, b_label_out, b_out_grid
