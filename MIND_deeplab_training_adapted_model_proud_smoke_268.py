@@ -35,27 +35,28 @@ import torchvision
 from torch.utils.data import Dataset, DataLoader
 import nibabel as nib
 
-from curriculum_deeplab.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader
 import wandb
 import matplotlib.pyplot as plt
 from IPython.display import display
 from sklearn.model_selection import KFold
+
 from mdl_seg_class.metrics import dice3d, dice2d
 from mdl_seg_class.visualization import visualize_seg
+
 from curriculum_deeplab.mindssc import mindssc
 from curriculum_deeplab.utils import interpolate_sample, in_notebook, dilate_label_class
+from curriculum_deeplab.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader
+from curriculum_deeplab.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D
+
+print(torch.__version__)
+print(torch.backends.cudnn.version())
+print(torch.cuda.get_device_name(0))
 
 if in_notebook:
     THIS_SCRIPT_DIR = os.path.abspath('')
 else:
     THIS_SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 print(f"Running in: {THIS_SCRIPT_DIR}")
-
-print(torch.__version__)
-print(torch.backends.cudnn.version())
-print(torch.cuda.get_device_name(0))
-
-
 
 def get_batch_dice_per_class(b_dice, class_tags, exclude_bg=True) -> dict:
     score_dict = {}
@@ -158,13 +159,15 @@ config_dict = DotDict({
 
     'batch_size': 32,
     'val_batch_size': 1,
+    'use_2d_normal_to': None,
+    'train_patchwise': True,
 
     'dataset': 'crossmoda',
     'reg_state': None,
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
-    'use_2d_normal_to': "W",
+
 
     'lr': 0.0005,
     'use_cosine_annealing': True,
@@ -464,17 +467,23 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     else:
         in_channels = 1
 
-    lraspp = torchvision.models.segmentation.lraspp_mobilenet_v3_large(
-        pretrained=False, progress=True, num_classes=num_classes
-    )
-    set_module(lraspp, 'backbone.0.0',
-        torch.nn.Conv2d(in_channels, 16, kernel_size=(3, 3), stride=(2, 2),
-                        padding=(1, 1), bias=False)
-    )
-    # set_module(lraspp, 'classifier.scale.2',
-    #     torch.nn.Identity()
-    # )
-    lraspp.register_parameter('sigmoid_offset', nn.Parameter(torch.tensor([0.])))
+    if config.use_2d_normal_to is not None:
+        # Use vanilla torch model
+        lraspp = torchvision.models.segmentation.lraspp_mobilenet_v3_large(
+            pretrained=False, progress=True, num_classes=num_classes
+        )
+        set_module(lraspp, 'backbone.0.0',
+            torch.nn.Conv2d(in_channels, 16, kernel_size=(3, 3), stride=(2, 2),
+                            padding=(1, 1), bias=False)
+        )
+    else:
+        # Use custom 3d model
+        lraspp = MobileNet_LRASPP_3D(
+            in_num=in_channels, num_classes=num_classes,
+            use_checkpointing=True
+        )
+
+    # lraspp.register_parameter('sigmoid_offset', nn.Parameter(torch.tensor([0.])))
     lraspp.to(device)
     print(f"Param count lraspp: {sum(p.numel() for p in lraspp.parameters())}")
 
@@ -661,20 +670,23 @@ def train_DL(run_name, config, training_dataset):
         # Read 2D dataset idxs which are used for training,
         # get their 3D super-ids and substract these from all 3D ids to get val_3d_idxs
 
-        # Only use one set of image i
-        trained_3d_dataset_ids = training_dataset.get_3d_from_2d_identifiers(train_idxs, 'id')
-        # trained_3d_trained_ids = training_dataset.switch_3d_identifiers(trained_3d_dataset_idxs)
-        all_3d_ids = training_dataset.get_3d_ids()
-        val_3d_ids = set(all_3d_ids) - set(trained_3d_dataset_ids)
-        val_3d_idxs = list({
-            training_dataset.extract_short_3d_id(_id):idx \
-                for idx, _id in enumerate(all_3d_ids) if _id in val_3d_ids}.values())
-
+        if config.use_2d_normal_to is not None:
+            n_dims = (-2,-1)
+            trained_3d_dataset_ids = training_dataset.get_3d_from_2d_identifiers(train_idxs, 'id')
+            # trained_3d_trained_ids = training_dataset.switch_3d_identifiers(trained_3d_dataset_idxs)
+            all_3d_ids = training_dataset.get_3d_ids()
+            val_3d_ids = set(all_3d_ids) - set(trained_3d_dataset_ids)
+            val_3d_idxs = list({
+                training_dataset.extract_short_3d_id(_id):idx \
+                    for idx, _id in enumerate(all_3d_ids) if _id in val_3d_ids}.values())
+        else:
+            n_dims = (-3,-2,-1)
+            val_3d_idxs = val_idxs
         print("Will run validation with these 3D samples:", val_3d_idxs)
 
         _, _, all_modified_segs = training_dataset.get_data()
 
-        non_empty_train_idxs = train_idxs[(all_modified_segs[train_idxs].sum(dim=(-2,-1)) > 0)]
+        non_empty_train_idxs = train_idxs[(all_modified_segs[train_idxs].sum(dim=n_dims) > 0)]
 
         ### Disturb dataset (only non-emtpy idxs)###
         proposed_disturbed_idxs = np.random.choice(non_empty_train_idxs, size=int(len(non_empty_train_idxs)*config.disturbed_percentage), replace=False)
@@ -748,12 +760,15 @@ def train_DL(run_name, config, training_dataset):
             for sample in training_dataset]))
         wise_labels, mod_labels = torch.stack(wise_labels), torch.stack(mod_labels)
 
-        wise_dice = dice2d(
+        dice_func = dice2d if config.use_2d_normal_to is not None else dice3d
+
+        wise_dice = dice_func(
             torch.nn.functional.one_hot(wise_labels, len(training_dataset.label_tags)),
             torch.nn.functional.one_hot(mod_labels, len(training_dataset.label_tags)),
             one_hot_torch_style=True, nan_for_unlabeled_target=False
         )
-        gt_num = (mod_labels > 0).sum(dim=(-2,-1))
+
+        gt_num = (mod_labels > 0).sum(dim=n_dims)
         t_metric = (gt_num+np.exp(1)).log()+np.exp(1)
 
         if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
@@ -804,20 +819,20 @@ def train_DL(run_name, config, training_dataset):
                     b_img = b_img.unsqueeze(1)
                 ### Forward pass ###
                 with amp.autocast(enabled=True):
-                    assert b_img.dim() == 4, \
-                        f"Input image for model must be 4D: BxCxHxW but is {b_img.shape}"
+                    assert b_img.dim() == len(n_dims)+2, \
+                        f"Input image for model must be {len(n_dims)+2}D: BxCxSPATIAL but is {b_img.shape}"
 
                     logits = lraspp(b_img)['out']
 
                     ### Calculate loss ###
-                    assert logits.dim() == 4, \
-                        f"Input shape for loss must be BxNUM_CLASSESxHxW but is {logits.shape}"
-                    assert b_seg_modified.dim() == 3, \
-                        f"Target shape for loss must be BxHxW but is {b_seg_modified.shape}"
+                    assert logits.dim() == len(n_dims)+2, \
+                        f"Input shape for loss must be BxNUM_CLASSESxSPATIAL but is {logits.shape}"
+                    assert b_seg_modified.dim() == len(n_dims)+1, \
+                        f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
 
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
-                        batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
-                        bin_list = [slc.view(-1).bincount() for slc in b_seg_modified]
+                        # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
+                        # bin_list = [slc.view(-1).bincount() for slc in b_seg_modified]
                         for b_idx, _bins in enumerate(bin_list):
                             batch_bins[b_idx][:len(_bins)] = _bins
 
@@ -837,7 +852,7 @@ def train_DL(run_name, config, training_dataset):
                         logits_for_score = logits.argmax(1)
 
                         if config.use_risk_regularization:
-                            p_pred_num = (logits_for_score > 0).sum(dim=(-2,-1)).detach()
+                            p_pred_num = (logits_for_score > 0).sum(dim=n_dims).detach()
                             risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
                             loss = (loss*weight).sum() + risk_regularization.sum()
                         else:
@@ -879,7 +894,7 @@ def train_DL(run_name, config, training_dataset):
                 epx_losses.append(loss.item())
 
                 # Calculate dice score
-                b_dice = dice2d(
+                b_dice = dice_func(
                     torch.nn.functional.one_hot(logits_for_score, len(training_dataset.label_tags)),
                     torch.nn.functional.one_hot(b_seg, len(training_dataset.label_tags)), # Calculate dice score with original segmentation (no disturbance)
                     one_hot_torch_style=True
@@ -1119,7 +1134,7 @@ def train_DL(run_name, config, training_dataset):
 
                 masked_weights = all_weights * masks
                 masked_weights[masked_weights==0.] = float('nan')
-                dp_weights = np.nanmean(masked_weights.detach().cpu(), axis=(-2,-1))
+                dp_weights = np.nanmean(masked_weights.detach().cpu(), axis=n_dims)
 
                 weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/data_parameter_weightmap.png")
 
