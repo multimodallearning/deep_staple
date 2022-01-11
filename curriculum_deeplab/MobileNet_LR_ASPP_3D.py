@@ -11,6 +11,8 @@ ctx:
     ctx should be a dictionary like this: {'low': low_level_feature_map, 'high': high_level_feature_map}
     with feature maps coming from a backbone network used to compute the features for the model
 """
+from collections import OrderedDict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,9 +23,9 @@ class LRASPPHead_3d(nn.Module):
     def __init__(
             self,
             low_channels: int,
+            inter_channels: int,
             high_channels: int,
-            num_classes: int,
-            inter_channels: int
+            num_classes: int
     ) -> None:
         super().__init__()
         self.cbr = nn.Sequential(
@@ -207,8 +209,12 @@ class MobileNet_ASPP_3D(torch.nn.Module):
             y = torch.cat((x1, F.interpolate(y, scale_factor=2)), 1)
             y1 = self.head(y)
 
-        output = F.interpolate(y1, scale_factor=2, mode='trilinear', align_corners=False)
-        return output
+        out = F.interpolate(y1, scale_factor=2, mode='trilinear', align_corners=False)
+
+        result = OrderedDict()
+        result["out"] = out
+
+        return result
 
     def apply(self, init_func=None):
         if init_func:
@@ -237,9 +243,9 @@ class MobileNet_LRASPP_3D(MobileNet_ASPP_3D):
         super().__init__(in_num, num_classes, use_checkpointing)
 
         self.head = LRASPPHead_3d(
-            high_channels=960,
+            high_channels=16,
             inter_channels=128,
-            low_channels=40,
+            low_channels=128,
             num_classes=num_classes,
         )
 
