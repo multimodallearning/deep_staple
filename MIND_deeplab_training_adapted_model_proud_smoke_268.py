@@ -48,7 +48,6 @@ from mdl_seg_class.metrics import dice3d, dice2d
 from mdl_seg_class.visualization import visualize_seg
 from curriculum_deeplab.mindssc import mindssc
 
-
 print(torch.__version__)
 print(torch.backends.cudnn.version())
 print(torch.cuda.get_device_name(0))
@@ -1063,7 +1062,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'cummulate_combined_best',
+    'reg_state': None,
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -1073,7 +1072,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -2134,12 +2133,12 @@ sweep_config_dict = dict(
         # reg_state=dict(
         #     values=['best','combined']
         # ),
-        # disturbance_strength=dict(
-        #     values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
-        # ),
-        # disturbed_percentage=dict(
-        #     values=[0.3, 0.6]
-        # ),
+        disturbance_strength=dict(
+            values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
+        ),
+        disturbed_percentage=dict(
+            values=[0.3, 0.6]
+        ),
         data_param_mode=dict(
             values=[
                 DataParamMode.INSTANCE_PARAMS,
