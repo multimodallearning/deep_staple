@@ -143,7 +143,7 @@ class CrossmodaHybridIdLoader(Dataset):
         self.label_paths = {}
 
         if debug:
-            files = files[:4]
+            files = files[:10]
 
 
         for _path in files:
@@ -385,6 +385,7 @@ class CrossmodaHybridIdLoader(Dataset):
         ))
 
     def get_2d_ids(self):
+        assert self.use_2d(), "Dataloader does not provide 2D data."
         return sorted(list(
             set(self.img_data_2d.keys())
             .union(set(self.label_data_2d.keys()))
@@ -416,6 +417,8 @@ class CrossmodaHybridIdLoader(Dataset):
         return id_dicts
 
     def switch_2d_identifiers(self, _2d_identifiers):
+        assert self.use_2d(), "Dataloader does not provide 2D data."
+
         if isinstance(_2d_identifiers, (torch.Tensor, np.ndarray)):
             _2d_identifiers = _2d_identifiers.tolist()
         elif not isinstance(_2d_identifiers, Iterable) or isinstance(_2d_identifiers, str):
@@ -446,7 +449,9 @@ class CrossmodaHybridIdLoader(Dataset):
         return vals[0] if len(vals) == 1 else vals
 
     def get_3d_from_2d_identifiers(self, _2d_identifiers, retrn='id'):
+        assert self.use_2d(), "Dataloader does not provide 2D data."
         assert retrn in ['id', 'idx']
+        
         if isinstance(_2d_identifiers, (torch.Tensor, np.ndarray)):
             _2d_identifiers = _2d_identifiers.tolist()
         elif not isinstance(_2d_identifiers, Iterable) or isinstance(_2d_identifiers, str):
