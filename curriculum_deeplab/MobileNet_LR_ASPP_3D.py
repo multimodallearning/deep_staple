@@ -203,8 +203,12 @@ class MobileNet_ASPP_3D(torch.nn.Module):
             high = checkpoint(
                 CheckpointingGradWrapper(self.him_slice), ctx, self.grad_dummy
             )
-            low = checkpoint(self.lom_slice, high)
-            low = checkpoint(self.aspp, low)
+            low = checkpoint(
+                CheckpointingGradWrapper(self.lom_slice), high, self.grad_dummy
+            )
+            low = checkpoint(
+                CheckpointingGradWrapper(self.aspp), low, self.grad_dummy
+            )
             # Skip-connection
             hilo_dict = OrderedDict(low=low, high=high)
 
