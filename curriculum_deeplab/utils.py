@@ -3,6 +3,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from enum import Enum, auto
+class LabelDisturbanceMode(Enum):
+    FLIP_ROLL = auto()
+    AFFINE = auto()
+
 def dilate_label_class(b_label, class_max_idx, class_dilate_idx,
                        use_2d, kernel_sz=3):
 

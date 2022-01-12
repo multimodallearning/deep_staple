@@ -25,6 +25,7 @@ import copy
 from pathlib import Path
 
 import functools
+from enum import Enum, auto
 
 import numpy as np
 import torch
@@ -44,7 +45,7 @@ from mdl_seg_class.metrics import dice3d, dice2d
 from mdl_seg_class.visualization import visualize_seg
 
 from curriculum_deeplab.mindssc import mindssc
-from curriculum_deeplab.utils import interpolate_sample, in_notebook, dilate_label_class
+from curriculum_deeplab.utils import interpolate_sample, in_notebook, dilate_label_class, LabelDisturbanceMode
 from curriculum_deeplab.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader
 from curriculum_deeplab.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D
 
@@ -124,10 +125,7 @@ def make_3d_from_2d_stack(b_input, stack_dim, orig_stack_size):
     else:
         raise ValueError(f"stack_dim is '{stack_dim}' but must be 'D' or 'H' or 'W'.")
 
-from enum import Enum, auto
-class LabelDisturbanceMode(Enum):
-    FLIP_ROLL = auto()
-    AFFINE = auto()
+
 
 class DataParamMode(Enum):
     INSTANCE_PARAMS = auto()
@@ -191,7 +189,7 @@ config_dict = DotDict({
     'checkpoint_name': None,
     'do_sweep': False,
 
-    'disturbance_mode': None,
+    'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 2.,
     'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,

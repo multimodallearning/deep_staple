@@ -18,7 +18,7 @@ from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 import nibabel as nib
 from tqdm import tqdm
-from .utils import interpolate_sample, augmentNoise, spatial_augment
+from .utils import interpolate_sample, augmentNoise, spatial_augment, LabelDisturbanceMode
 
 @contextmanager
 def torch_manual_seeded(seed):
