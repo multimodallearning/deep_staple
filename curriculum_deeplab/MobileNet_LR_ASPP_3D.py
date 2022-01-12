@@ -199,7 +199,6 @@ class MobileNet_ASPP_3D(torch.nn.Module):
 
     def forward(self, ctx):
         if self.use_checkpointing:
-            one_tens_w_grad =
             # This wrapper is needed to activate requires
             high = checkpoint(
                 CheckpointingGradWrapper(self.him_slice), ctx, self.grad_dummy
