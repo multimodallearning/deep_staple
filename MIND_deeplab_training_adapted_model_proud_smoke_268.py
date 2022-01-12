@@ -1063,7 +1063,7 @@ config_dict = DotDict({
     'val_batch_size': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': 'cummulate_combined_best',
+    'reg_state': None,
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -2122,24 +2122,20 @@ sweep_config_dict = dict(
     method='grid',
     metric=dict(goal='maximize', name='scores/val_dice_mean_tumour_fold0'),
     parameters=dict(
-        # disturbance_mode=dict(
-        #     values=[
-        #        'LabelDisturbanceMode.AFFINE',
-        #     ]
-        # ),
-        #     values=[
-        #        'LabelDisturbanceMode.AFFINE',
-        #     ]
-        # ),
+        disturbance_mode=dict(
+            values=[
+               'LabelDisturbanceMode.AFFINE',
+            ]
+        ),
         # reg_state=dict(
         #     values=['best','combined']
         # ),
-        # disturbance_strength=dict(
-        #     values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
-        # ),
-        # disturbed_percentage=dict(
-        #     values=[0.3, 0.6]
-        # ),
+        disturbance_strength=dict(
+            values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
+        ),
+        disturbed_percentage=dict(
+            values=[0.3, 0.6]
+        ),
         data_param_mode=dict(
             values=[
                 DataParamMode.INSTANCE_PARAMS,
