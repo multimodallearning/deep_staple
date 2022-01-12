@@ -126,17 +126,17 @@ class ResBlock(torch.nn.Module):
 
 
 class Backbone_3d(torch.nn.Sequential):
+
     def __init__(self, in_channels, mid_channels, out_channels, mid_stride):
-        super().__init__()
+        super().__init__(self)
+        self.add_module('0', nn.Identity())
+        pre_len = len(self)
 
-        self.backbone = []
-        self.backbone.append(nn.Identity())
-
-        for i in range(len(in_channels)):
-            inc = int(in_channels[i])
-            midc = int(mid_channels[i])
-            outc = int(out_channels[i])
-            strd = int(mid_stride[i])
+        for c_idx in range(len(in_channels)):
+            inc = int(in_channels[c_idx])
+            midc = int(mid_channels[c_idx])
+            outc = int(out_channels[c_idx])
+            strd = int(mid_stride[c_idx])
 
             layer = nn.Sequential(
                 nn.Conv3d(inc,midc,1,bias=False),
@@ -146,20 +146,13 @@ class Backbone_3d(torch.nn.Sequential):
                 nn.Conv3d(midc,outc,1,bias=False),nn.BatchNorm3d(outc)
             )
 
-            if i == 0:
+            if c_idx == 0:
                 layer[0] = nn.Conv3d(inc, midc, 3, padding=1, stride=2, bias=False)
             if (inc==outc)&(strd==1):
-                self.backbone.append(ResBlock(layer))
+                self.add_module(str(pre_len+c_idx), ResBlock(layer))
             else:
-                self.backbone.append(layer)
+                self.add_module(str(pre_len+c_idx), layer)
 
-        self.backbone = nn.Sequential(*self.backbone)
-
-    def forward(self, ctx):
-        return self.backbone(ctx)
-
-    def __getitem__(self, idx):
-        return self.backbone[idx]
 
 
 
@@ -167,6 +160,7 @@ class Backbone_3d(torch.nn.Sequential):
 class MobileNet_ASPP_3D(torch.nn.Module):
     def __init__(self, in_num, num_classes, use_checkpointing=True):
         super().__init__()
+
         self.use_checkpointing = use_checkpointing
         self.in_channels = torch.Tensor([in_num,16,24,24,32,32,32,64]).long()
         self.mid_channels = torch.Tensor([32,96,144,144,192,192,192,384]).long()
@@ -179,11 +173,17 @@ class MobileNet_ASPP_3D(torch.nn.Module):
             self.out_channels,
             self.mid_stride
         )
+        aspp_out_channels = 128
+        self.aspp = ASPP_3d(64,(2,4,8,16), aspp_out_channels)
 
-        self.aspp = ASPP_3d(64,(2,4,8,16),128)#ASPP_3d(64,(1,),128)#
+        # stage_indices = [0] + [i for i, b in enumerate(self.backbone) if getattr(b, "_is_cn", False)] + [len(self.backbone) - 1]
+        # low_pos = stage_indices[-4]
+        # high_pos = stage_indices[-1]  # use C5 which has output_stride = 16
+        # low_channels = self.backbone[low_pos].out_channels
+        # high_channels = self.backbone[high_pos].out_channels
 
         self.head = nn.Sequential(
-            nn.Conv3d(128+16, 64, 1, padding=0,groups=1, bias=False),
+            nn.Conv3d(aspp_out_channels+16, 64, 1, padding=0,groups=1, bias=False),
             nn.BatchNorm3d(64),nn.ReLU(),
             nn.Conv3d(64, 64, 3, groups=1,padding=1, bias=False),
             nn.BatchNorm3d(64),nn.ReLU(),
@@ -192,24 +192,35 @@ class MobileNet_ASPP_3D(torch.nn.Module):
         # Do I need to call this?
         self.apply()
 
+        self.him_slice = nn.Sequential(*list(self.backbone.children())[:2])
+        self.lom_slice = nn.Sequential(*list(self.backbone.children())[2:])
+        self.grad_dummy = torch.tensor(1., requires_grad=True)
+
+
     def forward(self, ctx):
         if self.use_checkpointing:
-            high = checkpoint(self.backbone[:2], ctx)
-            low = checkpoint(self.backbone[2:], high)
+            one_tens_w_grad =
+            # This wrapper is needed to activate requires
+            high = checkpoint(
+                CheckpointingGradWrapper(self.him_slice), ctx, self.grad_dummy
+            )
+            low = checkpoint(self.lom_slice, high)
             low = checkpoint(self.aspp, low)
             # Skip-connection
-            # y = torch.cat((x1, F.interpolate(low, scale_factor=2)), 1)
-            y1 = checkpoint(self.head, {"low": low, "high": high})
+            hilo_dict = OrderedDict(low=low, high=high)
+
+            # This wrapper is needed to activate requires
+            y1 = checkpoint(CheckpointingGradWrapper(self.head), hilo_dict, self.grad_dummy)
 
         else:
-            x1 = self.backbone[:2](ctx)
-            x2 = self.backbone[2:](x1)
-            y = self.aspp(x2)
+            high = self.him_slice(ctx)
+            low = self.lom_slice(high)
+            low = self.aspp(low)
             # Skip-connection
-            y = torch.cat((x1, F.interpolate(y, scale_factor=2)), 1)
-            y1 = self.head(y)
+            hilo_dict = OrderedDict(low=low, high=high)
+            y1 = self.head(hilo_dict)
 
-        out = F.interpolate(y1, scale_factor=2, mode='trilinear', align_corners=False)
+        out = F.interpolate(y1, size=ctx.shape[-3:], mode='trilinear', align_corners=False)
 
         result = OrderedDict()
         result["out"] = out
@@ -249,5 +260,14 @@ class MobileNet_LRASPP_3D(MobileNet_ASPP_3D):
             num_classes=num_classes,
         )
 
-    def forward(self, ctx):
-        return super().forward(ctx)
+
+class CheckpointingGradWrapper(nn.Module):
+    # see https://discuss.pytorch.org/t/checkpoint-with-no-grad-requiring-inputs-problem/19117/11
+    def __init__(self, module):
+        super().__init__()
+        self.module = module
+
+    def forward(self, ctx, dummy_arg=None):
+        assert dummy_arg.requires_grad
+        ctx = self.module(ctx)
+        return ctx
