@@ -46,7 +46,7 @@ from mdl_seg_class.visualization import visualize_seg
 
 from curriculum_deeplab.mindssc import mindssc
 from curriculum_deeplab.utils import interpolate_sample, in_notebook, dilate_label_class, LabelDisturbanceMode
-from curriculum_deeplab.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader
+from curriculum_deeplab.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader, get_crossmoda_data_load_closure
 from curriculum_deeplab.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D
 
 print(torch.__version__)
@@ -155,9 +155,9 @@ config_dict = DotDict({
     'use_mind': False,
     'epochs': 40,
 
-    'batch_size': 32,
+    'batch_size': 16,
     'val_batch_size': 1,
-    'use_2d_normal_to': "W",
+    'use_2d_normal_to': None,
     'train_patchwise': True,
 
     'dataset': 'crossmoda',
@@ -184,8 +184,8 @@ config_dict = DotDict({
 
     'do_plot': False,
     'save_dp_figures': False,
-    'debug': False,
-    'wandb_mode': 'online', # e.g. online, disabled
+    'debug': True,
+    'wandb_mode': 'disabled', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -259,16 +259,21 @@ def prepare_data(config):
     if config.dataset == 'crossmoda':
         # Use double size in 2D prediction, normal size in 3D
         pre_interpolation_factor = 2. if config.use_2d_normal_to is not None else 1.
-
-        training_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
-            domain="source", state="l4", size=(128, 128, 128),
+        clsre = get_crossmoda_data_load_closure(
+            base_dir="/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
+            domain='source', state='l4', use_additional_data=False,
+            size=(128,128,128), resample=True, normalize=True, crop_3d_w_dim_range=config.crop_3d_w_dim_range,
             ensure_labeled_pairs=True,
-            max_load_num=config['train_set_max_len'],
-            crop_3d_w_dim_range=config['crop_3d_w_dim_range'], crop_2d_slices_gt_num_threshold=config['crop_2d_slices_gt_num_threshold'],
-            use_2d_normal_to=config['use_2d_normal_to'],
+            debug=config.debug
+        )
+        training_dataset = CrossmodaHybridIdLoader(
+            clsre,
+            ensure_labeled_pairs=True,
+            max_load_3d_num=config.train_set_max_len,
             modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
-            pre_interpolation_factor=pre_interpolation_factor,
-            debug=config['debug']
+            use_2d_normal_to=config.use_2d_normal_to,
+            crop_2d_slices_gt_num_threshold=config.crop_2d_slices_gt_num_threshold,
+            pre_interpolation_factor=pre_interpolation_factor
         )
         training_dataset.eval()
         print(f"Nonzero slices: " \
@@ -278,6 +283,30 @@ def prepare_data(config):
         #     domain="validation", state="l4", ensure_labeled_pairs=True)
         # target_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
         #     domain="target", state="l4", ensure_labeled_pairs=True)
+
+    if config.dataset == 'ixi':
+        raise NotImplementedError()
+        # Use double size in 2D prediction, normal size in 3D
+        pre_interpolation_factor = 2. if config.use_2d_normal_to is not None else 1.
+        clsre = get_ixi_data_load_closure()
+        training_dataset = IXIHybridIdLoader(
+            clsre,
+            ensure_labeled_pairs=True,
+            max_load_3d_num=config.train_set_max_len,
+            modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
+            use_2d_normal_to=config.use_2d_normal_to,
+            crop_2d_slices_gt_num_threshold=config.crop_2d_slices_gt_num_threshold,
+            pre_interpolation_factor=pre_interpolation_factor
+        )
+        training_dataset.eval()
+        print(f"Nonzero slices: " \
+            f"{sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)*100}%"
+        )
+        # validation_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
+        #     domain="validation", state="l4", ensure_labeled_pairs=True)
+        # target_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
+        #     domain="target", state="l4", ensure_labeled_pairs=True)
+
 
     elif config['dataset'] == 'organmnist3d':
         training_dataset = WrapperOrganMNIST3D(
