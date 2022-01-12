@@ -172,7 +172,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -192,8 +192,8 @@ config_dict = DotDict({
     'do_sweep': False,
 
     'disturbance_mode': None,
-    'disturbance_strength': 0.,
-    'disturbed_percentage': .0,
+    'disturbance_strength': 2.,
+    'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
@@ -630,15 +630,21 @@ def map_embedding_idxs(idxs, grid_size_y, grid_size_x):
         t_sz = grid_size_y * grid_size_x
         return ((idxs*t_sz).long().repeat(t_sz).view(t_sz, idxs.numel())+torch.tensor(range(t_sz)).to(idxs).view(t_sz,1)).permute(1,0).reshape(-1)
 
-def inference_wrap(lraspp, b_img, use_mind=True):
+def inference_wrap(lraspp, img, use_2d, use_mind):
     with torch.inference_mode():
-        if use_mind:
-            b_out = lraspp(
-                mindssc(b_img.view(1,1,1,b_img.shape[-2],b_img.shape[-1]).float()).squeeze(2)
-            )['out']
-        else:
-            b_out = lraspp(b_img.view(1,1,b_img.shape[-2],b_img.shape[-1]).float())['out']
+        b_img = img.unsqueeze(0).unsqueeze(0).float()
+        if use_2d and use_mind:
+            # MIND 2D, in Bx1x1xHxW, out BxMINDxHxW
+            b_img = mindssc(b_img.unsqueeze(0)).squeeze(2)
+        elif not use_2d and use_mind:
+            # MIND 3D in Bx1xDxHxW out BxMINDxDxHxW
+            b_img = mindssc(b_img)
+        elif use_2d or not use_2d:
+            # 2D Bx1xHxW
+            # 3D out Bx1xDxHxW
+            pass
 
+        b_out = lraspp(b_img)['out']
         b_out = b_out.argmax(1)
         return b_out
 
@@ -816,10 +822,10 @@ def train_DL(run_name, config, training_dataset):
                 b_seg = b_seg.cuda()
                 b_spat_aug_grid = b_spat_aug_grid.cuda()
 
-                if training_dataset.use_2d_normal_to is not None and config.use_mind:
+                if training_dataset.use_2d() and config.use_mind:
                     # MIND 2D, in Bx1x1xHxW, out BxMINDxHxW
                     b_img = mindssc(b_img.unsqueeze(1).unsqueeze(1)).squeeze(2)
-                elif training_dataset.use_2d_normal_to is None and config.use_mind:
+                elif not training_dataset.use_2d() and config.use_mind:
                     # MIND 3D
                     b_img = mindssc(b_img.unsqueeze(1))
                 else:
@@ -841,12 +847,12 @@ def train_DL(run_name, config, training_dataset):
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
                         # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
                         # bin_list = [slc.view(-1).bincount() for slc in b_seg_modified]
-                        for b_idx, _bins in enumerate(bin_list):
-                            batch_bins[b_idx][:len(_bins)] = _bins
+                        # for b_idx, _bins in enumerate(bin_list):
+                        #     batch_bins[b_idx][:len(_bins)] = _bins
+                        # loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
 
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
-                        # loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
-                        loss = loss.mean((-1,-2))
+                        loss = loss.mean(n_dims)
 
                         bare_weight = embedding(b_idxs_dataset).squeeze()
 
@@ -1017,7 +1023,7 @@ def train_DL(run_name, config, training_dataset):
                         b_val_img = b_val_img.unsqueeze(1).float().cuda()
                         b_val_seg = b_val_seg.cuda()
 
-                        if training_dataset.use_2d_normal_to is not None:
+                        if training_dataset.use_2d():
                             b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=training_dataset.use_2d_normal_to)
 
                             if config.use_mind:
@@ -1111,21 +1117,21 @@ def train_DL(run_name, config, training_dataset):
                         sample['image'],
                         sample['label'],
                         sample['modified_label'],
-                        inference_wrap(lraspp, sample['image'].cuda(), use_mind=config.use_mind)
+                        inference_wrap(lraspp, sample['image'].cuda(), use_2d=training_dataset.use_2d(), use_mind=config.use_mind)
                     )
                     save_data.append(data_tuple)
 
                 save_data = sorted(save_data, key=lambda tpl: tpl[0])
                 (dp_weight, disturb_flags,
-                 d_ids, dataset_idxs, _2d_imgs,
-                 _2d_labels, _2d_modified_labels, _2d_predictions) = zip(*save_data)
+                 d_ids, dataset_idxs, _imgs,
+                 _labels, _modified_labels, _predictions) = zip(*save_data)
 
                 dp_weight = torch.stack(dp_weight)
                 dataset_idxs = torch.stack(dataset_idxs)
-                _2d_imgs = torch.stack(_2d_imgs)
-                _2d_labels = torch.stack(_2d_labels)
-                _2d_modified_labels = torch.stack(_2d_modified_labels)
-                _2d_predictions = torch.stack(_2d_predictions)
+                _imgs = torch.stack(_imgs)
+                _labels = torch.stack(_labels)
+                _modified_labels = torch.stack(_modified_labels)
+                _predictions = torch.stack(_predictions)
 
                 torch.save(
                     {
@@ -1133,15 +1139,18 @@ def train_DL(run_name, config, training_dataset):
                         'disturb_flags': disturb_flags,
                         'd_ids': d_ids,
                         'dataset_idxs': dataset_idxs.cpu(),
-                        'labels': _2d_labels.cpu().to_sparse(),
-                        'modified_labels': _2d_modified_labels.cpu().to_sparse(),
-                        'train_predictions': _2d_predictions.cpu().to_sparse(),
+                        'labels': _labels.cpu().to_sparse(),
+                        'modified_labels': _modified_labels.cpu().to_sparse(),
+                        'train_predictions': _predictions.cpu().to_sparse(),
                     },
                     train_label_snapshot_path
                 )
 
             elif str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                 # Log histogram of clean and disturbed parameters
+                if not training_dataset.use_2d():
+                    raise NotImplementedError("Script does not support 3D model and GRIDDED_INSTANCE_PARAMS yet.")
+
                 m_all_idxs = map_embedding_idxs(all_idxs,
                         config.grid_size_y, config.grid_size_x
                 ).cuda()
@@ -1235,10 +1244,24 @@ def train_DL(run_name, config, training_dataset):
             overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
                 for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
 
-            visualize_seg(in_type="batch_2D",
-                img=interpolate_sample(b_label=_2d_labels, scale_factor=.5, use_2d=True)[1].unsqueeze(1),
-                seg=interpolate_sample(b_label=4*_2d_predictions.squeeze(1), scale_factor=.5, use_2d=True)[1],
-                ground_truth=interpolate_sample(b_label=_2d_modified_labels, scale_factor=.5, use_2d=True)[1],
+            if training_dataset.use_2d():
+                reduce_dim = None
+                in_type = "batch_2D"
+            else:
+                reduce_dim = "W"
+                in_type = "batch_3D"
+
+            use_2d = training_dataset.use_2d()
+            scf = 1/training_dataset.pre_interpolation_factor
+
+            show_img = interpolate_sample(b_label=_labels, scale_factor=scf, use_2d=use_2d)[1].unsqueeze(1)
+            show_seg = interpolate_sample(b_label=4*_predictions.squeeze(1), scale_factor=scf, use_2d=use_2d)[1]
+            show_gt = interpolate_sample(b_label=_modified_labels, scale_factor=scf, use_2d=use_2d)[1]
+
+            visualize_seg(in_type=in_type, reduce_dim=reduce_dim,
+                img=show_img, # Expert label in BW
+                seg=show_seg, # Prediction in blue
+                ground_truth=show_gt, # Modified label in red
                 crop_to_non_zero_seg=False,
                 alpha_seg = .5,
                 alpha_gt = .5,
@@ -1248,6 +1271,7 @@ def train_DL(run_name, config, training_dataset):
                 frame_elements=disturb_flags,
                 file_path=seg_viz_out_path,
             )
+
         # End of fold loop
 
 
