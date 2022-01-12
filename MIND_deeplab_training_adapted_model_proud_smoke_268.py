@@ -152,12 +152,12 @@ config_dict = DotDict({
     # 'fold_override': 0,
     # 'checkpoint_epx': 0,
 
-    'use_mind': True,
+    'use_mind': False,
     'epochs': 40,
 
     'batch_size': 32,
     'val_batch_size': 1,
-    'use_2d_normal_to': None,
+    'use_2d_normal_to': "W",
     'train_patchwise': True,
 
     'dataset': 'crossmoda',
@@ -184,8 +184,8 @@ config_dict = DotDict({
 
     'do_plot': False,
     'save_dp_figures': False,
-    'debug': True,
-    'wandb_mode': 'disabled', # e.g. online, disabled
+    'debug': False,
+    'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
