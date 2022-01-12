@@ -159,7 +159,7 @@ config_dict = DotDict({
 
     'batch_size': 32,
     'val_batch_size': 1,
-    'use_2d_normal_to': "W",
+    'use_2d_normal_to': None,
     'train_patchwise': True,
 
     'dataset': 'crossmoda',
@@ -816,10 +816,10 @@ def train_DL(run_name, config, training_dataset):
                 b_seg = b_seg.cuda()
                 b_spat_aug_grid = b_spat_aug_grid.cuda()
 
-                if config.use_2d_normal_to is not None and config.use_mind:
+                if training_dataset.use_2d_normal_to is not None and config.use_mind:
                     # MIND 2D, in Bx1x1xHxW, out BxMINDxHxW
                     b_img = mindssc(b_img.unsqueeze(1).unsqueeze(1)).squeeze(2)
-                elif config.use_2d_normal_to is None and config.use_mind:
+                elif training_dataset.use_2d_normal_to is None and config.use_mind:
                     # MIND 3D
                     b_img = mindssc(b_img.unsqueeze(1))
                 else:
