@@ -154,12 +154,12 @@ config_dict = DotDict({
     # 'fold_override': 0,
     # 'checkpoint_epx': 0,
 
-    'use_mind': False,
+    'use_mind': True,
     'epochs': 40,
 
     'batch_size': 32,
     'val_batch_size': 1,
-    'use_2d_normal_to': None,
+    'use_2d_normal_to': "W",
     'train_patchwise': True,
 
     'dataset': 'crossmoda',
@@ -167,7 +167,6 @@ config_dict = DotDict({
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
-
 
     'lr': 0.0005,
     'use_cosine_annealing': True,
@@ -260,6 +259,9 @@ def prepare_data(config):
         prevent_disturbance = False
 
     if config.dataset == 'crossmoda':
+        # Use double size in 2D prediction, normal size in 3D
+        pre_interpolation_factor = 2. if config.use_2d_normal_to is not None else 1.
+
         training_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
             domain="source", state="l4", size=(128, 128, 128),
             ensure_labeled_pairs=True,
@@ -267,6 +269,7 @@ def prepare_data(config):
             crop_3d_w_dim_range=config['crop_3d_w_dim_range'], crop_2d_slices_gt_num_threshold=config['crop_2d_slices_gt_num_threshold'],
             use_2d_normal_to=config['use_2d_normal_to'],
             modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
+            pre_interpolation_factor=pre_interpolation_factor,
             debug=config['debug']
         )
         training_dataset.eval()
@@ -813,10 +816,15 @@ def train_DL(run_name, config, training_dataset):
                 b_seg = b_seg.cuda()
                 b_spat_aug_grid = b_spat_aug_grid.cuda()
 
-                if config.use_mind:
+                if config.use_2d_normal_to is not None and config.use_mind:
+                    # MIND 2D, in Bx1x1xHxW, out BxMINDxHxW
                     b_img = mindssc(b_img.unsqueeze(1).unsqueeze(1)).squeeze(2)
+                elif config.use_2d_normal_to is None and config.use_mind:
+                    # MIND 3D
+                    b_img = mindssc(b_img.unsqueeze(1))
                 else:
                     b_img = b_img.unsqueeze(1)
+
                 ### Forward pass ###
                 with amp.autocast(enabled=True):
                     assert b_img.dim() == len(n_dims)+2, \
@@ -1008,22 +1016,35 @@ def train_DL(run_name, config, training_dataset):
 
                         b_val_img = b_val_img.unsqueeze(1).float().cuda()
                         b_val_seg = b_val_seg.cuda()
-                        b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=stack_dim)
 
-                        if config.use_mind:
-                            b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
+                        if training_dataset.use_2d_normal_to is not None:
+                            b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=training_dataset.use_2d_normal_to)
 
-                        output_val = lraspp(b_val_img_2d)['out']
+                            if config.use_mind:
+                                # MIND 2D model, in Bx1x1xHxW, out BxMINDxHxW
+                                b_val_img_2d = mindssc(b_val_img_2d.unsqueeze(1)).squeeze(2)
 
-                        # Prepare logits for scoring
-                        # Scoring happens in 3D again - unstack batch tensor again to stack of 3D
-                        val_logits_for_score = output_val.argmax(1)
-                        val_logits_for_score_3d = make_3d_from_2d_stack(
-                            val_logits_for_score.unsqueeze(1), stack_dim, B
-                        ).squeeze(1)
+                            output_val = lraspp(b_val_img_2d)['out']
+                            val_logits_for_score = output_val.argmax(1)
+                            # Prepare logits for scoring
+                            # Scoring happens in 3D again - unstack batch tensor again to stack of 3D
+                            val_logits_for_score = make_3d_from_2d_stack(
+                                val_logits_for_score.unsqueeze(1), stack_dim, B
+                            ).squeeze(1)
+
+                        else:
+                            if config.use_mind:
+                                # MIND 3D model shape BxMINDxDxHxW
+                                b_val_img = mindssc(b_val_img)
+                            else:
+                                # 3D model shape Bx1xDxHxW
+                                pass
+
+                            output_val = lraspp(b_val_img)['out']
+                            val_logits_for_score = output_val.argmax(1)
 
                         b_val_dice = dice3d(
-                            torch.nn.functional.one_hot(val_logits_for_score_3d, len(training_dataset.label_tags)),
+                            torch.nn.functional.one_hot(val_logits_for_score, len(training_dataset.label_tags)),
                             torch.nn.functional.one_hot(b_val_seg, len(training_dataset.label_tags)),
                             one_hot_torch_style=True
                         )
