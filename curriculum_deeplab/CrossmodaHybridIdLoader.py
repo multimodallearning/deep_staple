@@ -33,7 +33,7 @@ class CrossmodaHybridIdLoader(Dataset):
         size:tuple=(96,96,60), normalize:bool=True,
         max_load_num=None, crop_3d_w_dim_range=None, crop_2d_slices_gt_num_threshold=None,
         modified_3d_label_override=None, prevent_disturbance=False,
-        use_2d_normal_to=None, flip_r_samples=True,
+        use_2d_normal_to=None, flip_r_samples=True, pre_interpolation_factor=2.,
         debug=False
     ):
 
@@ -90,6 +90,7 @@ class CrossmodaHybridIdLoader(Dataset):
         self.use_modified = False
         self.disturbed_idxs = []
         self.augment_at_collate = False
+        self.pre_interpolation_factor = pre_interpolation_factor
 
         #define finished preprocessing states here with subpath and default size
         states = {
@@ -451,7 +452,7 @@ class CrossmodaHybridIdLoader(Dataset):
     def get_3d_from_2d_identifiers(self, _2d_identifiers, retrn='id'):
         assert self.use_2d(), "Dataloader does not provide 2D data."
         assert retrn in ['id', 'idx']
-        
+
         if isinstance(_2d_identifiers, (torch.Tensor, np.ndarray)):
             _2d_identifiers = _2d_identifiers.tolist()
         elif not isinstance(_2d_identifiers, Iterable) or isinstance(_2d_identifiers, str):
@@ -521,11 +522,11 @@ class CrossmodaHybridIdLoader(Dataset):
 
         if self.do_augment and not self.augment_at_collate:
             b_image, b_label, b_spat_augment_grid = self.augment(
-                b_image, b_label, use_2d, pre_interpolation_factor=2.
+                b_image, b_label, use_2d, pre_interpolation_factor=self.pre_interpolation_factor
             )
             _, b_modified_label, _ = spatial_augment(
                 b_label=b_modified_label, use_2d=use_2d, b_grid_override=b_spat_augment_grid,
-                pre_interpolation_factor=2.
+                pre_interpolation_factor=self.pre_interpolation_factor
             )
             spat_augment_grid = b_spat_augment_grid.squeeze(0).detach().cpu().clone()
 
@@ -684,7 +685,7 @@ class CrossmodaHybridIdLoader(Dataset):
             b_image, b_label,
             bspline_num_ctl_points=bspline_num_ctl_points, bspline_strength=bspline_strength, bspline_probability=bspline_probability,
             affine_strength=affine_strength, affine_probability=affine_probability,
-            pre_interpolation_factor=2., use_2d=use_2d)
+            pre_interpolation_factor=pre_interpolation_factor, use_2d=use_2d)
 
         b_label = b_label.long()
 
