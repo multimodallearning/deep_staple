@@ -125,16 +125,6 @@ class HybridIdLoader(Dataset):
         # Postprocessing of 3d volumes
         orig_3d_num = len(self.label_data_3d.keys())
 
-        for _3d_id in list(self.label_data_3d.keys()):
-            if self.label_data_3d[_3d_id].unique().numel() != 2: #TODO use 3 classes again
-                del self.img_data_3d[_3d_id]
-                del self.label_data_3d[_3d_id]
-                del self.modified_label_data_3d[_3d_id]
-            elif "r" in _3d_id:
-                self.img_data_3d[_3d_id] = self.img_data_3d[_3d_id].flip(dims=(1,))
-                self.label_data_3d[_3d_id] = self.label_data_3d[_3d_id].flip(dims=(1,))
-                self.modified_label_data_3d[_3d_id] = self.modified_label_data_3d[_3d_id].flip(dims=(1,))
-
         if ensure_labeled_pairs:
             labelled_keys = set(self.label_data_3d.keys())
             unlabelled_imgs = set(self.img_data_3d.keys()) - labelled_keys
