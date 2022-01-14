@@ -240,7 +240,6 @@ def prepare_data(config):
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
             postfix = 'mBST'
             loaded_identifier = [_id+postfix for _id in loaded_identifier]
-
         elif config.reg_state == "combined":
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
             postfix = 'mCMB'
@@ -248,6 +247,7 @@ def prepare_data(config):
 
         elif config.reg_state == "acummulate_convex_adam_FT2_MT1":
             label_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220113_crossmoda_convex/crossmoda_convex.pth")
+            raise NotImplementedError()
 
         else:
             raise ValueError()
