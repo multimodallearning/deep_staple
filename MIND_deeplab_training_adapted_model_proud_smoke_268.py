@@ -126,7 +126,6 @@ def make_3d_from_2d_stack(b_input, stack_dim, orig_stack_size):
         raise ValueError(f"stack_dim is '{stack_dim}' but must be 'D' or 'H' or 'W'.")
 
 
-
 class DataParamMode(Enum):
     INSTANCE_PARAMS = auto()
     GRIDDED_INSTANCE_PARAMS = auto()
@@ -170,7 +169,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,

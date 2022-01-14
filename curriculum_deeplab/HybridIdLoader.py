@@ -34,6 +34,7 @@ class HybridIdLoader(Dataset):
         max_load_3d_num=None, crop_3d_w_dim_range=None, modified_3d_label_override=None,
         prevent_disturbance=False,
         use_2d_normal_to=None, crop_2d_slices_gt_num_threshold=None, pre_interpolation_factor=2.,
+        fixed_weight_file = None, fixed_weight_min_quantile=None, fixed_weight_min_value=None
     ):
 
         self.label_tags = []
@@ -200,6 +201,25 @@ class HybridIdLoader(Dataset):
                 del self.img_data_2d[key]
                 del self.label_data_2d[key]
                 del self.modified_label_data_2d[key]
+
+        if fixed_weight_file is not None:
+            fixed_weightdata = torch.load(fixed_weight_file)
+            fixed_weights = fixed_weightdata['weights']
+            fixed_d_ids = fixed_weightdata['d_ids']
+
+            if fixed_weight_min_quantile is not None:
+                fixed_weight_min_value = np.quantile(fixed_weights, fixed_weight_min_quantile)
+            else fixed_weight_min_value is not None:
+                pass
+            else:
+                raise ValueError()
+                
+        for key, weight in zip(fixed_d_ids, fixed_weights):
+            if weight < fixed_weight_min_value:
+                del self.img_data_2d[key]
+                del self.label_data_2d[key]
+                del self.modified_label_data_2d[key]
+
 
         postprocessed_2d_num = len(self.label_data_2d.keys())
         print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
