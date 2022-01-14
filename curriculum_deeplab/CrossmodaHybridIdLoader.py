@@ -34,7 +34,7 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
 
     def extract_3d_id(_input):
         # Match sth like 100r:var020
-        return "".join(re.findall(r'^(\d{3}[lr])(:m[A-Z0-9]{3})?', _input)[0])
+        return "".join(re.findall(r'^(\d{3}[lr])(:m[A-Z0-9a-z]{3,4})?$', _input)[0])
 
     def extract_short_3d_id(_input):
         # Match sth like 100r:var020 and returns 100r
@@ -222,7 +222,7 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
                     tmp = (tmp - tmp.mean()) / tmp.std()
 
                 img_data_3d[_3d_id] = tmp
-            
+
             # Postprocessing of 3d volumes
             for _3d_id in list(label_data_3d.keys()):
                 if label_data_3d[_3d_id].unique().numel() != 2: #TODO use 3 classes again
@@ -233,7 +233,7 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
                     img_data_3d[_3d_id] = img_data_3d[_3d_id].flip(dims=(1,))
                     label_data_3d[_3d_id] = label_data_3d[_3d_id].flip(dims=(1,))
                     modified_label_data_3d[_3d_id] = modified_label_data_3d[_3d_id].flip(dims=(1,))
-                
+
         return (img_paths, label_paths, img_data_3d, label_data_3d,
             extract_3d_id, extract_short_3d_id)
 

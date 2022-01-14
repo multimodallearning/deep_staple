@@ -190,7 +190,7 @@ config_dict = DotDict({
     'do_plot': False,
     'save_dp_figures': False,
     'debug': False,
-    'wandb_mode': 'online', # e.g. online, disabled
+    'wandb_mode': 'disabled', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -237,29 +237,38 @@ def prepare_data(config):
             loaded_identifier = [_id+':mBST' for _id in loaded_identifier] + [_id+':mCMB' for _id in loaded_identifier]
 
         elif config.reg_state == "best":
+            label_data_left = torch.load('./data/optimal_reg_left.pth')
+            label_data_right = torch.load('./data/optimal_reg_right.pth')
+            loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
             postfix = 'mBST'
-            loaded_identifier = [_id+postfix for _id in loaded_identifier]
+            loaded_identifier = [_id+':'+postfix for _id in loaded_identifier]
         elif config.reg_state == "combined":
+            label_data_left = torch.load('./data/optimal_reg_left.pth')
+            label_data_right = torch.load('./data/optimal_reg_right.pth')
+            loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
             postfix = 'mCMB'
-            loaded_identifier = [_id+postfix for _id in loaded_identifier]
+            loaded_identifier = [_id+':'+postfix for _id in loaded_identifier]
 
         elif config.reg_state == "acummulate_convex_adam_FT2_MT1":
-            label_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220113_crossmoda_convex/crossmoda_convex.pth")
-            raise NotImplementedError()
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_convex_registered.pth")
+            label_data = []
+            loaded_identifier = []
+            for fixed_id, moving_dict in bare_data.items():
+                for moving_id, moving_sample in moving_dict.items():
+                    label_data.append(moving_sample['warped_label'])
+                    loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
         else:
             raise ValueError()
 
         modified_3d_label_override = {}
         for idx, identifier in enumerate(loaded_identifier):
-            nl_id = int(re.findall(r'\d+', identifier)[0])
-            m_id = re.findall(r':m([A-Z0-9]{3})$', identifier)[0]
-            lr_id = re.findall(r'([lr])\.nii\.gz', identifier)[0]
-
+            # Find sth. like 100r:mBST or 100r:m001l
+            nl_id, lr_id, m_id = re.findall(r'(\d{1,3})([lr]):m([A-Z0-9a-z]{3,4})$', identifier)[0]
+            nl_id = int(nl_id)
             crossmoda_var_id = f"{nl_id:03d}{lr_id}:m{m_id}"
-
             modified_3d_label_override[crossmoda_var_id] = label_data[idx]
 
         prevent_disturbance = True
