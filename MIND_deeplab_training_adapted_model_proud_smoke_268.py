@@ -731,11 +731,11 @@ def train_DL(run_name, config, training_dataset):
                 training_dataset.extract_short_3d_id(_id):idx \
                     for idx, _id in enumerate(all_3d_ids) if _id in val_3d_ids}.values())
             # Override idxs
-            val_3d_idxs = list(range(35))
+            # val_3d_idxs = list(range(35))
         else:
             n_dims = (-3,-2,-1)
             val_3d_idxs = val_idxs
-        print("Will run validation with these 3D samples:", val_3d_idxs)
+        print("Will run validation with these 3D samples:", sorted(val_3d_ids))
 
         _, _, all_modified_segs = training_dataset.get_data()
 

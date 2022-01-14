@@ -85,7 +85,9 @@ class HybridIdLoader(Dataset):
                 if self.extract_short_3d_id(key) not in stored_3d_ids]
             for del_key in unmatched_keys:
                 del modified_3d_label_override[del_key]
-            if len(stored_3d_ids) != len(modified_3d_label_override.keys()):
+            if len(stored_3d_ids) > len(modified_3d_label_override.keys()):
+                print(f"Reducing label data with modified_3d_label_override from {len(stored_3d_ids)} to {len(modified_3d_label_override.keys())} labels")
+            else:
                 print(f"Expanding label data with modified_3d_label_override from {len(stored_3d_ids)} to {len(modified_3d_label_override.keys())} labels")
 
             for _mod_3d_id, modified_label in modified_3d_label_override.items():
@@ -214,11 +216,11 @@ class HybridIdLoader(Dataset):
                 else:
                     raise ValueError()
 
-            for key, weight in zip(fixed_d_ids, fixed_weights):
-                if weight < fixed_weight_min_value:
-                    del self.img_data_2d[key]
-                    del self.label_data_2d[key]
-                    del self.modified_label_data_2d[key]
+                for key, weight in zip(fixed_d_ids, fixed_weights):
+                    if weight < fixed_weight_min_value:
+                        del self.img_data_2d[key]
+                        del self.label_data_2d[key]
+                        del self.modified_label_data_2d[key]
 
 
             postprocessed_2d_num = len(self.label_data_2d.keys())
