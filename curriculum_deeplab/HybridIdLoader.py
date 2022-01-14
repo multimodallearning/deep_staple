@@ -223,6 +223,7 @@ class HybridIdLoader(Dataset):
 
             postprocessed_2d_num = len(self.label_data_2d.keys())
             print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
+            print(f"Loader will use {postprocessed_2d_num} of {orig_2d_num} 2D slices.")
         print("Data import finished.")
         print(f"CrossMoDa loader will yield {'2D' if self.use_2d_normal_to else '3D'} samples")
 
