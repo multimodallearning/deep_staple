@@ -34,7 +34,7 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
 
     def extract_3d_id(_input):
         # Match sth like 100r:var020
-        return "".join(re.findall(r'^(\d{3}[lr])(:var\d{3})?', _input)[0])
+        return "".join(re.findall(r'^(\d{3}[lr])(:m[A-Z]{3})?', _input)[0])
 
     def extract_short_3d_id(_input):
         # Match sth like 100r:var020 and returns 100r

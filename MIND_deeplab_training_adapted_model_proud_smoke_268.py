@@ -169,7 +169,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -177,8 +177,8 @@ config_dict = DotDict({
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/blooming-water-1052_fold0_epx39/train_label_snapshot.pth",
-    'fixed_weight_min_quantile': .5,
+    'fixed_weight_file': None,#"/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/blooming-water-1052_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_min_quantile': None,
     'fixed_weight_min_value': None,
     # ),
 
@@ -188,11 +188,11 @@ config_dict = DotDict({
     'do_plot': False,
     'save_dp_figures': False,
     'debug': False,
-    'wandb_mode': 'disabled', # e.g. online, disabled
+    'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
-    'disturbance_mode': LabelDisturbanceMode.AFFINE,
+    'disturbance_mode': None,
     'disturbance_strength': 0.,
     'disturbed_percentage': 0.,
     'start_disturbing_after_ep': 0,
@@ -202,6 +202,7 @@ config_dict = DotDict({
 
 # %%
 def prepare_data(config):
+    reset_determinism()
     if config.reg_state:
         print("Loading registered data.")
 
@@ -231,25 +232,34 @@ def prepare_data(config):
             label_data = torch.zeros([107,128,128,128])
             label_data[best_choice] = best_label_data
             label_data[combined_choice] = combined_label_data
-            loaded_identifier = [_id+':var000' for _id in loaded_identifier]
+            var_identifier = ["mBST" if idx in best_choice else "mCMB" for idx in range(len(loaded_identifier))]
+            loaded_identifier = [f"{_id}:{var_id}" for _id, var_id in zip(loaded_identifier, var_identifier)]
 
         elif config.reg_state == "acummulate_combined_best":
             best_label_data = torch.cat([label_data_left['best_all'][:44], label_data_right['best_all'][:63]], dim=0)
             combined_label_data = torch.cat([label_data_left['combined_all'][:44], label_data_right['combined_all'][:63]], dim=0)
             label_data = torch.cat([best_label_data, combined_label_data])
-            loaded_identifier = [_id+':var000' for _id in loaded_identifier] + [_id+':var001' for _id in loaded_identifier]
+            loaded_identifier = [_id+':mBST' for _id in loaded_identifier] + [_id+':mCMB' for _id in loaded_identifier]
 
-        else:
+        elif config.reg_state == "best":
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
-            loaded_identifier = [_id+':var000' for _id in loaded_identifier]
+            postfix = 'mBST'
+            loaded_identifier = [_id+postfix for _id in loaded_identifier]
+
+        elif config.reg_state == "combined":
+            label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
+            postfix = 'mCMB'
+            loaded_identifier = [_id+postfix for _id in loaded_identifier]
+        else:
+            raise ValueError()
 
         modified_3d_label_override = {}
         for idx, identifier in enumerate(loaded_identifier):
             nl_id = int(re.findall(r'\d+', identifier)[0])
-            var_id = int(re.findall(r':var(\d+)$', identifier)[0])
+            m_id = re.findall(r':m([A-Z]{3})$', identifier)[0]
             lr_id = re.findall(r'([lr])\.nii\.gz', identifier)[0]
 
-            crossmoda_var_id = f"{nl_id:03d}{lr_id}:var{var_id:03d}"
+            crossmoda_var_id = f"{nl_id:03d}{lr_id}:m{m_id}"
 
             modified_3d_label_override[crossmoda_var_id] = label_data[idx]
 
@@ -271,6 +281,7 @@ def prepare_data(config):
         )
         training_dataset = CrossmodaHybridIdLoader(
             clsre,
+            size=(128,128,128), resample=True, normalize=True, crop_3d_w_dim_range=config.crop_3d_w_dim_range,
             ensure_labeled_pairs=True,
             max_load_3d_num=config.train_set_max_len,
             modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
@@ -719,6 +730,8 @@ def train_DL(run_name, config, training_dataset):
             val_3d_idxs = list({
                 training_dataset.extract_short_3d_id(_id):idx \
                     for idx, _id in enumerate(all_3d_ids) if _id in val_3d_ids}.values())
+            # Override idxs
+            val_3d_idxs = list(range(35))
         else:
             n_dims = (-3,-2,-1)
             val_3d_idxs = val_idxs
