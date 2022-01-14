@@ -177,8 +177,8 @@ config_dict = DotDict({
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': None,#"/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/blooming-water-1052_fold0_epx39/train_label_snapshot.pth",
-    'fixed_weight_min_quantile': None,
+    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/balmy-wildflower-1109_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_min_quantile': .5,
     'fixed_weight_min_value': None,
     # ),
 
@@ -188,9 +188,9 @@ config_dict = DotDict({
     'do_plot': False,
     'save_dp_figures': False,
     'debug': False,
-    'wandb_mode': 'online', # e.g. online, disabled
+    'wandb_mode': 'disabled', # e.g. online, disabled
     'checkpoint_name': None,
-    'do_sweep': False,
+    'do_sweep': True,
 
     'disturbance_mode': None,
     'disturbance_strength': 0.,
@@ -735,7 +735,7 @@ def train_DL(run_name, config, training_dataset):
         else:
             n_dims = (-3,-2,-1)
             val_3d_idxs = val_idxs
-        print("Will run validation with these 3D samples:", sorted(val_3d_ids))
+        print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
 
         _, _, all_modified_segs = training_dataset.get_data()
 
