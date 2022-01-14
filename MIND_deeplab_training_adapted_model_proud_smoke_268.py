@@ -176,6 +176,10 @@ config_dict = DotDict({
 
     'grid_size_y': 64,
     'grid_size_x': 64,
+
+    fixed_weight_file: "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/blooming-water-1052_fold0_epx39/train_label_snapshot.pth",
+    fixed_weight_min_quantile: .5,
+    fixed_weight_min_value: None,
     # ),
 
     'save_every': 200,
@@ -204,7 +208,7 @@ def prepare_data(config):
         REG_STATES = [
             "combined", "best_1", "best_n",
             "multiple", "mix_combined_best",
-            "best", "cummulate_combined_best"]
+            "best", "acummulate_combined_best"]
 
         if config.reg_state in REG_STATES:
             pass
@@ -229,7 +233,7 @@ def prepare_data(config):
             label_data[combined_choice] = combined_label_data
             loaded_identifier = [_id+':var000' for _id in loaded_identifier]
 
-        elif config.reg_state == "cummulate_combined_best":
+        elif config.reg_state == "acummulate_combined_best":
             best_label_data = torch.cat([label_data_left['best_all'][:44], label_data_right['best_all'][:63]], dim=0)
             combined_label_data = torch.cat([label_data_left['combined_all'][:44], label_data_right['combined_all'][:63]], dim=0)
             label_data = torch.cat([best_label_data, combined_label_data])
@@ -272,7 +276,8 @@ def prepare_data(config):
             modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
             use_2d_normal_to=config.use_2d_normal_to,
             crop_2d_slices_gt_num_threshold=config.crop_2d_slices_gt_num_threshold,
-            pre_interpolation_factor=pre_interpolation_factor
+            pre_interpolation_factor=pre_interpolation_factor,
+            fixed_weight_file=fixed_weight_file, fixed_weight_min_quantile=config.fixed_weight_min_quantile, fixed_weight_min_value=config.fixed_weight_min_value,
         )
         training_dataset.eval()
         print(f"Nonzero slices: " \

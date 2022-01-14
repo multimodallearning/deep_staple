@@ -209,11 +209,11 @@ class HybridIdLoader(Dataset):
 
             if fixed_weight_min_quantile is not None:
                 fixed_weight_min_value = np.quantile(fixed_weights, fixed_weight_min_quantile)
-            else fixed_weight_min_value is not None:
+            elif fixed_weight_min_value is not None:
                 pass
             else:
                 raise ValueError()
-                
+
         for key, weight in zip(fixed_d_ids, fixed_weights):
             if weight < fixed_weight_min_value:
                 del self.img_data_2d[key]
