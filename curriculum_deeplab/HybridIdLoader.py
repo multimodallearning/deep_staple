@@ -190,39 +190,39 @@ class HybridIdLoader(Dataset):
                     # Set data view for crossmoda id like "003rW100"
                     self.modified_label_data_2d[f"{_3d_id}{use_2d_normal_to}{idx:03d}"] = lbl_slc
 
-        # Postprocessing of 2d slices
-        orig_2d_num = len(self.label_data_2d.keys())
+            # Postprocessing of 2d slices
+            orig_2d_num = len(self.label_data_2d.keys())
 
-        for key, label in list(self.label_data_2d.items()):
-            uniq_vals = label.unique()
+            for key, label in list(self.label_data_2d.items()):
+                uniq_vals = label.unique()
 
-            if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
-                # Delete 2D slices with less than n gt-pixels (but keep 3d data)
-                del self.img_data_2d[key]
-                del self.label_data_2d[key]
-                del self.modified_label_data_2d[key]
+                if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
+                    # Delete 2D slices with less than n gt-pixels (but keep 3d data)
+                    del self.img_data_2d[key]
+                    del self.label_data_2d[key]
+                    del self.modified_label_data_2d[key]
 
-        if fixed_weight_file is not None:
-            fixed_weightdata = torch.load(fixed_weight_file)
-            fixed_weights = fixed_weightdata['weights']
-            fixed_d_ids = fixed_weightdata['d_ids']
+            if fixed_weight_file is not None:
+                fixed_weightdata = torch.load(fixed_weight_file)
+                fixed_weights = fixed_weightdata['data_parameters'].detach().cpu()
+                fixed_d_ids = fixed_weightdata['d_ids']
 
-            if fixed_weight_min_quantile is not None:
-                fixed_weight_min_value = np.quantile(fixed_weights, fixed_weight_min_quantile)
-            elif fixed_weight_min_value is not None:
-                pass
-            else:
-                raise ValueError()
+                if fixed_weight_min_quantile is not None:
+                    fixed_weight_min_value = np.quantile(fixed_weights, fixed_weight_min_quantile)
+                elif fixed_weight_min_value is not None:
+                    pass
+                else:
+                    raise ValueError()
 
-        for key, weight in zip(fixed_d_ids, fixed_weights):
-            if weight < fixed_weight_min_value:
-                del self.img_data_2d[key]
-                del self.label_data_2d[key]
-                del self.modified_label_data_2d[key]
+            for key, weight in zip(fixed_d_ids, fixed_weights):
+                if weight < fixed_weight_min_value:
+                    del self.img_data_2d[key]
+                    del self.label_data_2d[key]
+                    del self.modified_label_data_2d[key]
 
 
-        postprocessed_2d_num = len(self.label_data_2d.keys())
-        print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
+            postprocessed_2d_num = len(self.label_data_2d.keys())
+            print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
         print("Data import finished.")
         print(f"CrossMoDa loader will yield {'2D' if self.use_2d_normal_to else '3D'} samples")
 

@@ -154,13 +154,13 @@ config_dict = DotDict({
     'use_mind': False,
     'epochs': 40,
 
-    'batch_size': 16,
+    'batch_size': 32,
     'val_batch_size': 1,
-    'use_2d_normal_to': None,
+    'use_2d_normal_to': "W",
     'train_patchwise': True,
 
     'dataset': 'crossmoda',
-    'reg_state': None,
+    'reg_state': 'mix_combined_best',
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -177,9 +177,9 @@ config_dict = DotDict({
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    fixed_weight_file: "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/blooming-water-1052_fold0_epx39/train_label_snapshot.pth",
-    fixed_weight_min_quantile: .5,
-    fixed_weight_min_value: None,
+    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/blooming-water-1052_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_min_quantile': .5,
+    'fixed_weight_min_value': None,
     # ),
 
     'save_every': 200,
@@ -187,14 +187,14 @@ config_dict = DotDict({
 
     'do_plot': False,
     'save_dp_figures': False,
-    'debug': True,
+    'debug': False,
     'wandb_mode': 'disabled', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
-    'disturbance_strength': 2.,
-    'disturbed_percentage': .3,
+    'disturbance_strength': 0.,
+    'disturbed_percentage': 0.,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
@@ -215,8 +215,8 @@ def prepare_data(config):
         else:
             raise Exception(f"Unknown registration version. Choose one of {REG_STATES}")
 
-        label_data_left = torch.load('./data/optimal_reg_left.pth')
-        label_data_right = torch.load('./data/optimal_reg_right.pth')
+        label_data_left = torch.load('/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220113_crossmoda_optimal/optimal_reg_left.pth')
+        label_data_right = torch.load('/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220113_crossmoda_optimal/optimal_reg_right.pth')
 
         loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
 
@@ -277,7 +277,7 @@ def prepare_data(config):
             use_2d_normal_to=config.use_2d_normal_to,
             crop_2d_slices_gt_num_threshold=config.crop_2d_slices_gt_num_threshold,
             pre_interpolation_factor=pre_interpolation_factor,
-            fixed_weight_file=fixed_weight_file, fixed_weight_min_quantile=config.fixed_weight_min_quantile, fixed_weight_min_value=config.fixed_weight_min_value,
+            fixed_weight_file=config.fixed_weight_file, fixed_weight_min_quantile=config.fixed_weight_min_quantile, fixed_weight_min_value=config.fixed_weight_min_value,
         )
         training_dataset.eval()
         print(f"Nonzero slices: " \
@@ -1325,28 +1325,24 @@ sweep_config_dict = dict(
         #        'LabelDisturbanceMode.AFFINE',
         #     ]
         # ),
+        # disturbance_strength=dict(
+        #     values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
+        # ),
+        # disturbed_percentage=dict(
+        #     values=[0.3, 0.6]
+        # ),
+        # data_param_mode=dict(
         #     values=[
-        #        'LabelDisturbanceMode.AFFINE',
+        #         DataParamMode.INSTANCE_PARAMS,
+        #         DataParamMode.DISABLED,
         #     ]
         # ),
-        # reg_state=dict(
-        #     values=['best','combined']
-        # ),
-        disturbance_strength=dict(
-            values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
-        ),
-        disturbed_percentage=dict(
-            values=[0.3, 0.6]
-        ),
-        data_param_mode=dict(
-            values=[
-                DataParamMode.INSTANCE_PARAMS,
-                DataParamMode.DISABLED,
-            ]
-        ),
         # use_risk_regularization=dict(
         #     values=[False, True]
-        # )
+        # ),
+        fixed_weight_min_quantile=dict(
+            values=[0., 2., 4., 6., 8., 1.]
+        ),
     )
 )
 
