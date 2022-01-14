@@ -14,10 +14,12 @@
 # ---
 
 # %%
+import sys
 import os
 import time
 import random
 import re
+import glob
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
 os.environ.update(get_vars(select="* -4"))
 import pickle
@@ -125,7 +127,7 @@ def make_3d_from_2d_stack(b_input, stack_dim, orig_stack_size):
     else:
         raise ValueError(f"stack_dim is '{stack_dim}' but must be 'D' or 'H' or 'W'.")
 
-
+# %%
 class DataParamMode(Enum):
     INSTANCE_PARAMS = auto()
     GRIDDED_INSTANCE_PARAMS = auto()
@@ -160,7 +162,7 @@ config_dict = DotDict({
     'train_patchwise': True,
 
     'dataset': 'crossmoda',
-    'reg_state': 'mix_combined_best',
+    'reg_state': "acummulate_convex_adam_FT2_MT1",
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -200,28 +202,18 @@ config_dict = DotDict({
     'start_dilate_kernel_sz': 1
 })
 
+
 # %%
 def prepare_data(config):
     reset_determinism()
     if config.reg_state:
         print("Loading registered data.")
 
-        REG_STATES = [
-            "combined", "best_1", "best_n",
-            "multiple", "mix_combined_best",
-            "best", "acummulate_combined_best"]
-
-        if config.reg_state in REG_STATES:
-            pass
-        else:
-            raise Exception(f"Unknown registration version. Choose one of {REG_STATES}")
-
-        label_data_left = torch.load('/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220113_crossmoda_optimal/optimal_reg_left.pth')
-        label_data_right = torch.load('/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220113_crossmoda_optimal/optimal_reg_right.pth')
-
-        loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
-
         if config.reg_state == "mix_combined_best":
+            label_data_left = torch.load('./data/optimal_reg_left.pth')
+            label_data_right = torch.load('./data/optimal_reg_right.pth')
+            loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
+
             perm = np.random.permutation(len(loaded_identifier))
             _clen = int(.5*len(loaded_identifier))
             best_choice = perm[:_clen]
@@ -236,6 +228,9 @@ def prepare_data(config):
             loaded_identifier = [f"{_id}:{var_id}" for _id, var_id in zip(loaded_identifier, var_identifier)]
 
         elif config.reg_state == "acummulate_combined_best":
+            label_data_left = torch.load('./data/optimal_reg_left.pth')
+            label_data_right = torch.load('./data/optimal_reg_right.pth')
+            loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
             best_label_data = torch.cat([label_data_left['best_all'][:44], label_data_right['best_all'][:63]], dim=0)
             combined_label_data = torch.cat([label_data_left['combined_all'][:44], label_data_right['combined_all'][:63]], dim=0)
             label_data = torch.cat([best_label_data, combined_label_data])
@@ -250,13 +245,17 @@ def prepare_data(config):
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
             postfix = 'mCMB'
             loaded_identifier = [_id+postfix for _id in loaded_identifier]
+
+        elif config.reg_state == "acummulate_convex_adam_FT2_MT1":
+            label_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220113_crossmoda_convex/crossmoda_convex.pth")
+
         else:
             raise ValueError()
 
         modified_3d_label_override = {}
         for idx, identifier in enumerate(loaded_identifier):
             nl_id = int(re.findall(r'\d+', identifier)[0])
-            m_id = re.findall(r':m([A-Z]{3})$', identifier)[0]
+            m_id = re.findall(r':m([A-Z0-9]{3})$', identifier)[0]
             lr_id = re.findall(r'([lr])\.nii\.gz', identifier)[0]
 
             crossmoda_var_id = f"{nl_id:03d}{lr_id}:m{m_id}"
