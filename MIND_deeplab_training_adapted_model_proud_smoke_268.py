@@ -169,7 +169,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -695,9 +695,8 @@ def train_DL(run_name, config, training_dataset):
 
     # Configure folds
     kf = KFold(n_splits=config.num_folds)
-    kf.get_n_splits(training_dataset)
-
-    fold_iter = enumerate(kf.split(training_dataset))
+    # kf.get_n_splits(training_dataset.__len__(use_2d_override=False))
+    fold_iter = enumerate(kf.split(range(training_dataset.__len__(use_2d_override=False))))
 
     if config.get('fold_override', None):
         selected_fold = config.get('fold_override', 0)
@@ -723,15 +722,24 @@ def train_DL(run_name, config, training_dataset):
 
         if config.use_2d_normal_to is not None:
             n_dims = (-2,-1)
-            trained_3d_dataset_ids = training_dataset.get_3d_from_2d_identifiers(train_idxs, 'id')
-            # trained_3d_trained_ids = training_dataset.switch_3d_identifiers(trained_3d_dataset_idxs)
-            all_3d_ids = training_dataset.get_3d_ids()
-            val_3d_ids = set(all_3d_ids) - set(trained_3d_dataset_ids)
-            val_3d_idxs = list({
-                training_dataset.extract_short_3d_id(_id):idx \
-                    for idx, _id in enumerate(all_3d_ids) if _id in val_3d_ids}.values())
             # Override idxs
-            # val_3d_idxs = list(range(35))
+            all_3d_ids = training_dataset.get_3d_ids()
+            val_3d_idxs = torch.tensor(list(range(35)))
+            val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
+
+            train_3d_idxs = list(range(35, len(all_3d_ids)))
+
+            train_2d_ids = []
+            dcts = training_dataset.get_id_dicts()
+            for id_dict in dcts:
+                _2d_id = id_dict['2d_id']
+                _3d_idx = id_dict['3d_dataset_idx']
+                if _2d_id in training_dataset.label_data_2d.keys() and _3d_idx in train_3d_idxs:
+                    train_2d_ids.append(_2d_id)
+
+            train_2d_idxs = training_dataset.switch_2d_identifiers(train_2d_ids)
+            train_idxs = torch.tensor(train_2d_idxs)
+
         else:
             n_dims = (-3,-2,-1)
             val_3d_idxs = val_idxs
