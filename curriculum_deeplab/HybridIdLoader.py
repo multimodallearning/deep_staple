@@ -208,7 +208,7 @@ class HybridIdLoader(Dataset):
                 fixed_weightdata = torch.load(fixed_weight_file)
                 fixed_weights = fixed_weightdata['data_parameters'].detach().cpu()
                 fixed_d_ids = fixed_weightdata['d_ids']
-
+                print(f"Fixed weight quantiles are: {np.quantile(fixed_weights, np.linspace(0.,1.,5))}")
                 if fixed_weight_min_quantile is not None:
                     fixed_weight_min_value = np.quantile(fixed_weights, fixed_weight_min_quantile)
                 elif fixed_weight_min_value is not None:
