@@ -865,14 +865,12 @@ def train_DL(run_name, config, training_dataset):
             print("Fetching training metrics for samples.")
             # _, wise_lbls, mod_lbls = training_dataset.get_data()
             training_dataset.eval(use_modified=True)
-            bsz = 100
-            sequential_batch_loader = DataLoader(training_dataset, batch_size=bsz, drop_last=False)
-            for b_sample in tqdm(sequential_batch_loader, desc="sequential batch: ", total=len(sequential_batch_loader)):
+            for b_sample in tqdm(training_dataset, desc="training sample: ", total=len(training_dataset)):
                 wise_label, mod_label = b_sample['label'], b_sample['modified_label']
                 d_idxs = b_sample['dataset_idx']
-                mod_label, _ = ensure_dense(mod_label)
                 mod_label = mod_label.cuda()
                 wise_label = wise_label.cuda()
+                mod_label, _ = ensure_dense(mod_label)
 
                 dsc = dice_func(
                     torch.nn.functional.one_hot(wise_label, len(training_dataset.label_tags)),
