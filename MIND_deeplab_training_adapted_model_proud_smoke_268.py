@@ -178,8 +178,8 @@ config_dict = DotDict({
     'grid_size_x': 64,
 
     'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/balmy-wildflower-1109_fold0_epx39/train_label_snapshot.pth",
-    'fixed_weight_min_quantile': .5,
-    'fixed_weight_min_value': None,
+    'fixed_weight_min_quantile': None,
+    'fixed_weight_min_value': 0.,
     # ),
 
     'save_every': 200,
@@ -190,7 +190,7 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
-    'do_sweep': True,
+    'do_sweep': False,
 
     'disturbance_mode': None,
     'disturbance_strength': 0.,
