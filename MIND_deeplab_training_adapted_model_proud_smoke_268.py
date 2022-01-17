@@ -19,6 +19,7 @@ import os
 import time
 import random
 import re
+import warnings
 import glob
 from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
 os.environ.update(get_vars(select="* -4"))
@@ -732,11 +733,12 @@ def train_DL(run_name, config, training_dataset):
         fold_iter = list(fold_iter)[0:1]
 
     if config.wandb_mode != 'disabled':
-        # Log dataset info
-        training_dataset.eval()
-        dataset_info = [[smp['dataset_idx'], smp['id'], smp['image_path'], smp['label_path']] \
-                        for smp in training_dataset]
-        wandb.log({'datasets/training_dataset':wandb.Table(columns=['dataset_idx', 'id', 'image', 'label'], data=dataset_info)}, step=0)
+        warnings.warn("Logging of dataset file paths is disabled.")
+        # # Log dataset info
+        # training_dataset.eval()
+        # dataset_info = [[smp['dataset_idx'], smp['id'], smp['image_path'], smp['label_path']] \
+        #                 for smp in training_dataset]
+        # wandb.log({'datasets/training_dataset':wandb.Table(columns=['dataset_idx', 'id', 'image', 'label'], data=dataset_info)}, step=0)
 
     fold_means_no_bg = []
 
@@ -751,7 +753,7 @@ def train_DL(run_name, config, training_dataset):
             n_dims = (-2,-1)
             # Override idxs
             all_3d_ids = training_dataset.get_3d_ids()
-            NUM_REGISTRATIONS_PER_IMG = 3
+            NUM_REGISTRATIONS_PER_IMG = 10
             NUM_VAL_IMAGES = 20
             val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
@@ -853,11 +855,11 @@ def train_DL(run_name, config, training_dataset):
         gt_num = torch.empty([len(training_dataset)])
 
         with torch.no_grad():
-            print("Fetching training metrics.")
+            print("Fetching training metrics for samples.")
             # _, wise_lbls, mod_lbls = training_dataset.get_data()
             training_dataset.eval(use_modified=True)
 
-            for idx, sample in enumerate(training_dataset):
+            for idx, sample in tqdm(enumerate(training_dataset), desc="sample", total=len(training_dataset)):
                 wise_label, mod_label = sample['label'], sample['modified_label']
                 mod_label, _ = ensure_dense(mod_label)
                 mod_label = mod_label.cuda()
