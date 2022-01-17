@@ -1057,12 +1057,23 @@ def train_DL(run_name, config, training_dataset):
                 train_params = embedding.weight[train_idxs].squeeze()
                 order = np.argsort(train_params.cpu().detach())
                 wise_corr_coeff = np.corrcoef(train_params[order].cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())[0,1]
+                spearman_corr_coeff, spearman_p = scipy.stats.spearmanr(train_params[order].cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())
 
                 wandb.log(
                     {f'data_parameters/wise_corr_coeff_fold{fold_idx}': wise_corr_coeff},
                     step=global_idx
                 )
+                wandb.log(
+                    {f'data_parameters/spearman_corr_coeff_fold{fold_idx}': spearman_corr_coeff},
+                    step=global_idx
+                )
+                wandb.log(
+                    {f'data_parameters/spearman_p_fold{fold_idx}': spearman_p},
+                    step=global_idx
+                )
                 print(f'data_parameters/wise_corr_coeff_fold{fold_idx}', f"{wise_corr_coeff:.2f}")
+                print(f'data_parameters/spearman_corr_coeff_fold{fold_idx}', f"{spearman_corr_coeff:.2f}")
+                print(f'data_parameters/spearman_p_fold{fold_idx}', f"{spearman_p:.5f}")
 
                 # Log stats of data parameters and figure
                 log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
