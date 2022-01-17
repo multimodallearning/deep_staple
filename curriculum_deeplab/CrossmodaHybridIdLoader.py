@@ -26,11 +26,11 @@ class CrossmodaHybridIdLoader(HybridIdLoader):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.label_tags = ['background', 'tumour']
+        label_tags = ['background', 'tumour']
 
 
 
-def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data, size, resample, normalize, crop_3d_w_dim_range, ensure_labeled_pairs, debug):
+def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data, size, resample, normalize, crop_3d_w_dim_range, ensure_labeled_pairs, modified_3d_label_override, debug):
 
     def extract_3d_id(_input):
         # Match sth like 100r:var020
@@ -96,6 +96,7 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
         nonlocal normalize
         nonlocal crop_3d_w_dim_range
         nonlocal ensure_labeled_pairs
+        nonlocal modified_3d_label_override
         nonlocal debug
 
         # Define finished preprocessing states here with subpath and default size
@@ -177,6 +178,7 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
 
         img_data_3d = {}
         label_data_3d = {}
+        modified_label_data_3d = {}
 
         # Load data from files
         print("Loading CrossMoDa {} images and labels...".format(domain))
@@ -223,18 +225,74 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
 
                 img_data_3d[_3d_id] = tmp
 
-            # Postprocessing of 3d volumes
-            for _3d_id in list(label_data_3d.keys()):
-                if label_data_3d[_3d_id].unique().numel() != 2: #TODO use 3 classes again
-                    del img_data_3d[_3d_id]
-                    del label_data_3d[_3d_id]
-                    del modified_label_data_3d[_3d_id]
-                elif "r" in _3d_id:
-                    img_data_3d[_3d_id] = img_data_3d[_3d_id].flip(dims=(1,))
-                    label_data_3d[_3d_id] = label_data_3d[_3d_id].flip(dims=(1,))
-                    modified_label_data_3d[_3d_id] = modified_label_data_3d[_3d_id].flip(dims=(1,))
+                # Initialize 3d modified labels as unmodified labels
+        for label_id in label_data_3d.keys():
+            modified_label_data_3d[label_id] = label_data_3d[label_id]
 
-        return (img_paths, label_paths, img_data_3d, label_data_3d,
+        # Now inject externally overriden labels (if any)
+        if modified_3d_label_override:
+            # # Skip file if we do not have modified labels for it when external labels were provided TODO check, is this needed?
+            # if modified_3d_label_override:
+            #     if crossmoda_id not in \
+            #         [extract_short_3d_id(var_id) for var_id in modified_3d_label_override.keys()]:
+            #         continue
+
+            stored_3d_ids = list(label_data_3d.keys())
+
+            # Delete all modified labels which have no base data keys
+            unmatched_keys = [key for key in modified_3d_label_override.keys() \
+                if extract_short_3d_id(key) not in stored_3d_ids]
+            for del_key in unmatched_keys:
+                del modified_3d_label_override[del_key]
+            if len(stored_3d_ids) > len(modified_3d_label_override.keys()):
+                print(f"Reducing label data with modified_3d_label_override from {len(stored_3d_ids)} to {len(modified_3d_label_override.keys())} labels")
+            else:
+                print(f"Expanding label data with modified_3d_label_override from {len(stored_3d_ids)} to {len(modified_3d_label_override.keys())} labels")
+
+            for _mod_3d_id, modified_label in modified_3d_label_override.items():
+                tmp = modified_label
+
+                if resample: #resample image to specified size
+                    tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
+
+                if tmp.shape != size: #for size missmatch use symmetric padding with 0
+                    difs = [size[0]-tmp.size(0),size[1]-tmp.size(1),size[2]-tmp.size(2)]
+                    pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
+                    tmp = F.pad(tmp,pad)
+
+                if crop_3d_w_dim_range:
+                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
+
+                # Only use tumour class, remove TODO
+                tmp[tmp==2] = 0
+                modified_label_data_3d[_mod_3d_id] = tmp.long()
+
+                # Now expand original _3d_ids with _mod_3d_id
+                _3d_id = extract_short_3d_id(_mod_3d_id)
+                img_paths[_mod_3d_id] = img_paths[_3d_id]
+                label_paths[_mod_3d_id] = label_paths[_3d_id]
+                img_data_3d[_mod_3d_id] = img_data_3d[_3d_id]
+                label_data_3d[_mod_3d_id] = label_data_3d[_3d_id]
+
+            # Delete original 3d_ids as they got expanded
+            for del_id in stored_3d_ids:
+                del img_paths[del_id]
+                del label_paths[del_id]
+                del img_data_3d[del_id]
+                del label_data_3d[del_id]
+
+        # Postprocessing of 3d volumes
+        for _3d_id in list(label_data_3d.keys()):
+            if label_data_3d[_3d_id].unique().numel() != 2: #TODO use 3 classes again
+                del img_data_3d[_3d_id]
+                del label_data_3d[_3d_id]
+                del modified_label_data_3d[_3d_id]
+            elif "r" in _3d_id:
+                img_data_3d[_3d_id] = img_data_3d[_3d_id].flip(dims=(1,))
+                label_data_3d[_3d_id] = label_data_3d[_3d_id].flip(dims=(1,))
+                modified_label_data_3d[_3d_id] = modified_label_data_3d[_3d_id].flip(dims=(1,))
+
+        return (img_paths, label_paths, img_data_3d, label_data_3d, modified_label_data_3d,
             extract_3d_id, extract_short_3d_id)
 
     return data_load_closure

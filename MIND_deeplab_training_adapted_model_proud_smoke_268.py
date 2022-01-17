@@ -162,7 +162,7 @@ config_dict = DotDict({
     'train_patchwise': True,
 
     'dataset': 'crossmoda',
-    'reg_state': "acummulate_convex_adam_FT2_MT1",
+    'reg_state': "acummulate_deeds_FT2_MT1",
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -260,6 +260,15 @@ def prepare_data(config):
                     label_data.append(moving_sample['warped_label'])
                     loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
+        elif config.reg_state == "acummulate_deeds_FT2_MT1":
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth")
+            label_data = []
+            loaded_identifier = []
+            for fixed_id, moving_dict in bare_data.items():
+                for moving_id, moving_sample in moving_dict.items():
+                    label_data.append(moving_sample['warped_label'])
+                    loaded_identifier.append(f"{fixed_id}:m{moving_id}")
+
         else:
             raise ValueError()
 
@@ -284,7 +293,7 @@ def prepare_data(config):
             base_dir="/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
             domain='source', state='l4', use_additional_data=False,
             size=(128,128,128), resample=True, normalize=True, crop_3d_w_dim_range=config.crop_3d_w_dim_range,
-            ensure_labeled_pairs=True,
+            ensure_labeled_pairs=True, modified_3d_label_override=modified_3d_label_override,
             debug=config.debug
         )
         training_dataset = CrossmodaHybridIdLoader(
@@ -292,7 +301,7 @@ def prepare_data(config):
             size=(128,128,128), resample=True, normalize=True, crop_3d_w_dim_range=config.crop_3d_w_dim_range,
             ensure_labeled_pairs=True,
             max_load_3d_num=config.train_set_max_len,
-            modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
+            prevent_disturbance=prevent_disturbance,
             use_2d_normal_to=config.use_2d_normal_to,
             crop_2d_slices_gt_num_threshold=config.crop_2d_slices_gt_num_threshold,
             pre_interpolation_factor=pre_interpolation_factor,

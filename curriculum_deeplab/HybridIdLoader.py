@@ -54,73 +54,18 @@ class HybridIdLoader(Dataset):
         self.label_paths = {}
         self.img_data_3d = {}
         self.label_data_3d = {}
+        self.modified_label_data_3d = {}
 
         # Load base 3D data
         (self.img_paths, self.label_paths,
          self.img_data_3d, self.label_data_3d,
+         self.modified_label_data_3d,
          self.extract_3d_id, self.extract_short_3d_id) = data_load_function()
 
         # Retrieve slices and plugin modified data
-        self.modified_label_data_3d = {}
         self.img_data_2d = {}
         self.label_data_2d = {}
         self.modified_label_data_2d = {}
-
-        # Initialize 3d modified labels as unmodified labels
-        for label_id in self.label_data_3d.keys():
-            self.modified_label_data_3d[label_id] = self.label_data_3d[label_id]
-
-        # Now inject externally overriden labels (if any)
-        if modified_3d_label_override:
-            # # Skip file if we do not have modified labels for it when external labels were provided TODO check, is this needed?
-            # if modified_3d_label_override:
-            #     if crossmoda_id not in \
-            #         [extract_short_3d_id(var_id) for var_id in modified_3d_label_override.keys()]:
-            #         continue
-
-            stored_3d_ids = list(self.label_data_3d.keys())
-
-            # Delete all modified labels which have no base data keys
-            unmatched_keys = [key for key in modified_3d_label_override.keys() \
-                if self.extract_short_3d_id(key) not in stored_3d_ids]
-            for del_key in unmatched_keys:
-                del modified_3d_label_override[del_key]
-            if len(stored_3d_ids) > len(modified_3d_label_override.keys()):
-                print(f"Reducing label data with modified_3d_label_override from {len(stored_3d_ids)} to {len(modified_3d_label_override.keys())} labels")
-            else:
-                print(f"Expanding label data with modified_3d_label_override from {len(stored_3d_ids)} to {len(modified_3d_label_override.keys())} labels")
-
-            for _mod_3d_id, modified_label in modified_3d_label_override.items():
-                tmp = modified_label
-
-                if resample: #resample image to specified size
-                    tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
-
-                if tmp.shape != size: #for size missmatch use symmetric padding with 0
-                    difs = [size[0]-tmp.size(0),size[1]-tmp.size(1),size[2]-tmp.size(2)]
-                    pad = (difs[-1]//2,difs[-1]-difs[-1]//2,difs[-2]//2,difs[-2]-difs[-2]//2,difs[-3]//2,difs[-3]-difs[-3]//2)
-                    tmp = F.pad(tmp,pad)
-
-                if crop_3d_w_dim_range:
-                    tmp = tmp[..., crop_3d_w_dim_range[0]:crop_3d_w_dim_range[1]]
-
-                # Only use tumour class, remove TODO
-                tmp[tmp==2] = 0
-                self.modified_label_data_3d[_mod_3d_id] = tmp.long()
-
-                # Now expand original _3d_ids with _mod_3d_id
-                _3d_id = self.extract_short_3d_id(_mod_3d_id)
-                self.img_paths[_mod_3d_id] = self.img_paths[_3d_id]
-                self.label_paths[_mod_3d_id] = self.label_paths[_3d_id]
-                self.img_data_3d[_mod_3d_id] = self.img_data_3d[_3d_id]
-                self.label_data_3d[_mod_3d_id] = self.label_data_3d[_3d_id]
-
-            # Delete original 3d_ids as they got expanded
-            for del_id in stored_3d_ids:
-                del self.img_paths[del_id]
-                del self.label_paths[del_id]
-                del self.img_data_3d[del_id]
-                del self.label_data_3d[del_id]
 
         # Postprocessing of 3d volumes
         orig_3d_num = len(self.label_data_3d.keys())
