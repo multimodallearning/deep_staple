@@ -1362,7 +1362,7 @@ sweep_config_dict = dict(
         #     values=[False, True]
         # ),
         fixed_weight_min_quantile=dict(
-            values=[0., 2., 4., 6., 8., 1.]
+            values=[0., .2, .4, .6, .8, 1.]
         ),
     )
 )
