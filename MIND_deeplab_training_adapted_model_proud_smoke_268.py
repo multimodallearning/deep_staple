@@ -26,6 +26,7 @@ import pickle
 import copy
 from pathlib import Path
 from tqdm import tqdm
+from collections import OrderedDict
 
 import functools
 from enum import Enum, auto
@@ -273,9 +274,12 @@ def prepare_data(config):
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
-                for moving_id, moving_sample in moving_dict.items():
-                    label_data.append(moving_sample['warped_label'])
-                    loaded_identifier.append(f"{fixed_id}:m{moving_id}")
+                sorted_moving_dict = OrderedDict(moving_dict)
+                for idx_mov, (moving_id, moving_sample) in enumerate(sorted_moving_dict.items()):
+                    # Only use every third warped sample
+                    if idx_mov % 10 == 0:
+                        label_data.append(moving_sample['warped_label'].cpu())
+                        loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
         else:
             raise ValueError()
@@ -673,7 +677,7 @@ def log_class_dices(log_prefix, log_postfix, class_dices, log_idx):
 
         cls_dices = list(map(lambda dct: dct[cls_name], class_dices))
         mean_per_class =np.nanmean(cls_dices)
-        tqdm.write(log_path, f"{mean_per_class*100:.2f}%")
+        print(log_path, f"{mean_per_class*100:.2f}%")
         wandb.log({log_path: mean_per_class}, step=log_idx)
 
 def CELoss(logits, targets, bin_weight=None):
@@ -747,7 +751,7 @@ def train_DL(run_name, config, training_dataset):
             n_dims = (-2,-1)
             # Override idxs
             all_3d_ids = training_dataset.get_3d_ids()
-            NUM_REGISTRATIONS_PER_IMG = 30
+            NUM_REGISTRATIONS_PER_IMG = 3
             NUM_VAL_IMAGES = 20
             val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
@@ -803,15 +807,7 @@ def train_DL(run_name, config, training_dataset):
         else:
             in_channels = 1
 
-        bn_count = torch.empty([len(training_dataset.label_tags)], device=all_modified_segs.device)
 
-        with torch.no_grad():
-            for seg in all_modified_segs:
-                seg, _ = ensure_dense(seg)
-                bn_count += torch.bincount(seg.reshape(-1).long(), minlength=len(training_dataset.label_tags))
-
-            class_weights = 1/(bn_count).float().pow(.35)
-            class_weights /= class_weights.mean()
 
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
@@ -850,24 +846,36 @@ def train_DL(run_name, config, training_dataset):
 
         t0 = time.time()
 
-        # Prepare corr coefficient scoring
-        training_dataset.eval(use_modified=True)
-        lbl_gen = ((sample['label'], sample['modified_label']) for sample in training_dataset)
         dice_func = dice2d if config.use_2d_normal_to is not None else dice3d
 
+        bn_count = torch.empty([len(training_dataset.label_tags)], device=all_modified_segs.device)
         wise_dice = torch.empty([len(training_dataset), len(training_dataset.label_tags)])
         gt_num = torch.empty([len(training_dataset)])
 
-        for wd_idx, (wise_label, mod_label) in enumerate(lbl_gen):
-            dsc = dice_func(
-                torch.nn.functional.one_hot(wise_label.unsqueeze(0), len(training_dataset.label_tags)),
-                torch.nn.functional.one_hot(mod_label.unsqueeze(0), len(training_dataset.label_tags)),
-                one_hot_torch_style=True, nan_for_unlabeled_target=False
-            )
-            wise_dice[wd_idx] = dsc
-            gt_num[wd_idx] = (mod_label > 0).sum(dim=n_dims)
+        with torch.no_grad():
+            print("Fetching training metrics.")
+            # _, wise_lbls, mod_lbls = training_dataset.get_data()
+            training_dataset.eval(use_modified=True)
 
-        t_metric = (gt_num+np.exp(1)).log()+np.exp(1)
+            for idx, sample in enumerate(training_dataset):
+                wise_label, mod_label = sample['label'], sample['modified_label']
+                mod_label, _ = ensure_dense(mod_label)
+                mod_label = mod_label.cuda()
+                wise_label = wise_label.cuda()
+
+                dsc = dice_func(
+                    torch.nn.functional.one_hot(wise_label.unsqueeze(0), len(training_dataset.label_tags)),
+                    torch.nn.functional.one_hot(mod_label.unsqueeze(0), len(training_dataset.label_tags)),
+                    one_hot_torch_style=True, nan_for_unlabeled_target=False
+                )
+                bn_count += torch.bincount(mod_label.reshape(-1).long(), minlength=len(training_dataset.label_tags)).cpu()
+                wise_dice[idx] = dsc.cpu()
+                gt_num[idx] = (mod_label > 0).sum(dim=n_dims).cpu()
+
+            class_weights = 1/(bn_count).float().pow(.35)
+            class_weights /= class_weights.mean()
+
+            t_metric = (gt_num+np.exp(1)).log()+np.exp(1)
 
         if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
             union_wise_mod_label = torch.logical_or(wise_labels, mod_labels)
@@ -891,7 +899,7 @@ def train_DL(run_name, config, training_dataset):
             class_dices = []
 
             # Load data
-            for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch #"):
+            for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch #", total=len(train_dataloader)):
 
                 optimizer.zero_grad()
                 if optimizer_dp:
@@ -1027,8 +1035,8 @@ def train_DL(run_name, config, training_dataset):
                     break
 
             ### Logging ###
-            tqdm.write(f"### Log epoch {epx} @ {time.time()-t0:.2f}s")
-            tqdm.write("### Training")
+            print(f"### Log epoch {epx} @ {time.time()-t0:.2f}s")
+            print("### Training")
             ### Log wandb data ###
             # Log the epoch idx per fold - so we can recover the diagram by setting
             # ref_epoch_idx as x-axis in wandb interface
@@ -1038,7 +1046,7 @@ def train_DL(run_name, config, training_dataset):
             wandb.log({f'losses/loss_fold{fold_idx}': mean_loss}, step=global_idx)
 
             mean_dice = np.nanmean(dices)
-            tqdm.write(f'dice_mean_wo_bg_fold{fold_idx}', f"{mean_dice*100:.2f}%")
+            print(f'dice_mean_wo_bg_fold{fold_idx}', f"{mean_dice*100:.2f}%")
             wandb.log({f'scores/dice_mean_wo_bg_fold{fold_idx}': mean_dice}, step=global_idx)
 
             log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
@@ -1054,7 +1062,7 @@ def train_DL(run_name, config, training_dataset):
                     {f'data_parameters/wise_corr_coeff_fold{fold_idx}': wise_corr_coeff},
                     step=global_idx
                 )
-                tqdm.write(f'data_parameters/wise_corr_coeff_fold{fold_idx}', f"{wise_corr_coeff:.2f}")
+                print(f'data_parameters/wise_corr_coeff_fold{fold_idx}', f"{wise_corr_coeff:.2f}")
 
                 # Log stats of data parameters and figure
                 log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
@@ -1090,8 +1098,8 @@ def train_DL(run_name, config, training_dataset):
                         THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
                         _path=_path, device='cuda')
 
-            tqdm.write()
-            tqdm.write("### Validation")
+            print()
+            print("### Validation")
             lraspp.eval()
             training_dataset.eval()
 
@@ -1152,8 +1160,8 @@ def train_DL(run_name, config, training_dataset):
                             b_val_dice, training_dataset.label_tags, exclude_bg=True))
 
                         if config.do_plot:
-                            tqdm.write(f"Validation 3D image label/ground-truth {val_3d_idxs}")
-                            tqdm.write(get_batch_dice_over_all(
+                            print(f"Validation 3D image label/ground-truth {val_3d_idxs}")
+                            print(get_batch_dice_over_all(
                             b_val_dice, exclude_bg=False))
                             # display_all_seg_slices(b_seg.unsqueeze(1), logits_for_score)
                             display_seg(in_type="single_3D",
@@ -1168,11 +1176,11 @@ def train_DL(run_name, config, training_dataset):
                             )
 
                     mean_val_dice = np.nanmean(val_dices)
-                    tqdm.write(f'val_dice_mean_wo_bg_fold{fold_idx}', f"{mean_val_dice*100:.2f}%")
+                    print(f'val_dice_mean_wo_bg_fold{fold_idx}', f"{mean_val_dice*100:.2f}%")
                     wandb.log({f'scores/val_dice_mean_wo_bg_fold{fold_idx}': mean_val_dice}, step=global_idx)
                     log_class_dices("scores/val_dice_mean_", f"_fold{fold_idx}", val_class_dices, global_idx)
 
-            tqdm.write()
+            print()
             # End of training loop
 
             if config.debug:
