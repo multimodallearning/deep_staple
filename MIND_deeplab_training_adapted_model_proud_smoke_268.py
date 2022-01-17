@@ -192,7 +192,7 @@ config_dict = DotDict({
     'do_plot': False,
     'save_dp_figures': False,
     'debug': False,
-    'wandb_mode': 'disabled', # e.g. online, disabled
+    'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -277,7 +277,7 @@ def prepare_data(config):
                 sorted_moving_dict = OrderedDict(moving_dict)
                 for idx_mov, (moving_id, moving_sample) in enumerate(sorted_moving_dict.items()):
                     # Only use every third warped sample
-                    if idx_mov % 10 == 0:
+                    if idx_mov % 3 == 0:
                         label_data.append(moving_sample['warped_label'].cpu())
                         loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
