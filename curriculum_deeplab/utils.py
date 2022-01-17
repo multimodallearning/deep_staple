@@ -2,11 +2,32 @@ import os
 import numpy as np
 import torch
 import torch.nn.functional as F
+from contextlib import contextmanager
 
 from enum import Enum, auto
 class LabelDisturbanceMode(Enum):
     FLIP_ROLL = auto()
     AFFINE = auto()
+
+@contextmanager
+def torch_manual_seeded(seed):
+    saved_state = torch.get_rng_state()
+    yield
+    torch.set_rng_state(saved_state)
+
+def ensure_dense(label):
+    entered_sparse = label.is_sparse
+    if entered_sparse:
+        label = label.to_dense()
+
+    return label, entered_sparse
+
+def restore_sparsity(label, was_sparse):
+    if was_sparse and not label.is_sparse:
+        return label.to_sparse()
+    return label
+
+
 
 def dilate_label_class(b_label, class_max_idx, class_dilate_idx,
                        use_2d, kernel_sz=3):

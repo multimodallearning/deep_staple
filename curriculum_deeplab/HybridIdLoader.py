@@ -18,13 +18,7 @@ from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 import nibabel as nib
 from tqdm import tqdm
-from .utils import interpolate_sample, augmentNoise, spatial_augment, LabelDisturbanceMode
-
-@contextmanager
-def torch_manual_seeded(seed):
-    saved_state = torch.get_rng_state()
-    yield
-    torch.set_rng_state(saved_state)
+from .utils import interpolate_sample, augmentNoise, spatial_augment, LabelDisturbanceMode, torch_manual_seeded, ensure_dense
 
 class HybridIdLoader(Dataset):
     def __init__(self,
@@ -68,6 +62,7 @@ class HybridIdLoader(Dataset):
         self.modified_label_data_2d = {}
 
         # Postprocessing of 3d volumes
+        print("Postprocessing 3D volumes")
         orig_3d_num = len(self.label_data_3d.keys())
 
         if ensure_labeled_pairs:
@@ -128,6 +123,7 @@ class HybridIdLoader(Dataset):
                     self.modified_label_data_2d[f"{_3d_id}{use_2d_normal_to}{idx:03d}"] = lbl_slc
 
             # Postprocessing of 2d slices
+            print("Postprocessing 2D slices")
             orig_2d_num = len(self.label_data_2d.keys())
 
             for key, label in list(self.label_data_2d.items()):
@@ -160,7 +156,17 @@ class HybridIdLoader(Dataset):
 
             postprocessed_2d_num = len(self.label_data_2d.keys())
             print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
+
+            nonzero_lbl_percentage = torch.tensor([lbl.sum((-2,-1)) > 0 for lbl in self.label_data_2d.values()]).sum()
+            nonzero_lbl_percentage = nonzero_lbl_percentage/len(self.label_data_2d)
+            print(f"Nonzero labels: " f"{nonzero_lbl_percentage*100:.2f}%")
+            nonzero_mod_lbl_percentage = torch.tensor([ensure_dense(lbl)[0].sum((-2,-1)) > 0 for lbl in self.modified_label_data_2d.values()]).sum()
+            nonzero_mod_lbl_percentage = nonzero_mod_lbl_percentage/len(self.modified_label_data_2d)
+            print(f"Nonzero modified labels: " f"{nonzero_mod_lbl_percentage*100:.2f}%")
+
             print(f"Loader will use {postprocessed_2d_num} of {orig_2d_num} 2D slices.")
+
+
         print("Data import finished.")
         print(f"CrossMoDa loader will yield {'2D' if self.use_2d_normal_to else '3D'} samples")
 
@@ -306,6 +312,7 @@ class HybridIdLoader(Dataset):
 
         b_image = image.unsqueeze(0).cuda()
         b_label = label.unsqueeze(0).cuda()
+        modified_label, _ = ensure_dense(modified_label)
         b_modified_label = modified_label.unsqueeze(0).cuda()
 
         if self.do_augment and not self.augment_at_collate:

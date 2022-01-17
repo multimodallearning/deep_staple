@@ -47,7 +47,7 @@ from mdl_seg_class.metrics import dice3d, dice2d
 from mdl_seg_class.visualization import visualize_seg
 
 from curriculum_deeplab.mindssc import mindssc
-from curriculum_deeplab.utils import interpolate_sample, in_notebook, dilate_label_class, LabelDisturbanceMode
+from curriculum_deeplab.utils import interpolate_sample, in_notebook, dilate_label_class, LabelDisturbanceMode, ensure_dense
 from curriculum_deeplab.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader, get_crossmoda_data_load_closure
 from curriculum_deeplab.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D
 
@@ -179,7 +179,7 @@ config_dict = DotDict({
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/balmy-wildflower-1109_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_file': None,
     'fixed_weight_min_quantile': None,
     'fixed_weight_min_value': 0.,
     # ),
@@ -189,7 +189,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'save_dp_figures': False,
-    'debug': False,
+    'debug': True,
     'wandb_mode': 'disabled', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
@@ -210,6 +210,7 @@ def prepare_data(config):
         print("Loading registered data.")
 
         if config.reg_state == "mix_combined_best":
+            domain = 'source'
             label_data_left = torch.load('./data/optimal_reg_left.pth')
             label_data_right = torch.load('./data/optimal_reg_right.pth')
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
@@ -228,6 +229,7 @@ def prepare_data(config):
             loaded_identifier = [f"{_id}:{var_id}" for _id, var_id in zip(loaded_identifier, var_identifier)]
 
         elif config.reg_state == "acummulate_combined_best":
+            domain = 'source'
             label_data_left = torch.load('./data/optimal_reg_left.pth')
             label_data_right = torch.load('./data/optimal_reg_right.pth')
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
@@ -237,13 +239,16 @@ def prepare_data(config):
             loaded_identifier = [_id+':mBST' for _id in loaded_identifier] + [_id+':mCMB' for _id in loaded_identifier]
 
         elif config.reg_state == "best":
+            domain = 'source'
             label_data_left = torch.load('./data/optimal_reg_left.pth')
             label_data_right = torch.load('./data/optimal_reg_right.pth')
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
             postfix = 'mBST'
             loaded_identifier = [_id+':'+postfix for _id in loaded_identifier]
+
         elif config.reg_state == "combined":
+            domain = 'source'
             label_data_left = torch.load('./data/optimal_reg_left.pth')
             label_data_right = torch.load('./data/optimal_reg_right.pth')
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
@@ -252,6 +257,7 @@ def prepare_data(config):
             loaded_identifier = [_id+':'+postfix for _id in loaded_identifier]
 
         elif config.reg_state == "acummulate_convex_adam_FT2_MT1":
+            domain = 'target'
             bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_convex_registered.pth")
             label_data = []
             loaded_identifier = []
@@ -261,6 +267,7 @@ def prepare_data(config):
                     loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
         elif config.reg_state == "acummulate_deeds_FT2_MT1":
+            domain = 'target'
             bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth")
             label_data = []
             loaded_identifier = []
@@ -283,6 +290,7 @@ def prepare_data(config):
         prevent_disturbance = True
 
     else:
+        domain = 'source'
         modified_3d_label_override = None
         prevent_disturbance = False
 
@@ -291,7 +299,7 @@ def prepare_data(config):
         pre_interpolation_factor = 2. if config.use_2d_normal_to is not None else 1.
         clsre = get_crossmoda_data_load_closure(
             base_dir="/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
-            domain='source', state='l4', use_additional_data=False,
+            domain=domain, state='l4', use_additional_data=False,
             size=(128,128,128), resample=True, normalize=True, crop_3d_w_dim_range=config.crop_3d_w_dim_range,
             ensure_labeled_pairs=True, modified_3d_label_override=modified_3d_label_override,
             debug=config.debug
@@ -307,10 +315,7 @@ def prepare_data(config):
             pre_interpolation_factor=pre_interpolation_factor,
             fixed_weight_file=config.fixed_weight_file, fixed_weight_min_quantile=config.fixed_weight_min_quantile, fixed_weight_min_value=config.fixed_weight_min_value,
         )
-        training_dataset.eval()
-        print(f"Nonzero slices: " \
-            f"{sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)*100}%"
-        )
+
         # validation_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
         #     domain="validation", state="l4", ensure_labeled_pairs=True)
         # target_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
@@ -764,18 +769,21 @@ def train_DL(run_name, config, training_dataset):
 
         _, _, all_modified_segs = training_dataset.get_data()
 
-        non_empty_train_idxs = train_idxs[(all_modified_segs[train_idxs].sum(dim=n_dims) > 0)]
+        if config.disturbed_percentage > 0.:
+            with torch.no_grad():
+                non_empty_train_idxs = train_idxs[(all_modified_segs[train_idxs].sum(dim=n_dims) > 0)]
 
-        ### Disturb dataset (only non-emtpy idxs)###
-        proposed_disturbed_idxs = np.random.choice(non_empty_train_idxs, size=int(len(non_empty_train_idxs)*config.disturbed_percentage), replace=False)
-        proposed_disturbed_idxs = torch.tensor(proposed_disturbed_idxs)
-        training_dataset.disturb_idxs(proposed_disturbed_idxs,
-            disturbance_mode=config.disturbance_mode,
-            disturbance_strength=config.disturbance_strength
-        )
-
-        disturbed_bool_vect = torch.zeros(len(training_dataset))
-        disturbed_bool_vect[training_dataset.disturbed_idxs] = 1.
+            ### Disturb dataset (only non-emtpy idxs)###
+            proposed_disturbed_idxs = np.random.choice(non_empty_train_idxs, size=int(len(non_empty_train_idxs)*config.disturbed_percentage), replace=False)
+            proposed_disturbed_idxs = torch.tensor(proposed_disturbed_idxs)
+            training_dataset.disturb_idxs(proposed_disturbed_idxs,
+                disturbance_mode=config.disturbance_mode,
+                disturbance_strength=config.disturbance_strength
+            )
+            disturbed_bool_vect = torch.zeros(len(training_dataset))
+            disturbed_bool_vect[training_dataset.disturbed_idxs] = 1.
+        else:
+            disturbed_bool_vect = torch.zeros(len(training_dataset))
 
         clean_idxs = train_idxs[np.isin(train_idxs, training_dataset.disturbed_idxs, invert=True)]
         print("Disturbed indexes:", sorted(training_dataset.disturbed_idxs))
@@ -792,8 +800,15 @@ def train_DL(run_name, config, training_dataset):
         else:
             in_channels = 1
 
-        class_weights = 1/(torch.bincount(all_modified_segs.reshape(-1).long())).float().pow(.35)
-        class_weights /= class_weights.mean()
+        bn_count = torch.empty([len(training_dataset.label_tags)], device=all_modified_segs.device)
+
+        with torch.no_grad():
+            for seg in all_modified_segs:
+                seg, _ = ensure_dense(seg)
+                bn_count += torch.bincount(seg.reshape(-1).long(), minlength=len(training_dataset.label_tags))
+
+            class_weights = 1/(bn_count).float().pow(.35)
+            class_weights /= class_weights.mean()
 
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
@@ -1308,38 +1323,42 @@ def train_DL(run_name, config, training_dataset):
                 wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
 
             # Write out data of modified and un-modified labels and an overview image
-            print("Writing train sample image.")
-            # overlay text example: d_idx=0, dp_i=1.00, dist? False
-            overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
-                for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
 
             if training_dataset.use_2d():
                 reduce_dim = None
                 in_type = "batch_2D"
+                skip_writeout = len(training_dataset) > 10000
             else:
                 reduce_dim = "W"
                 in_type = "batch_3D"
+                skip_writeout = len(training_dataset) > 200
+                
+            if not skip_writeout:
+                print("Writing train sample image.")
+                # overlay text example: d_idx=0, dp_i=1.00, dist? False
+                overlay_text_list = [f"id:{d_id} dp:{instance_p.item():.2f}" \
+                    for d_id, instance_p, disturb_flg in zip(d_ids, dp_weight, disturb_flags)]
 
-            use_2d = training_dataset.use_2d()
-            scf = 1/training_dataset.pre_interpolation_factor
+                use_2d = training_dataset.use_2d()
+                scf = 1/training_dataset.pre_interpolation_factor
 
-            show_img = interpolate_sample(b_label=_labels, scale_factor=scf, use_2d=use_2d)[1].unsqueeze(1)
-            show_seg = interpolate_sample(b_label=4*_predictions.squeeze(1), scale_factor=scf, use_2d=use_2d)[1]
-            show_gt = interpolate_sample(b_label=_modified_labels, scale_factor=scf, use_2d=use_2d)[1]
+                show_img = interpolate_sample(b_label=_labels, scale_factor=scf, use_2d=use_2d)[1].unsqueeze(1)
+                show_seg = interpolate_sample(b_label=_predictions.squeeze(1), scale_factor=scf, use_2d=use_2d)[1]
+                show_gt = interpolate_sample(b_label=_modified_labels, scale_factor=scf, use_2d=use_2d)[1]
 
-            visualize_seg(in_type=in_type, reduce_dim=reduce_dim,
-                img=show_img, # Expert label in BW
-                seg=show_seg, # Prediction in blue
-                ground_truth=show_gt, # Modified label in red
-                crop_to_non_zero_seg=False,
-                alpha_seg = .5,
-                alpha_gt = .5,
-                n_per_row=70,
-                overlay_text=overlay_text_list,
-                annotate_color=(0,255,255),
-                frame_elements=disturb_flags,
-                file_path=seg_viz_out_path,
-            )
+                visualize_seg(in_type=in_type, reduce_dim=reduce_dim,
+                    img=show_img, # Expert label in BW
+                    seg=4*show_seg, # Prediction in blue
+                    ground_truth=show_gt, # Modified label in red
+                    crop_to_non_zero_seg=False,
+                    alpha_seg = .5,
+                    alpha_gt = .5,
+                    n_per_row=70,
+                    overlay_text=overlay_text_list,
+                    annotate_color=(0,255,255),
+                    frame_elements=disturb_flags,
+                    file_path=seg_viz_out_path,
+                )
 
         # End of fold loop
 

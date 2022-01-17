@@ -7,7 +7,6 @@ import re
 import pickle
 import copy
 from pathlib import Path
-from contextlib import contextmanager
 import warnings
 from collections.abc import Iterable
 
@@ -19,6 +18,7 @@ import torch.nn.functional as F
 import nibabel as nib
 from tqdm import tqdm
 from curriculum_deeplab.HybridIdLoader import HybridIdLoader
+from curriculum_deeplab.utils import ensure_dense, restore_sparsity
 
 
 
@@ -26,7 +26,7 @@ class CrossmodaHybridIdLoader(HybridIdLoader):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        label_tags = ['background', 'tumour']
+        self.label_tags = ['background', 'tumour']
 
 
 
@@ -34,7 +34,7 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
 
     def extract_3d_id(_input):
         # Match sth like 100r:var020
-        return "".join(re.findall(r'^(\d{3}[lr])(:m[A-Z0-9a-z]{3,4})?$', _input)[0])
+        return "".join(re.findall(r'^(\d{3}[lr])(:m[A-Z0-9a-z]{3,4})?', _input)[0])
 
     def extract_short_3d_id(_input):
         # Match sth like 100r:var020 and returns 100r
@@ -86,6 +86,8 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
             data = dataset.get_data()
 
         """
+        nonlocal extract_3d_id
+        nonlocal extract_short_3d_id
 
         nonlocal base_dir
         nonlocal domain
@@ -150,7 +152,7 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
         label_paths = {}
 
         if debug:
-            files = files[:10]
+            files = files[:70]
 
         for _path in files:
 
@@ -252,6 +254,7 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
             for _mod_3d_id, modified_label in modified_3d_label_override.items():
                 tmp = modified_label
 
+                tmp, was_sparse = ensure_dense(tmp)
                 if resample: #resample image to specified size
                     tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
 
@@ -265,7 +268,10 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
 
                 # Only use tumour class, remove TODO
                 tmp[tmp==2] = 0
-                modified_label_data_3d[_mod_3d_id] = tmp.long()
+                tmp = tmp.long()
+
+                tmp = restore_sparsity(tmp, was_sparse)
+                modified_label_data_3d[_mod_3d_id] = tmp
 
                 # Now expand original _3d_ids with _mod_3d_id
                 _3d_id = extract_short_3d_id(_mod_3d_id)
@@ -290,7 +296,9 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
             elif "r" in _3d_id:
                 img_data_3d[_3d_id] = img_data_3d[_3d_id].flip(dims=(1,))
                 label_data_3d[_3d_id] = label_data_3d[_3d_id].flip(dims=(1,))
-                modified_label_data_3d[_3d_id] = modified_label_data_3d[_3d_id].flip(dims=(1,))
+
+                dense_modified, was_sparse = ensure_dense(modified_label_data_3d[_3d_id])
+                modified_label_data_3d[_3d_id] = restore_sparsity(dense_modified.flip(dims=(1,)), was_sparse)
 
         return (img_paths, label_paths, img_data_3d, label_data_3d, modified_label_data_3d,
             extract_3d_id, extract_short_3d_id)
