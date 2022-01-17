@@ -124,7 +124,7 @@ class HybridIdLoader(Dataset):
             # Postprocessing of 2d slices
             print("Postprocessing 2D slices")
             orig_2d_num = len(self.label_data_2d.keys())
-            
+
             if self.crop_2d_slices_gt_num_threshold > 0:
                 for key, label in list(self.label_data_2d.items()):
                     uniq_vals = label.unique()
@@ -449,12 +449,21 @@ class HybridIdLoader(Dataset):
 
         def collate_closure(batch):
             batch = torch.utils.data._utils.collate.default_collate(batch)
-            if self.augment_at_collate:
+            if self.augment_at_collate and self.do_augment:
                 # Augment the whole batch not just one sample
                 b_image = batch['image'].cuda()
                 b_label = batch['label'].cuda()
-                b_image, b_label = self.augment(b_image, b_label, use_2d)
-                batch['image'], batch['label'] = b_image.cpu(), b_label.cpu()
+                b_modified_label = batch['modified_label'].cuda()
+
+                b_image, b_label, b_spat_augment_grid = self.augment(
+                    b_image, b_label, use_2d, pre_interpolation_factor=self.pre_interpolation_factor
+                )
+                _, b_modified_label, _ = spatial_augment(
+                    b_label=b_modified_label, use_2d=use_2d, b_grid_override=b_spat_augment_grid,
+                    pre_interpolation_factor=self.pre_interpolation_factor
+                )
+                b_spat_augment_grid = b_spat_augment_grid.detach().clone()
+                batch['image'], batch['label'], batch['modified_label'], batch['spat_augment_grid'] = b_image, b_label, b_modified_label, b_spat_augment_grid
 
             return batch
 
