@@ -25,6 +25,7 @@ os.environ.update(get_vars(select="* -4"))
 import pickle
 import copy
 from pathlib import Path
+from tqdm import tqdm
 
 import functools
 from enum import Enum, auto
@@ -159,7 +160,7 @@ config_dict = DotDict({
     'batch_size': 32,
     'val_batch_size': 1,
     'use_2d_normal_to': "W",
-    'train_patchwise': True,
+    'train_patchwise': False,
 
     'dataset': 'crossmoda',
     'reg_state': "acummulate_deeds_FT2_MT1",
@@ -171,7 +172,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -189,7 +190,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'save_dp_figures': False,
-    'debug': True,
+    'debug': False,
     'wandb_mode': 'disabled', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
@@ -672,7 +673,7 @@ def log_class_dices(log_prefix, log_postfix, class_dices, log_idx):
 
         cls_dices = list(map(lambda dct: dct[cls_name], class_dices))
         mean_per_class =np.nanmean(cls_dices)
-        print(log_path, f"{mean_per_class*100:.2f}%")
+        tqdm.write(log_path, f"{mean_per_class*100:.2f}%")
         wandb.log({log_path: mean_per_class}, step=log_idx)
 
 def CELoss(logits, targets, bin_weight=None):
@@ -746,10 +747,12 @@ def train_DL(run_name, config, training_dataset):
             n_dims = (-2,-1)
             # Override idxs
             all_3d_ids = training_dataset.get_3d_ids()
-            val_3d_idxs = torch.tensor(list(range(35)))
+            NUM_REGISTRATIONS_PER_IMG = 30
+            NUM_VAL_IMAGES = 20
+            val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
-            train_3d_idxs = list(range(35, len(all_3d_ids)))
+            train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
 
             train_2d_ids = []
             dcts = training_dataset.get_id_dicts()
@@ -849,19 +852,21 @@ def train_DL(run_name, config, training_dataset):
 
         # Prepare corr coefficient scoring
         training_dataset.eval(use_modified=True)
-        wise_labels, mod_labels = list(zip(*[(sample['label'], sample['modified_label']) \
-            for sample in training_dataset]))
-        wise_labels, mod_labels = torch.stack(wise_labels), torch.stack(mod_labels)
-
+        lbl_gen = ((sample['label'], sample['modified_label']) for sample in training_dataset)
         dice_func = dice2d if config.use_2d_normal_to is not None else dice3d
+        
+        wise_dice = torch.empty([len(training_dataset)])
+        gt_num = torch.empty([len(training_dataset)])
 
-        wise_dice = dice_func(
-            torch.nn.functional.one_hot(wise_labels, len(training_dataset.label_tags)),
-            torch.nn.functional.one_hot(mod_labels, len(training_dataset.label_tags)),
-            one_hot_torch_style=True, nan_for_unlabeled_target=False
-        )
+        for wd_idx, (wise_label, mod_label) in enumerate(lbl_gen):
+            dsc = dice_func(
+                torch.nn.functional.one_hot(wise_label.unsqueeze(0), len(training_dataset.label_tags)),
+                torch.nn.functional.one_hot(mod_label.unsqueeze(0), len(training_dataset.label_tags)),
+                one_hot_torch_style=True, nan_for_unlabeled_target=False
+            )
+            wise_dice[wd_idx] = dsc
+            gt_num[wd_idx] = (mod_label > 0).sum(dim=n_dims)
 
-        gt_num = (mod_labels > 0).sum(dim=n_dims)
         t_metric = (gt_num+np.exp(1)).log()+np.exp(1)
 
         if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
@@ -886,7 +891,7 @@ def train_DL(run_name, config, training_dataset):
             class_dices = []
 
             # Load data
-            for batch_idx, batch in enumerate(train_dataloader):
+            for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch #"):
 
                 optimizer.zero_grad()
                 if optimizer_dp:
@@ -1022,8 +1027,8 @@ def train_DL(run_name, config, training_dataset):
                     break
 
             ### Logging ###
-            print(f"### Log epoch {epx} @ {time.time()-t0:.2f}s")
-            print("### Training")
+            tqdm.write(f"### Log epoch {epx} @ {time.time()-t0:.2f}s")
+            tqdm.write("### Training")
             ### Log wandb data ###
             # Log the epoch idx per fold - so we can recover the diagram by setting
             # ref_epoch_idx as x-axis in wandb interface
@@ -1033,7 +1038,7 @@ def train_DL(run_name, config, training_dataset):
             wandb.log({f'losses/loss_fold{fold_idx}': mean_loss}, step=global_idx)
 
             mean_dice = np.nanmean(dices)
-            print(f'dice_mean_wo_bg_fold{fold_idx}', f"{mean_dice*100:.2f}%")
+            tqdm.write(f'dice_mean_wo_bg_fold{fold_idx}', f"{mean_dice*100:.2f}%")
             wandb.log({f'scores/dice_mean_wo_bg_fold{fold_idx}': mean_dice}, step=global_idx)
 
             log_class_dices("scores/dice_mean_", f"_fold{fold_idx}", class_dices, global_idx)
@@ -1049,7 +1054,7 @@ def train_DL(run_name, config, training_dataset):
                     {f'data_parameters/wise_corr_coeff_fold{fold_idx}': wise_corr_coeff},
                     step=global_idx
                 )
-                print(f'data_parameters/wise_corr_coeff_fold{fold_idx}', f"{wise_corr_coeff:.2f}")
+                tqdm.write(f'data_parameters/wise_corr_coeff_fold{fold_idx}', f"{wise_corr_coeff:.2f}")
 
                 # Log stats of data parameters and figure
                 log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
@@ -1085,8 +1090,8 @@ def train_DL(run_name, config, training_dataset):
                         THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
                         _path=_path, device='cuda')
 
-            print()
-            print("### Validation")
+            tqdm.write()
+            tqdm.write("### Validation")
             lraspp.eval()
             training_dataset.eval()
 
@@ -1147,8 +1152,8 @@ def train_DL(run_name, config, training_dataset):
                             b_val_dice, training_dataset.label_tags, exclude_bg=True))
 
                         if config.do_plot:
-                            print(f"Validation 3D image label/ground-truth {val_3d_idxs}")
-                            print(get_batch_dice_over_all(
+                            tqdm.write(f"Validation 3D image label/ground-truth {val_3d_idxs}")
+                            tqdm.write(get_batch_dice_over_all(
                             b_val_dice, exclude_bg=False))
                             # display_all_seg_slices(b_seg.unsqueeze(1), logits_for_score)
                             display_seg(in_type="single_3D",
@@ -1163,11 +1168,11 @@ def train_DL(run_name, config, training_dataset):
                             )
 
                     mean_val_dice = np.nanmean(val_dices)
-                    print(f'val_dice_mean_wo_bg_fold{fold_idx}', f"{mean_val_dice*100:.2f}%")
+                    tqdm.write(f'val_dice_mean_wo_bg_fold{fold_idx}', f"{mean_val_dice*100:.2f}%")
                     wandb.log({f'scores/val_dice_mean_wo_bg_fold{fold_idx}': mean_val_dice}, step=global_idx)
                     log_class_dices("scores/val_dice_mean_", f"_fold{fold_idx}", val_class_dices, global_idx)
 
-            print()
+            tqdm.write()
             # End of training loop
 
             if config.debug:
@@ -1332,7 +1337,7 @@ def train_DL(run_name, config, training_dataset):
                 reduce_dim = "W"
                 in_type = "batch_3D"
                 skip_writeout = len(training_dataset) > 200
-                
+
             if not skip_writeout:
                 print("Writing train sample image.")
                 # overlay text example: d_idx=0, dp_i=1.00, dist? False
@@ -1453,120 +1458,3 @@ if config_dict['do_sweep']:
 
 else:
     normal_run()
-
-
-# %%
-# def inference_DL(run_name, config, inf_dataset):
-
-#     score_dicts = []
-
-#     fold_iter = range(config.num_folds)
-#     if config_dict['only_first_fold']:
-#         fold_iter = fold_iter[0:1]
-
-#     for fold_idx in fold_iter:
-#         lraspp, *_ = load_model(f"{config.mdl_save_prefix}_fold{fold_idx}", config, len(validation_dataset))
-
-#         lraspp.eval()
-#         inf_dataset.eval()
-#         stack_dim = config.use_2d_normal_to
-
-#         inf_dices = []
-#         inf_dices_tumour = []
-#         inf_dices_cochlea = []
-
-#         for inf_sample in inf_dataset:
-#             global_idx = get_global_idx(fold_idx, sample_idx, config.epochs)
-#             crossmoda_id = sample['crossmoda_id']
-#             with amp.autocast(enabled=True):
-#                 with torch.no_grad():
-
-#                     # Create batch out of single val sample
-#                     b_inf_img = inf_sample['image'].unsqueeze(0)
-#                     b_inf_seg = inf_sample['label'].unsqueeze(0)
-
-#                     B = b_inf_img.shape[0]
-
-#                     b_inf_img = b_inf_img.unsqueeze(1).float().cuda()
-#                     b_inf_seg = b_inf_seg.cuda()
-#                     b_inf_img_2d = make_2d_stack_from_3d(b_inf_img, stack_dim=stack_dim)
-
-#                     if config.use_mind:
-#                         b_inf_img_2d = mindssc(b_inf_img_2d.unsqueeze(1)).squeeze(2)
-
-#                     output_inf = lraspp(b_inf_img_2d)['out']
-
-#                     # Prepare logits for scoring
-#                     # Scoring happens in 3D again - unstack batch tensor again to stack of 3D
-#                     inf_logits_for_score = make_3d_from_2d_stack(output_inf, stack_dim, B)
-#                     inf_logits_for_score = inf_logits_for_score.argmax(1)
-
-#                     inf_dice = dice3d(
-#                         torch.nn.functional.one_hot(inf_logits_for_score, 3),
-#                         torch.nn.functional.one_hot(b_inf_seg, 3),
-#                         one_hot_torch_style=True
-#                     )
-#                     inf_dices.append(get_batch_dice_wo_bg(inf_dice))
-#                     inf_dices_tumour.append(get_batch_dice_tumour(inf_dice))
-#                     inf_dices_cochlea.append(get_batch_dice_cochlea(inf_dice))
-
-#                     if config.do_plot:
-#                         print("Inference 3D image label/ground-truth")
-#                         print(inf_dice)
-#                         # display_all_seg_slices(b_seg.unsqueeze(1), logits_for_score)
-#                         display_seg(in_type="single_3D",
-#                             reduce_dim="W",
-#                             img=inf_sample['image'].unsqueeze(0).cpu(),
-#                             seg=inf_logits_for_score.squeeze(0).cpu(),
-#                             ground_truth=b_inf_seg.squeeze(0).cpu(),
-#                             crop_to_non_zero_seg=True,
-#                             crop_to_non_zero_gt=True,
-#                             alpha_seg=.4,
-#                             alpha_gt=.2
-#                         )
-
-#             if config.debug:
-#                 break
-
-#         mean_inf_dice = np.nanmean(inf_dices)
-#         mean_inf_dice_tumour = np.nanmean(inf_dices_tumour)
-#         mean_inf_dice_cochlea = np.nanmean(inf_dices_cochlea)
-
-#         print(f'inf_dice_mean_wo_bg_fold{fold_idx}', f"{mean_inf_dice*100:.2f}%")
-#         print(f'inf_dice_mean_tumour_fold{fold_idx}', f"{mean_inf_dice_tumour*100:.2f}%")
-#         print(f'inf_dice_mean_cochlea_fold{fold_idx}', f"{mean_inf_dice_cochlea*100:.2f}%")
-#         wandb.log({f'scores/inf_dice_mean_wo_bg_fold{fold_idx}': mean_inf_dice}, step=global_idx)
-#         wandb.log({f'scores/inf_dice_mean_tumour_fold{fold_idx}': mean_inf_dice_tumour}, step=global_idx)
-#         wandb.log({f'scores/inf_dice_mean_cochlea_fold{fold_idx}': mean_inf_dice_cochlea}, step=global_idx)
-
-#         # Store data for inter-fold scoring
-#         class_dice_list = inf_dices.tolist()[0]
-#         for class_idx, class_dice in enumerate(class_dice_list):
-#             score_dicts.append(
-#                 {
-#                     'fold_idx': fold_idx,
-#                     'crossmoda_id': crossmoda_id,
-#                     'class_idx': class_idx,
-#                     'class_dice': class_dice,
-#                 }
-#             )
-
-#     mean_oa_inf_dice = np.nanmean(torch.tensor([score['class_dice'] for score in score_dicts]))
-#     print(f"Mean dice over all folds, classes and samples: {mean_oa_inf_dice*100:.2f}%")
-#     wandb.log({'scores/mean_dice_all_folds_samples_classes': mean_oa_inf_dice}, step=global_idx)
-
-#     return score_dicts
-
-
-# %%
-# folds_scores = []
-# run = wandb.init(project="curriculum_deeplab", name=run_name, group=f"testing", job_type="test",
-#         config=config_dict, settings=wandb.Settings(start_method="thread"),
-#         mode=config_dict['wandb_mode']
-# )
-# config = wandb.config
-# score_dicts = inference_DL(run_name, config, validation_dataset)
-# folds_scores.append(score_dicts)
-# wandb.finish()
-
-# %%

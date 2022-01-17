@@ -17,7 +17,6 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 import nibabel as nib
-from tqdm import tqdm
 from .utils import interpolate_sample, augmentNoise, spatial_augment, LabelDisturbanceMode, torch_manual_seeded, ensure_dense
 
 class HybridIdLoader(Dataset):
@@ -125,15 +124,16 @@ class HybridIdLoader(Dataset):
             # Postprocessing of 2d slices
             print("Postprocessing 2D slices")
             orig_2d_num = len(self.label_data_2d.keys())
+            
+            if self.crop_2d_slices_gt_num_threshold > 0:
+                for key, label in list(self.label_data_2d.items()):
+                    uniq_vals = label.unique()
 
-            for key, label in list(self.label_data_2d.items()):
-                uniq_vals = label.unique()
-
-                if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
-                    # Delete 2D slices with less than n gt-pixels (but keep 3d data)
-                    del self.img_data_2d[key]
-                    del self.label_data_2d[key]
-                    del self.modified_label_data_2d[key]
+                    if sum(label[label > 0]) < self.crop_2d_slices_gt_num_threshold:
+                        # Delete 2D slices with less than n gt-pixels (but keep 3d data)
+                        del self.img_data_2d[key]
+                        del self.label_data_2d[key]
+                        del self.modified_label_data_2d[key]
 
             if fixed_weight_file is not None:
                 fixed_weightdata = torch.load(fixed_weight_file)
