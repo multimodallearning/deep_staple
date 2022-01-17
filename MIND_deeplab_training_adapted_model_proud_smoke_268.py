@@ -854,8 +854,8 @@ def train_DL(run_name, config, training_dataset):
         training_dataset.eval(use_modified=True)
         lbl_gen = ((sample['label'], sample['modified_label']) for sample in training_dataset)
         dice_func = dice2d if config.use_2d_normal_to is not None else dice3d
-        
-        wise_dice = torch.empty([len(training_dataset)])
+
+        wise_dice = torch.empty([len(training_dataset), len(training_dataset.label_tags)])
         gt_num = torch.empty([len(training_dataset)])
 
         for wd_idx, (wise_label, mod_label) in enumerate(lbl_gen):
