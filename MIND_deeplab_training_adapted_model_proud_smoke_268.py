@@ -40,6 +40,7 @@ import torch.cuda.amp as amp
 import torchvision
 from torch.utils.data import Dataset, DataLoader
 import nibabel as nib
+import scipy
 
 import wandb
 import matplotlib.pyplot as plt
@@ -753,8 +754,14 @@ def train_DL(run_name, config, training_dataset):
             n_dims = (-2,-1)
             # Override idxs
             all_3d_ids = training_dataset.get_3d_ids()
-            NUM_REGISTRATIONS_PER_IMG = 10
-            NUM_VAL_IMAGES = 20
+
+            if config.debug:
+                NUM_VAL_IMAGES = 2
+                NUM_REGISTRATIONS_PER_IMG = 1
+            else:
+                NUM_VAL_IMAGES = 20
+                NUM_REGISTRATIONS_PER_IMG = 10
+
             val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
@@ -816,11 +823,11 @@ def train_DL(run_name, config, training_dataset):
         # val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
 
         train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
-            sampler=train_subsampler, pin_memory=True, drop_last=False,
-            # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
+            sampler=train_subsampler, pin_memory=False, drop_last=False,
+            collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
         )
 
-        training_dataset.set_augment_at_collate(False)
+        training_dataset.set_augment_at_collate(True)
 
 #         val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
 #                                     sampler=val_subsampler, pin_memory=True, drop_last=False)
@@ -850,29 +857,31 @@ def train_DL(run_name, config, training_dataset):
 
         dice_func = dice2d if config.use_2d_normal_to is not None else dice3d
 
-        bn_count = torch.empty([len(training_dataset.label_tags)], device=all_modified_segs.device)
-        wise_dice = torch.empty([len(training_dataset), len(training_dataset.label_tags)])
-        gt_num = torch.empty([len(training_dataset)])
+        bn_count = torch.zeros([len(training_dataset.label_tags)], device=all_modified_segs.device)
+        wise_dice = torch.zeros([len(training_dataset), len(training_dataset.label_tags)])
+        gt_num = torch.zeros([len(training_dataset)])
 
         with torch.no_grad():
             print("Fetching training metrics for samples.")
             # _, wise_lbls, mod_lbls = training_dataset.get_data()
             training_dataset.eval(use_modified=True)
-
-            for idx, sample in tqdm(enumerate(training_dataset), desc="sample", total=len(training_dataset)):
-                wise_label, mod_label = sample['label'], sample['modified_label']
+            bsz = 100
+            sequential_batch_loader = DataLoader(training_dataset, batch_size=bsz, drop_last=False)
+            for b_sample in tqdm(sequential_batch_loader, desc="sequential batch: ", total=len(sequential_batch_loader)):
+                wise_label, mod_label = b_sample['label'], b_sample['modified_label']
+                d_idxs = b_sample['dataset_idx']
                 mod_label, _ = ensure_dense(mod_label)
                 mod_label = mod_label.cuda()
                 wise_label = wise_label.cuda()
 
                 dsc = dice_func(
-                    torch.nn.functional.one_hot(wise_label.unsqueeze(0), len(training_dataset.label_tags)),
-                    torch.nn.functional.one_hot(mod_label.unsqueeze(0), len(training_dataset.label_tags)),
+                    torch.nn.functional.one_hot(wise_label, len(training_dataset.label_tags)),
+                    torch.nn.functional.one_hot(mod_label, len(training_dataset.label_tags)),
                     one_hot_torch_style=True, nan_for_unlabeled_target=False
                 )
                 bn_count += torch.bincount(mod_label.reshape(-1).long(), minlength=len(training_dataset.label_tags)).cpu()
-                wise_dice[idx] = dsc.cpu()
-                gt_num[idx] = (mod_label > 0).sum(dim=n_dims).cpu()
+                wise_dice[d_idxs] = dsc.cpu()
+                gt_num[d_idxs] = (mod_label > 0).sum(dim=n_dims).float().cpu()
 
             class_weights = 1/(bn_count).float().pow(.35)
             class_weights /= class_weights.mean()
@@ -1243,6 +1252,7 @@ def train_DL(run_name, config, training_dataset):
                 _modified_labels = torch.stack(_modified_labels)
                 _predictions = torch.stack(_predictions)
 
+                print("Saving data parameters.")
                 torch.save(
                     {
                         'data_parameters': dp_weight.cpu(),
@@ -1353,11 +1363,11 @@ def train_DL(run_name, config, training_dataset):
             if training_dataset.use_2d():
                 reduce_dim = None
                 in_type = "batch_2D"
-                skip_writeout = len(training_dataset) > 10000
+                skip_writeout = len(training_dataset) > 3000
             else:
                 reduce_dim = "W"
                 in_type = "batch_3D"
-                skip_writeout = len(training_dataset) > 200
+                skip_writeout = len(training_dataset) > 150
 
             if not skip_writeout:
                 print("Writing train sample image.")
