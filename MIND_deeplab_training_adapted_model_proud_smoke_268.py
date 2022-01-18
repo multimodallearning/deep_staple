@@ -1403,9 +1403,9 @@ def train_DL(run_name, config, training_dataset):
 # config_dict['wandb_mode'] = 'disabled'
 # config_dict['debug'] = True
 # Model loading
-config_dict['checkpoint_name'] = 'ethereal-serenity-1138'
-config_dict['fold_override'] = 0
-config_dict['checkpoint_epx'] = 39
+# config_dict['checkpoint_name'] = 'ethereal-serenity-1138'
+# config_dict['fold_override'] = 0
+# config_dict['checkpoint_epx'] = 39
 
 # Define sweep override dict
 sweep_config_dict = dict(
