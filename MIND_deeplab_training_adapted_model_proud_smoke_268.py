@@ -829,7 +829,7 @@ def train_DL(run_name, config, training_dataset):
             sampler = torch.utils.data.SubsetRandomSampler(sub_idxs)
             all_samplers.append(sampler)
             all_dls.append(DataLoader(training_dataset, batch_size=config.batch_size, sampler=sampler, pin_memory=True, drop_last=False))
-
+            all_dls.reverse() #TODO remove
         # val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
 
 
