@@ -10,6 +10,7 @@ from pathlib import Path
 from contextlib import contextmanager
 import warnings
 from collections.abc import Iterable
+from collections import OrderedDict
 
 import torch
 import torchvision
@@ -157,6 +158,16 @@ class HybridIdLoader(Dataset):
             postprocessed_2d_num = len(self.label_data_2d.keys())
             print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
 
+            # Now make sure dicts are ordered
+            self.img_paths = OrderedDict(sorted(self.img_paths.items()))
+            self.label_paths = OrderedDict(sorted(self.label_paths.items()))
+            self.img_data_3d = OrderedDict(sorted(self.img_data_3d.items()))
+            self.label_data_3d = OrderedDict(sorted(self.label_data_3d.items()))
+            self.modified_label_data_3d = OrderedDict(sorted(self.modified_label_data_3d.items()))
+            self.img_data_2d = OrderedDict(sorted(self.img_data_2d.items()))
+            self.label_data_2d = OrderedDict(sorted(self.label_data_2d.items()))
+            self.modified_label_data_2d = OrderedDict(sorted(self.modified_label_data_2d.items()))
+
             nonzero_lbl_percentage = torch.tensor([lbl.sum((-2,-1)) > 0 for lbl in self.label_data_2d.values()]).sum()
             nonzero_lbl_percentage = nonzero_lbl_percentage/len(self.label_data_2d)
             print(f"Nonzero labels: " f"{nonzero_lbl_percentage*100:.2f}%")
@@ -174,17 +185,11 @@ class HybridIdLoader(Dataset):
         return [self.extract_short_3d_id(_id) for _id in self.get_3d_ids()]
 
     def get_3d_ids(self):
-        return sorted(list(
-            set(self.img_data_3d.keys())
-            .union(set(self.label_data_3d.keys()))
-        ))
+        return list(self.img_data_3d.keys())
 
     def get_2d_ids(self):
         assert self.use_2d(), "Dataloader does not provide 2D data."
-        return sorted(list(
-            set(self.img_data_2d.keys())
-            .union(set(self.label_data_2d.keys()))
-        ))
+        return list(self.img_data_2d.keys())
 
     def get_id_dicts(self, use_2d_override=None):
         all_3d_ids = self.get_3d_ids()

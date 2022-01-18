@@ -1231,21 +1231,22 @@ def train_DL(run_name, config, training_dataset):
                         bool(disturb_flg.item()),
                         sample['id'],
                         sample['dataset_idx'],
-                        sample['image'],
-                        sample['label'],
-                        sample['modified_label'],
-                        inference_wrap(lraspp, sample['image'].cuda(), use_2d=training_dataset.use_2d(), use_mind=config.use_mind)
+                        # sample['image'],
+                        sample['label'].to_sparse(),
+                        sample['modified_label'].to_sparse(),
+                        inference_wrap(lraspp, sample['image'].cuda(), use_2d=training_dataset.use_2d(), use_mind=config.use_mind).to_sparse()
                     )
                     save_data.append(data_tuple)
 
                 save_data = sorted(save_data, key=lambda tpl: tpl[0])
                 (dp_weight, disturb_flags,
-                 d_ids, dataset_idxs, _imgs,
+                 d_ids, dataset_idxs,
+                #  _imgs,
                  _labels, _modified_labels, _predictions) = zip(*save_data)
 
                 dp_weight = torch.stack(dp_weight)
                 dataset_idxs = torch.stack(dataset_idxs)
-                _imgs = torch.stack(_imgs)
+                # _imgs = torch.stack(_imgs)
                 _labels = torch.stack(_labels)
                 _modified_labels = torch.stack(_modified_labels)
                 _predictions = torch.stack(_predictions)
@@ -1257,9 +1258,9 @@ def train_DL(run_name, config, training_dataset):
                         'disturb_flags': disturb_flags,
                         'd_ids': d_ids,
                         'dataset_idxs': dataset_idxs.cpu(),
-                        'labels': _labels.cpu().to_sparse(),
-                        'modified_labels': _modified_labels.cpu().to_sparse(),
-                        'train_predictions': _predictions.cpu().to_sparse(),
+                        'labels': _labels.cpu(),
+                        'modified_labels': _modified_labels.cpu(),
+                        'train_predictions': _predictions.cpu(),
                     },
                     train_label_snapshot_path
                 )
@@ -1402,9 +1403,9 @@ def train_DL(run_name, config, training_dataset):
 # config_dict['wandb_mode'] = 'disabled'
 # config_dict['debug'] = True
 # Model loading
-# config_dict['checkpoint_name'] = 'treasured-water-717'
-# # config_dict['fold_override'] = 0
-# config_dict['checkpoint_epx'] = 39
+config_dict['checkpoint_name'] = 'ethereal-serenity-1138'
+config_dict['fold_override'] = 0
+config_dict['checkpoint_epx'] = 39
 
 # Define sweep override dict
 sweep_config_dict = dict(
