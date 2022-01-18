@@ -910,13 +910,13 @@ def train_DL(run_name, config, training_dataset):
             # Load data
             for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch #", total=len(train_dataloader)):
                 for opt_group, data_opt_group in zip(optimizer.param_groups, optimizer_dp.param_groups):
-                    mult = .5*(1-np.exp(-global_b_idx/(30000/32)))+.5
+                    mult = (1-np.exp(-global_b_idx/(20000/32)))
                     # print(mult)
                     # mult=0
-                    opt_group['betas'] = (mult*0.9, mult*0.999)
-                    data_opt_group['betas'] = (1*0.9, 1*0.999)
+                    # opt_group['betas'] = (mult*0.9, mult*0.999)
+                    data_opt_group['betas'] = (mult*0.9, mult*0.999)
                 global_b_idx+=1
-                
+
                 optimizer.zero_grad()
                 if optimizer_dp:
                     optimizer_dp.zero_grad()
