@@ -1006,7 +1006,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 2:
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
