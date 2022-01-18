@@ -819,13 +819,20 @@ def train_DL(run_name, config, training_dataset):
 
 
         ### Add train sampler and dataloaders ##
-        train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
+        all_samplers = []
+        all_dls = []
+        for sampler_idx in range(NUM_REGISTRATIONS_PER_IMG):
+            first_sub_idxs = range(sampler_idx*50, len(training_dataset), NUM_REGISTRATIONS_PER_IMG*50)
+            sub_idxs = []
+            for fsx in first_sub_idxs:
+                sub_idxs.extend(list(range(fsx,fsx+50)))
+            sampler = torch.utils.data.SubsetRandomSampler(sub_idxs)
+            all_samplers.append(sampler)
+            all_dls.append(DataLoader(training_dataset, batch_size=config.batch_size, sampler=sampler, pin_memory=True, drop_last=False))
+
         # val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
 
-        train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
-            sampler=train_subsampler, pin_memory=False, drop_last=False,
-            # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
-        )
+
 
         # training_dataset.set_augment_at_collate(True)
 
@@ -908,140 +915,143 @@ def train_DL(run_name, config, training_dataset):
             class_dices = []
 
             # Load data
-            for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch #", total=len(train_dataloader)):
+            for train_dataloader in all_dls:
+                for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch", total=len(train_dataloader)):
 
-                optimizer.zero_grad()
-                if optimizer_dp:
-                    optimizer_dp.zero_grad()
+                    optimizer.zero_grad()
+                    if optimizer_dp:
+                        optimizer_dp.zero_grad()
 
-                b_img = batch['image']
-                b_seg = batch['label']
-                b_spat_aug_grid = batch['spat_augment_grid']
+                    b_img = batch['image']
+                    b_seg = batch['label']
+                    b_spat_aug_grid = batch['spat_augment_grid']
 
-                b_seg_modified = batch['modified_label']
-                b_idxs_dataset = batch['dataset_idx']
-                b_img = b_img.float()
+                    b_seg_modified = batch['modified_label']
+                    b_idxs_dataset = batch['dataset_idx']
+                    b_img = b_img.float()
 
-                b_img = b_img.cuda()
-                b_seg_modified = b_seg_modified.cuda()
-                b_idxs_dataset = b_idxs_dataset.cuda()
-                b_seg = b_seg.cuda()
-                b_spat_aug_grid = b_spat_aug_grid.cuda()
+                    b_img = b_img.cuda()
+                    b_seg_modified = b_seg_modified.cuda()
+                    b_idxs_dataset = b_idxs_dataset.cuda()
+                    b_seg = b_seg.cuda()
+                    b_spat_aug_grid = b_spat_aug_grid.cuda()
 
-                if training_dataset.use_2d() and config.use_mind:
-                    # MIND 2D, in Bx1x1xHxW, out BxMINDxHxW
-                    b_img = mindssc(b_img.unsqueeze(1).unsqueeze(1)).squeeze(2)
-                elif not training_dataset.use_2d() and config.use_mind:
-                    # MIND 3D
-                    b_img = mindssc(b_img.unsqueeze(1))
-                else:
-                    b_img = b_img.unsqueeze(1)
-
-                ### Forward pass ###
-                with amp.autocast(enabled=True):
-                    assert b_img.dim() == len(n_dims)+2, \
-                        f"Input image for model must be {len(n_dims)+2}D: BxCxSPATIAL but is {b_img.shape}"
-
-                    logits = lraspp(b_img)['out']
-
-                    ### Calculate loss ###
-                    assert logits.dim() == len(n_dims)+2, \
-                        f"Input shape for loss must be BxNUM_CLASSESxSPATIAL but is {logits.shape}"
-                    assert b_seg_modified.dim() == len(n_dims)+1, \
-                        f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
-
-                    if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
-                        # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
-                        # bin_list = [slc.view(-1).bincount() for slc in b_seg_modified]
-                        # for b_idx, _bins in enumerate(bin_list):
-                        #     batch_bins[b_idx][:len(_bins)] = _bins
-                        # loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
-
-                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
-                        loss = loss.mean(n_dims)
-
-                        bare_weight = embedding(b_idxs_dataset).squeeze()
-
-                        weight = torch.sigmoid(bare_weight)
-                        weight = weight/weight.mean()
-
-                        # This improves scores significantly: Reweight with log(gt_numel)
-                        weight = weight/t_metric[b_idxs_dataset]
-
-                        # Prepare logits for scoring
-                        logits_for_score = logits.argmax(1)
-
-                        if config.use_risk_regularization:
-                            p_pred_num = (logits_for_score > 0).sum(dim=n_dims).detach()
-                            risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
-                            loss = (loss*weight).sum() + risk_regularization.sum()
-                        else:
-                            loss = (loss*weight).sum()
-
-                    elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
-                        m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
-                        weight = embedding(m_dp_idxs)
-                        weight = weight.reshape(-1, config.grid_size_y, config.grid_size_x)
-                        weight = weight.unsqueeze(1)
-                        weight = torch.nn.functional.interpolate(
-                            weight,
-                            size=(b_seg_modified.shape[-2:]),
-                            mode='bilinear',
-                            align_corners=True
-                        )
-                        weight = weight/weight.mean()
-                        weight = F.grid_sample(weight, b_spat_aug_grid,
-                            padding_mode='border', align_corners=False)
-                        loss = (loss.unsqueeze(1)*weight).sum()
-
-                        # Prepare logits for scoring
-                        logits_for_score = (logits*weight).argmax(1)
-
+                    if training_dataset.use_2d() and config.use_mind:
+                        # MIND 2D, in Bx1x1xHxW, out BxMINDxHxW
+                        b_img = mindssc(b_img.unsqueeze(1).unsqueeze(1)).squeeze(2)
+                    elif not training_dataset.use_2d() and config.use_mind:
+                        # MIND 3D
+                        b_img = mindssc(b_img.unsqueeze(1))
                     else:
-                        loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
-                        # Prepare logits for scoring
-                        logits_for_score = logits.argmax(1)
+                        b_img = b_img.unsqueeze(1)
 
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
+                    ### Forward pass ###
+                    with amp.autocast(enabled=True):
+                        assert b_img.dim() == len(n_dims)+2, \
+                            f"Input image for model must be {len(n_dims)+2}D: BxCxSPATIAL but is {b_img.shape}"
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
-                    scaler.step(optimizer_dp)
+                        logits = lraspp(b_img)['out']
 
-                scaler.update()
+                        ### Calculate loss ###
+                        assert logits.dim() == len(n_dims)+2, \
+                            f"Input shape for loss must be BxNUM_CLASSESxSPATIAL but is {logits.shape}"
+                        assert b_seg_modified.dim() == len(n_dims)+1, \
+                            f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
 
-                epx_losses.append(loss.item())
+                        if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
+                            # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
+                            # bin_list = [slc.view(-1).bincount() for slc in b_seg_modified]
+                            # for b_idx, _bins in enumerate(bin_list):
+                            #     batch_bins[b_idx][:len(_bins)] = _bins
+                            # loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
 
-                # Calculate dice score
-                b_dice = dice_func(
-                    torch.nn.functional.one_hot(logits_for_score, len(training_dataset.label_tags)),
-                    torch.nn.functional.one_hot(b_seg, len(training_dataset.label_tags)), # Calculate dice score with original segmentation (no disturbance)
-                    one_hot_torch_style=True
-                )
+                            loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
+                            loss = loss.mean(n_dims)
 
-                dices.append(get_batch_dice_over_all(
-                    b_dice, exclude_bg=True))
-                class_dices.append(get_batch_dice_per_class(
-                    b_dice, training_dataset.label_tags, exclude_bg=True))
+                            bare_weight = embedding(b_idxs_dataset).squeeze()
 
-                ###  Scheduler management ###
-                if config.use_cosine_annealing:
-                    scheduler.step()
+                            weight = torch.sigmoid(bare_weight)
+                            weight = weight/weight.mean()
 
-                if config.save_dp_figures and batch_idx % 10 == 0:
-                    # Output data parameter figure
-                    train_params = embedding.weight[train_idxs].squeeze()
-                    # order = np.argsort(train_params.cpu().detach()) # Order by DP value
-                    order = torch.arange(len(train_params))
-                    wise_corr_coeff = np.corrcoef(train_params.cpu().detach(), wise_dice[train_idxs][:,1].cpu().detach())[0,1]
-                    dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
-                    dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
-                    save_parameter_figure(dp_figure_path, wandb.run.name, f"corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
-                        train_params[order], train_params[order]/t_metric[train_idxs][order], dices=wise_dice[train_idxs][:,1][order])
+                            # This improves scores significantly: Reweight with log(gt_numel)
+                            weight = weight/t_metric[b_idxs_dataset]
 
-                if config.debug:
-                    break
+                            # Prepare logits for scoring
+                            logits_for_score = logits.argmax(1)
+
+                            if config.use_risk_regularization:
+                                p_pred_num = (logits_for_score > 0).sum(dim=n_dims).detach()
+                                risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
+                                loss = (loss*weight).sum() + risk_regularization.sum()
+                            else:
+                                loss = (loss*weight).sum()
+
+                        elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
+                            loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
+                            m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
+                            weight = embedding(m_dp_idxs)
+                            weight = weight.reshape(-1, config.grid_size_y, config.grid_size_x)
+                            weight = weight.unsqueeze(1)
+                            weight = torch.nn.functional.interpolate(
+                                weight,
+                                size=(b_seg_modified.shape[-2:]),
+                                mode='bilinear',
+                                align_corners=True
+                            )
+                            weight = weight/weight.mean()
+                            weight = F.grid_sample(weight, b_spat_aug_grid,
+                                padding_mode='border', align_corners=False)
+                            loss = (loss.unsqueeze(1)*weight).sum()
+
+                            # Prepare logits for scoring
+                            logits_for_score = (logits*weight).argmax(1)
+
+                        else:
+                            loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
+                            # Prepare logits for scoring
+                            logits_for_score = logits.argmax(1)
+
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+
+                    if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+                        scaler.step(optimizer_dp)
+
+                    scaler.update()
+
+                    ###  Scheduler management ###
+                    if config.use_cosine_annealing:
+                        scheduler.step()
+
+                    epx_losses.append(loss.item())
+
+                    # Calculate dice score
+                    b_dice = dice_func(
+                        torch.nn.functional.one_hot(logits_for_score, len(training_dataset.label_tags)),
+                        torch.nn.functional.one_hot(b_seg, len(training_dataset.label_tags)), # Calculate dice score with original segmentation (no disturbance)
+                        one_hot_torch_style=True
+                    )
+
+                    dices.append(get_batch_dice_over_all(
+                        b_dice, exclude_bg=True))
+                    class_dices.append(get_batch_dice_per_class(
+                        b_dice, training_dataset.label_tags, exclude_bg=True))
+
+                    if config.save_dp_figures and batch_idx % 10 == 0:
+                        # Output data parameter figure
+                        train_params = embedding.weight[train_idxs].squeeze()
+                        # order = np.argsort(train_params.cpu().detach()) # Order by DP value
+                        order = torch.arange(len(train_params))
+                        wise_corr_coeff = np.corrcoef(train_params.cpu().detach(), wise_dice[train_idxs][:,1].cpu().detach())[0,1]
+                        dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
+                        dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
+                        save_parameter_figure(dp_figure_path, wandb.run.name, f"corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
+                            train_params[order], train_params[order]/t_metric[train_idxs][order], dices=wise_dice[train_idxs][:,1][order])
+
+                    if config.debug:
+                        break
+                    ### End of batch loop
+                ### End of loader loop
 
             ### Logging ###
             print(f"### Log epoch {epx} @ {time.time()-t0:.2f}s")
