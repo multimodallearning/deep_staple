@@ -194,7 +194,7 @@ config_dict = DotDict({
     'do_plot': False,
     'save_dp_figures': False,
     'debug': False,
-    'wandb_mode': 'online', # e.g. online, disabled
+    'wandb_mode': 'disabled', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -893,7 +893,7 @@ def train_DL(run_name, config, training_dataset):
         class_weights = class_weights.cuda()
         gt_num = gt_num.cuda()
         t_metric = t_metric.cuda()
-
+        global_b_idx = 0
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
 
@@ -909,12 +909,14 @@ def train_DL(run_name, config, training_dataset):
 
             # Load data
             for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch #", total=len(train_dataloader)):
-                for opt_group, data_opt_group in zip(optimizer.param_groups, data_opt_group.param_groups):
-                    mult = .5*(1-np.exp(-global_idx/(30000/32)))+.5
+                for opt_group, data_opt_group in zip(optimizer.param_groups, optimizer_dp.param_groups):
+                    mult = .5*(1-np.exp(-global_b_idx/(30000/32)))+.5
                     # print(mult)
                     # mult=0
                     opt_group['betas'] = (mult*0.9, mult*0.999)
                     data_opt_group['betas'] = (1*0.9, 1*0.999)
+                global_b_idx+=1
+                
                 optimizer.zero_grad()
                 if optimizer_dp:
                     optimizer_dp.zero_grad()
