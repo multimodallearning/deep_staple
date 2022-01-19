@@ -861,12 +861,13 @@ def train_DL(run_name, config, training_dataset):
 
         # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         #     optimizer, T_0=10, T_mult=2)
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.999)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.99)
 
         if optimizer_dp:
             # scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             #     optimizer_dp, T_0=10, T_mult=2)
-            scheduler_dp = torch.optim.lr_scheduler.ExponentialLR(optimizer_dp, gamma=.999)
+            # scheduler_dp = torch.optim.lr_scheduler.ExponentialLR(optimizer_dp, gamma=.999)
+            pass
         else:
             scheduler_dp = None
 
@@ -1049,6 +1050,7 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
                     scheduler.step()
+                    # scheduler_dp.step()
 
                 if config.save_dp_figures and batch_idx % 10 == 0:
                     # Output data parameter figure
@@ -1129,7 +1131,8 @@ def train_DL(run_name, config, training_dataset):
                     _path,
                     lraspp=lraspp,
                     optimizer=optimizer, optimizer_dp=optimizer_dp,
-                    scheduler=scheduler, scheduler_dp=scheduler_dp,
+                    scheduler=scheduler,
+                    # scheduler_dp=scheduler_dp,
                     embedding=embedding,
                     scaler=scaler)
                 (lraspp, optimizer, optimizer_dp, embedding, scaler) = \
