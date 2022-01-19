@@ -171,7 +171,7 @@ config_dict = DotDict({
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
 
-    'lr': 0.0005,
+    'lr': 0.01,
     'use_cosine_annealing': True,
 
     # Data parameter config
@@ -303,7 +303,7 @@ def prepare_data(config):
 
     if config.dataset == 'crossmoda':
         # Use double size in 2D prediction, normal size in 3D
-        pre_interpolation_factor = 2. if config.use_2d_normal_to is not None else 1.
+        pre_interpolation_factor = 2. if config.use_2d_normal_to is not None else 1.5
         clsre = get_crossmoda_data_load_closure(
             base_dir="/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
             domain=domain, state='l4', use_additional_data=False,
@@ -1359,7 +1359,7 @@ def train_DL(run_name, config, training_dataset):
                     },
                     train_label_snapshot_path
                 )
-
+                sys.exit(0)
                 print("Writing weight map image.")
                 weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_data_parameter_weightmap.png")
                 visualize_seg(in_type="batch_2D",
