@@ -136,7 +136,7 @@ class HybridIdLoader(Dataset):
                         del self.label_data_2d[key]
                         del self.modified_label_data_2d[key]
 
-            if fixed_weight_file is not None:
+            if fixed_weight_file is not None and (fixed_weight_min_quantile is not None or fixed_weight_min_value is not None):
                 fixed_weightdata = torch.load(fixed_weight_file)
                 fixed_weights = fixed_weightdata['data_parameters'].detach().cpu()
                 fixed_d_ids = fixed_weightdata['d_ids']

@@ -28,7 +28,7 @@ import copy
 from pathlib import Path
 from tqdm import tqdm
 from collections import OrderedDict
-
+from torch.utils.data import Sampler
 import functools
 from enum import Enum, auto
 
@@ -183,9 +183,9 @@ config_dict = DotDict({
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': None,
+    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/noble-forest-1144_fold0_epx39/train_label_snapshot.pth",
     'fixed_weight_min_quantile': None,
-    'fixed_weight_min_value': 0.,
+    'fixed_weight_min_value': None,
     # ),
 
     'save_every': 200,
@@ -194,7 +194,7 @@ config_dict = DotDict({
     'do_plot': False,
     'save_dp_figures': False,
     'debug': False,
-    'wandb_mode': 'online', # e.g. online, disabled
+    'wandb_mode': 'disabled', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -719,6 +719,21 @@ def inference_wrap(lraspp, img, use_2d, use_mind):
         b_out = b_out.argmax(1)
         return b_out
 
+class OrderedSampler(Sampler):
+    r"""Samples elements in a fixed order
+
+    Arguments:
+        indices (sequence): a sequence of indices
+    """
+    def __init__(self, indices):
+        self.indices = indices
+
+    def __iter__(self):
+        return (self.indices[i] for i in range(len(self.indices)))
+
+    def __len__(self):
+        return len(self.indices)
+
 def train_DL(run_name, config, training_dataset):
     reset_determinism()
 
@@ -817,13 +832,19 @@ def train_DL(run_name, config, training_dataset):
             in_channels = 1
 
 
+        fixed_weightdata = torch.load(config.fixed_weight_file)
+        fixed_weights = fixed_weightdata['data_parameters'].detach().view(-1).cpu()
+        fixed_d_ids = fixed_weightdata['d_ids']
+        fixed_idxs = training_dataset.switch_2d_identifiers(fixed_d_ids)
+        start_idx_order = np.argsort(-fixed_weights) # Sort in descending order
+
+        fixed_start_idxs = torch.tensor(fixed_idxs)[start_idx_order]
+        start_sampler = OrderedSampler(fixed_start_idxs)
 
         ### Add train sampler and dataloaders ##
-        train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
         # val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
-
         train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
-            sampler=train_subsampler, pin_memory=False, drop_last=False,
+            sampler=start_sampler, pin_memory=True, drop_last=False,
             # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
         )
 
@@ -908,7 +929,13 @@ def train_DL(run_name, config, training_dataset):
             class_dices = []
 
             # Load data
-            for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch #", total=len(train_dataloader)):
+            if epx > 0:
+                random_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
+                train_dataloader = DataLoader(training_dataset, batch_size=config.batch_size,
+                    sampler=random_subsampler, pin_memory=True, drop_last=False,
+                )
+
+            for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch", total=len(train_dataloader)):
 
                 optimizer.zero_grad()
                 if optimizer_dp:
@@ -950,7 +977,7 @@ def train_DL(run_name, config, training_dataset):
                     assert b_seg_modified.dim() == len(n_dims)+1, \
                         f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
 
-                    if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS) and epx > 1:
+                    if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
                         # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
                         # bin_list = [slc.view(-1).bincount() for slc in b_seg_modified]
                         # for b_idx, _bins in enumerate(bin_list):
@@ -1006,7 +1033,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 1:
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
