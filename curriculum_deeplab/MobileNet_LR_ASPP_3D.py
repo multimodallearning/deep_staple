@@ -162,10 +162,16 @@ class MobileNet_ASPP_3D(torch.nn.Module):
         super().__init__()
 
         self.use_checkpointing = use_checkpointing
-        self.in_channels = torch.Tensor([in_num,16,24,24,32,32,32,64]).long()
-        self.mid_channels = torch.Tensor([32,96,144,144,192,192,192,384]).long()
-        self.out_channels = torch.Tensor([16,24,24,32,32,32,64,64]).long()
-        self.mid_stride = torch.Tensor([1,1,1,1,1,2,1,1])
+        # self.in_channels = torch.Tensor(    [in_num, 16,  24,  24,  32,  32,  32,  64]).long()
+        # self.mid_channels = torch.Tensor(   [    32, 96, 144, 144, 192, 192, 192, 384]).long()
+        # self.out_channels = torch.Tensor(   [    16, 24,  24,  32,  32,  32,  64,  64]).long()
+        # self.mid_stride = torch.Tensor(     [     1,  1,   1,   1,   1,   2,   1,   1])
+
+        # Stride == 1 and in_channels==mid_channels==out_channels -> Skip connection
+        self.in_channels = torch.Tensor(    [in_num,16,16,24,24,32,32,32,64,64]).long()
+        self.mid_channels = torch.Tensor(   [32,96,96,144,144,192,192,192,384,384]).long()
+        self.out_channels = torch.Tensor(   [16,16,24,24,32,32,32,64,64,64]).long()
+        self.mid_stride = torch.Tensor(     [1,1,1,1,1,1,2,1,1,1])
 
         # Complete model: MobileNet_3d + ASPP_3d + head_3d (with a single skip connection)
         self.backbone = Backbone_3d(self.in_channels,

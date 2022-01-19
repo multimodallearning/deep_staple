@@ -53,7 +53,7 @@ from mdl_seg_class.visualization import visualize_seg
 from curriculum_deeplab.mindssc import mindssc
 from curriculum_deeplab.utils import interpolate_sample, in_notebook, dilate_label_class, LabelDisturbanceMode, ensure_dense
 from curriculum_deeplab.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader, get_crossmoda_data_load_closure
-from curriculum_deeplab.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D
+from curriculum_deeplab.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D, MobileNet_ASPP_3D
 
 print(torch.__version__)
 print(torch.backends.cudnn.version())
@@ -988,7 +988,11 @@ def train_DL(run_name, config, training_dataset):
 
                         if config.use_risk_regularization:
                             p_pred_num = (logits_for_score > 0).sum(dim=n_dims).detach()
-                            risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
+                            if config.use_2d_normal_to is not None:
+                                risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
+                            else:
+                                risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-3]*logits_for_score.shape[-2]*logits_for_score.shape[-1])
+
                             loss = (loss*weight).sum() + risk_regularization.sum()
                         else:
                             loss = (loss*weight).sum()
@@ -1392,9 +1396,9 @@ def train_DL(run_name, config, training_dataset):
                 use_2d = training_dataset.use_2d()
                 scf = 1/training_dataset.pre_interpolation_factor
 
-                show_img = interpolate_sample(b_label=_labels, scale_factor=scf, use_2d=use_2d)[1].unsqueeze(1)
-                show_seg = interpolate_sample(b_label=_predictions.squeeze(1), scale_factor=scf, use_2d=use_2d)[1]
-                show_gt = interpolate_sample(b_label=_modified_labels, scale_factor=scf, use_2d=use_2d)[1]
+                show_img = interpolate_sample(b_label=_labels.to_dense(), scale_factor=scf, use_2d=use_2d)[1].unsqueeze(1)
+                show_seg = interpolate_sample(b_label=_predictions.to_dense().squeeze(1), scale_factor=scf, use_2d=use_2d)[1]
+                show_gt = interpolate_sample(b_label=_modified_labels.to_dense(), scale_factor=scf, use_2d=use_2d)[1]
 
                 visualize_seg(in_type=in_type, reduce_dim=reduce_dim,
                     img=show_img, # Expert label in BW
