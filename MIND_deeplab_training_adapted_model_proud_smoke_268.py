@@ -950,7 +950,7 @@ def train_DL(run_name, config, training_dataset):
                     assert b_seg_modified.dim() == len(n_dims)+1, \
                         f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
 
-                    if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
+                    if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS) and epx > 1:
                         # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
                         # bin_list = [slc.view(-1).bincount() for slc in b_seg_modified]
                         # for b_idx, _bins in enumerate(bin_list):
@@ -1006,7 +1006,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 1:
                     scaler.step(optimizer_dp)
 
                 scaler.update()
