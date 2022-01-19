@@ -860,11 +860,11 @@ def train_DL(run_name, config, training_dataset):
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=500, T_mult=2)
+            optimizer, T_0=10, T_mult=2)
 
         if optimizer_dp:
             scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer_dp, T_0=500, T_mult=2)
+                optimizer_dp, T_0=10, T_mult=2)
         else:
             scheduler_dp = None
 

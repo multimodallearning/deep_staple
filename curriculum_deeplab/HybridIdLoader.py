@@ -479,8 +479,8 @@ class HybridIdLoader(Dataset):
 
     def augment(self, b_image, b_label, use_2d,
         noise_strength=0.05,
-        bspline_num_ctl_points=6, bspline_strength=0.009, bspline_probability=.95,
-        affine_strength=0.10, affine_probability=.45,
+        bspline_num_ctl_points=6, bspline_strength=0.012, bspline_probability=.95,
+        affine_strength=0.15, affine_probability=.45,
         pre_interpolation_factor=2.):
 
         if use_2d:
