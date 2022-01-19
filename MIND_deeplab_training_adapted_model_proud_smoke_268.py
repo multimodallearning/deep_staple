@@ -1359,7 +1359,7 @@ def train_DL(run_name, config, training_dataset):
                     },
                     train_label_snapshot_path
                 )
-                sys.exit(0)
+
                 print("Writing weight map image.")
                 weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_data_parameter_weightmap.png")
                 visualize_seg(in_type="batch_2D",
@@ -1391,7 +1391,7 @@ def train_DL(run_name, config, training_dataset):
                 reduce_dim = "W"
                 in_type = "batch_3D"
                 skip_writeout = len(training_dataset) > 150
-
+            skip_writeout = True
             if not skip_writeout:
                 print("Writing train sample image.")
                 # overlay text example: d_idx=0, dp_i=1.00, dist? False
