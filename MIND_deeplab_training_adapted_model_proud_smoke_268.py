@@ -175,7 +175,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -196,7 +196,7 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
-    'do_sweep': True,
+    'do_sweep': False,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 2.,
