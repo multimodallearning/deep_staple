@@ -166,7 +166,7 @@ config_dict = DotDict({
     'train_patchwise': False,
 
     'dataset': 'crossmoda',
-    'reg_state': None,#"acummulate_deeds_FT2_MT1",
+    'reg_state': "acummulate_deeds_FT2_MT1",
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -175,7 +175,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -198,9 +198,9 @@ config_dict = DotDict({
     'checkpoint_name': None,
     'do_sweep': False,
 
-    'disturbance_mode': LabelDisturbanceMode.AFFINE,
-    'disturbance_strength': 2.,
-    'disturbed_percentage': .3,
+    'disturbance_mode': None,
+    'disturbance_strength': 0.,
+    'disturbed_percentage': 0.,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
@@ -788,7 +788,7 @@ def train_DL(run_name, config, training_dataset):
                 NUM_REGISTRATIONS_PER_IMG = 1
             else:
                 NUM_VAL_IMAGES = 20
-                NUM_REGISTRATIONS_PER_IMG = 1
+                NUM_REGISTRATIONS_PER_IMG = 10 #TODO automate
 
             val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
