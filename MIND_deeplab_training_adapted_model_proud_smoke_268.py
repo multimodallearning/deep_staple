@@ -160,13 +160,13 @@ config_dict = DotDict({
     'use_mind': False,
     'epochs': 40,
 
-    'batch_size': 32,
+    'batch_size': 8,
     'val_batch_size': 1,
-    'use_2d_normal_to': "W",
+    'use_2d_normal_to': None,
     'train_patchwise': False,
 
     'dataset': 'crossmoda',
-    'reg_state': "acummulate_deeds_FT2_MT1",
+    'reg_state': None,#"acummulate_deeds_FT2_MT1",
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -196,11 +196,11 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
-    'do_sweep': False,
+    'do_sweep': True,
 
-    'disturbance_mode': None,
-    'disturbance_strength': 0.,
-    'disturbed_percentage': 0.,
+    'disturbance_mode': LabelDisturbanceMode.AFFINE,
+    'disturbance_strength': 2.,
+    'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
@@ -766,28 +766,43 @@ def train_DL(run_name, config, training_dataset):
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
             train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
+            train_idxs = torch.tensor(train_3d_idxs)
+            # train_2d_ids = []
+            # dcts = training_dataset.get_id_dicts()
+            # for id_dict in dcts:
+            #     _2d_id = id_dict['2d_id']
+            #     _3d_idx = id_dict['3d_dataset_idx']
+            #     if _2d_id in training_dataset.label_data_2d.keys() and _3d_idx in train_3d_idxs:
+            #         train_2d_ids.append(_2d_id)
 
-            train_2d_ids = []
-            dcts = training_dataset.get_id_dicts()
-            for id_dict in dcts:
-                _2d_id = id_dict['2d_id']
-                _3d_idx = id_dict['3d_dataset_idx']
-                if _2d_id in training_dataset.label_data_2d.keys() and _3d_idx in train_3d_idxs:
-                    train_2d_ids.append(_2d_id)
-
-            train_2d_idxs = training_dataset.switch_2d_identifiers(train_2d_ids)
-            train_idxs = torch.tensor(train_2d_idxs)
+            # train_2d_idxs = training_dataset.switch_2d_identifiers(train_2d_ids)
+            # train_idxs = torch.tensor(train_2d_idxs)
 
         else:
             n_dims = (-3,-2,-1)
-            val_3d_idxs = val_idxs
+                        # Override idxs
+            all_3d_ids = training_dataset.get_3d_ids()
+
+            if config.debug:
+                NUM_VAL_IMAGES = 2
+                NUM_REGISTRATIONS_PER_IMG = 1
+            else:
+                NUM_VAL_IMAGES = 20
+                NUM_REGISTRATIONS_PER_IMG = 1
+
+            val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
+            val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
+
+            train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
+            train_idxs = torch.tensor(train_3d_idxs)
+            # val_3d_idxs = val_idxs
         print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
 
         _, _, all_modified_segs = training_dataset.get_data()
 
         if config.disturbed_percentage > 0.:
             with torch.no_grad():
-                non_empty_train_idxs = train_idxs[(all_modified_segs[train_idxs].sum(dim=n_dims) > 0)]
+                non_empty_train_idxs = train_idxs#[(all_modified_segs[train_idxs].sum(dim=n_dims) > 0)]
 
             ### Disturb dataset (only non-emtpy idxs)###
             proposed_disturbed_idxs = np.random.choice(non_empty_train_idxs, size=int(len(non_empty_train_idxs)*config.disturbed_percentage), replace=False)
@@ -950,7 +965,7 @@ def train_DL(run_name, config, training_dataset):
                     assert b_seg_modified.dim() == len(n_dims)+1, \
                         f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
 
-                    if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS) and epx > 1:
+                    if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
                         # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
                         # bin_list = [slc.view(-1).bincount() for slc in b_seg_modified]
                         # for b_idx, _bins in enumerate(bin_list):
@@ -1006,7 +1021,7 @@ def train_DL(run_name, config, training_dataset):
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and epx > 1:
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     scaler.step(optimizer_dp)
 
                 scaler.update()
@@ -1423,18 +1438,18 @@ sweep_config_dict = dict(
         # disturbed_percentage=dict(
         #     values=[0.3, 0.6]
         # ),
-        # data_param_mode=dict(
-        #     values=[
-        #         DataParamMode.INSTANCE_PARAMS,
-        #         DataParamMode.DISABLED,
-        #     ]
-        # ),
+        data_param_mode=dict(
+            values=[
+                DataParamMode.INSTANCE_PARAMS,
+                DataParamMode.DISABLED,
+            ]
+        ),
         # use_risk_regularization=dict(
         #     values=[False, True]
         # ),
-        fixed_weight_min_quantile=dict(
-            values=[0., .2, .4, .6, .8, 1.]
-        ),
+        # fixed_weight_min_quantile=dict(
+        #     values=[0., .2, .4, .6, .8, 1.]
+        # ),
     )
 )
 

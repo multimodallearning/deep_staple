@@ -397,7 +397,10 @@ class HybridIdLoader(Dataset):
 
             # Now apply disturbance
             if idx in self.disturbed_idxs:
-                label = self.modified_label_data_2d[label_id].detach().clone() #TODO error missing key 041l
+                if use_2d:
+                    label = self.modified_label_data_2d[label_id].detach().clone()
+                else:
+                    label = self.modified_label_data_3d[label_id].detach().clone()
 
                 with torch_manual_seeded(idx):
                     if str(disturbance_mode)==str(LabelDisturbanceMode.FLIP_ROLL):
@@ -436,7 +439,7 @@ class HybridIdLoader(Dataset):
                     if use_2d:
                         self.modified_label_data_2d[label_id] = modified_label
                     else:
-                        self.modified_label_data_2d[label_id] = modified_label
+                        self.modified_label_data_3d[label_id] = modified_label
 
 
     def train(self, augment=True, use_modified=True):
