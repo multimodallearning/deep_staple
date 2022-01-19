@@ -196,7 +196,7 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
-    'do_sweep': False,
+    'do_sweep': True,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 2.,
