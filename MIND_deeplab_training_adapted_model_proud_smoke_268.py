@@ -160,7 +160,7 @@ config_dict = DotDict({
     'use_mind': False,
     'epochs': 40,
 
-    'batch_size': 8,
+    'batch_size': 4,
     'val_batch_size': 1,
     'use_2d_normal_to': None,
     'train_patchwise': False,
@@ -554,7 +554,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         # Use custom 3d model
         lraspp = MobileNet_LRASPP_3D(
             in_num=in_channels, num_classes=num_classes,
-            use_checkpointing=True
+            use_checkpointing=False
         )
 
     # lraspp.register_parameter('sigmoid_offset', nn.Parameter(torch.tensor([0.])))
@@ -793,9 +793,9 @@ def train_DL(run_name, config, training_dataset):
             val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
-            train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
+            train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids), NUM_REGISTRATIONS_PER_IMG))
 
-            train_idxs = torch.tensor(range(0,len(training_dataset), NUM_REGISTRATIONS_PER_IMG))
+            train_idxs = torch.tensor(train_3d_idxs)
 
 
             parallel_3d_idxs = torch.arange(len(training_dataset)).view(-1, NUM_REGISTRATIONS_PER_IMG)
@@ -1044,9 +1044,9 @@ def train_DL(run_name, config, training_dataset):
                             # Prepare logits for scoring
                             logits_for_score = logits.argmax(1)
 
-                        parallel_loss = parallel_loss + loss
+                        # parallel_loss = parallel_loss + loss
 
-                scaler.scale(parallel_loss).backward()
+                        scaler.scale(loss).backward(retain_graph=True)
 
                 scaler.step(optimizer)
 
