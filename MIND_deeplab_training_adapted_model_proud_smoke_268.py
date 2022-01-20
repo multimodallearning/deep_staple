@@ -940,12 +940,12 @@ def train_DL(run_name, config, training_dataset):
                 b_seg = batch['label']
                 b_spat_aug_grid = batch['spat_augment_grid']
 
-                b_seg_modified = batch['modified_label']
+                # b_seg_modified = batch['modified_label']
                 b_idxs_dataset = batch['dataset_idx']
                 b_img = b_img.float()
 
                 b_img = b_img.cuda()
-                b_seg_modified = b_seg_modified.cuda()
+                # b_seg_modified = b_seg_modified.cuda()
                 b_idxs_dataset = b_idxs_dataset.cuda()
                 b_seg = b_seg.cuda()
                 b_spat_aug_grid = b_spat_aug_grid.cuda()
@@ -973,15 +973,16 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
 
                     first_idxs = parallel_3d_idxs[:,0]
-                    lookup_idxs = [(b_idx.cpu()==first_idxs).nonzero(as_tuple=True)[0] for b_idx in b_idxs_dataset]
+                    # lookup_idxs = [(b_idx.cpu()==first_idxs).nonzero(as_tuple=True)[0] for b_idx in b_idxs_dataset]
+                    lookup_idxs = (b_idxs_dataset/NUM_REGISTRATIONS_PER_IMG).long()
                     b_parallel_idxs = parallel_3d_idxs[lookup_idxs,:]
 
                     # Shuffle idxs of parallel registrations
                     shuffled_parallel_3d_idxs = torch.zeros(len(b_idxs_dataset), NUM_REGISTRATIONS_PER_IMG).long()
-                    for b_idx in range(len(b_idxs_dataset)):
-                        shuffled_parallel_3d_idxs[b_idx] = torch.tensor(np.random.permutation(parallel_3d_idxs[b_idx]))
+                    for b_idx in range(b_parallel_idxs.shape[0]):
+                        shuffled_parallel_3d_idxs[b_idx] = torch.tensor(np.random.permutation(b_parallel_idxs[b_idx]))
 
-                    parallel_loss = 0.
+                    # parallel_loss = 0.
                     for p_idx in range(NUM_REGISTRATIONS_PER_IMG):
                         if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
                             # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
@@ -992,7 +993,7 @@ def train_DL(run_name, config, training_dataset):
                             b_parallel_seg_idxs = shuffled_parallel_3d_idxs[:, p_idx].cuda()
                             b_seg_modified = torch.stack([training_dataset[idx]['modified_label'] for idx in b_parallel_seg_idxs])
                             b_seg_modified = b_seg_modified.cuda()
-                            
+
                             loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
                             loss = loss.mean(n_dims)
 
@@ -1043,9 +1044,10 @@ def train_DL(run_name, config, training_dataset):
                             # Prepare logits for scoring
                             logits_for_score = logits.argmax(1)
 
-                        parallel_loss = parallel_loss + loss
+                        # parallel_loss = parallel_loss + loss
 
-                scaler.scale(parallel_loss).backward()
+                        scaler.scale(loss).backward(retain_graph=True)
+
                 scaler.step(optimizer)
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
