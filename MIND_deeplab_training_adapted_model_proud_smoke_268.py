@@ -166,7 +166,7 @@ config_dict = DotDict({
     'train_patchwise': False,
 
     'dataset': 'crossmoda',
-    'reg_state': "acummulate_deeds_FT2_MT1",
+    'reg_state': "stapled_consensus",
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -194,7 +194,7 @@ config_dict = DotDict({
     'do_plot': False,
     'save_dp_figures': False,
     'debug': False,
-    'wandb_mode': 'online', # e.g. online, disabled
+    'wandb_mode': 'disabled', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -283,6 +283,15 @@ def prepare_data(config):
                         label_data.append(moving_sample['warped_label'].cpu())
                         loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
+        elif config.reg_state == "stapled_consensus":
+            domain = 'target'
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220120_crossmoda_staple/crossmoda_staple_consensus.pth")
+            label_data = []
+            loaded_identifier = []
+            for fixed_id, concensi in bare_data.items():
+                staple_split_id = '689'
+                label_data.append(concensi[staple_split_id]['warped_label'])
+                loaded_identifier.append(f"{fixed_id}:mS{int(staple_split_id):03d}")
         else:
             raise ValueError()
 
@@ -1074,7 +1083,7 @@ def train_DL(run_name, config, training_dataset):
 
                         # scaler.scale(loss).backward(retain_graph=True)
 
-                scaler.scale(parallel_loss).backward()
+                scaler.scale(parallel_loss/NUM_REGISTRATIONS_PER_IMG).backward()
                 scaler.step(optimizer)
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):

@@ -256,7 +256,7 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
 
                 tmp, was_sparse = ensure_dense(tmp)
                 if resample: #resample image to specified size
-                    tmp = F.interpolate(tmp.unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
+                    tmp = F.interpolate(tmp.float().unsqueeze(0).unsqueeze(0), size=size,mode='nearest').squeeze()
 
                 if tmp.shape != size: #for size missmatch use symmetric padding with 0
                     difs = [size[0]-tmp.size(0),size[1]-tmp.size(1),size[2]-tmp.size(2)]
