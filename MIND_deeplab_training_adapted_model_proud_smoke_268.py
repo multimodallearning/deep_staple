@@ -172,7 +172,7 @@ config_dict = DotDict({
     'crop_2d_slices_gt_num_threshold': 0,
 
     'lr': 0.01,
-    'use_cosine_annealing': True,
+    'use_scheduling': True,
 
     # Data parameter config
     'data_param_mode': DataParamMode.INSTANCE_PARAMS,
@@ -875,7 +875,7 @@ def train_DL(run_name, config, training_dataset):
 
         # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         #     optimizer, T_0=10, T_mult=2)
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.999)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.99)
 
         if optimizer_dp:
             # scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
@@ -1083,7 +1083,7 @@ def train_DL(run_name, config, training_dataset):
 
                         # scaler.scale(loss).backward(retain_graph=True)
 
-                scaler.scale(parallel_loss).backward()
+                scaler.scale(parallel_loss/NUM_REGISTRATIONS_PER_IMG).backward()
                 scaler.step(optimizer)
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
@@ -1094,7 +1094,7 @@ def train_DL(run_name, config, training_dataset):
                 epx_losses.append(loss.item())
 
                 ###  Scheduler management ###
-                if config.use_cosine_annealing and epx > 20:
+                if config.use_scheduling:
                     scheduler.step()
                     # scheduler_dp.step()
 
