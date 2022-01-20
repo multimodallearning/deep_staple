@@ -194,7 +194,7 @@ config_dict = DotDict({
     'do_plot': False,
     'save_dp_figures': False,
     'debug': False,
-    'wandb_mode': 'disabled', # e.g. online, disabled
+    'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -940,12 +940,12 @@ def train_DL(run_name, config, training_dataset):
                 b_seg = batch['label']
                 b_spat_aug_grid = batch['spat_augment_grid']
 
-                # b_seg_modified = batch['modified_label']
+                b_seg_modified = batch['modified_label']
                 b_idxs_dataset = batch['dataset_idx']
                 b_img = b_img.float()
 
                 b_img = b_img.cuda()
-                # b_seg_modified = b_seg_modified.cuda()
+                b_seg_modified = b_seg_modified.cuda()
                 b_idxs_dataset = b_idxs_dataset.cuda()
                 b_seg = b_seg.cuda()
                 b_spat_aug_grid = b_spat_aug_grid.cuda()
@@ -972,7 +972,7 @@ def train_DL(run_name, config, training_dataset):
                     assert b_seg_modified.dim() == len(n_dims)+1, \
                         f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
 
-                    first_idxs = parallel_3d_idxs[:,0]
+                    # first_idxs = parallel_3d_idxs[:,0]
                     # lookup_idxs = [(b_idx.cpu()==first_idxs).nonzero(as_tuple=True)[0] for b_idx in b_idxs_dataset]
                     lookup_idxs = (b_idxs_dataset/NUM_REGISTRATIONS_PER_IMG).long()
                     b_parallel_idxs = parallel_3d_idxs[lookup_idxs,:]
