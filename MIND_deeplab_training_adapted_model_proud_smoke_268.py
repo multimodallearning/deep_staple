@@ -158,7 +158,7 @@ config_dict = DotDict({
     # 'checkpoint_epx': 0,
 
     'use_mind': False,
-    'epochs': 40,
+    'epochs': 400,
 
     'batch_size': 4,
     'val_batch_size': 1,
@@ -866,7 +866,7 @@ def train_DL(run_name, config, training_dataset):
 
         # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         #     optimizer, T_0=10, T_mult=2)
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.99)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.999)
 
         if optimizer_dp:
             # scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
