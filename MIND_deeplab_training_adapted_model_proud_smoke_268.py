@@ -158,9 +158,9 @@ config_dict = DotDict({
     # 'checkpoint_epx': 0,
 
     'use_mind': False,
-    'epochs': 400,
+    'epochs': 40,
 
-    'batch_size': 4,
+    'batch_size': 8,
     'val_batch_size': 1,
     'use_2d_normal_to': None,
     'train_patchwise': False,
@@ -175,7 +175,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -194,7 +194,7 @@ config_dict = DotDict({
     'do_plot': False,
     'save_dp_figures': False,
     'debug': False,
-    'wandb_mode': 'disabled', # e.g. online, disabled
+    'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
@@ -796,8 +796,9 @@ def train_DL(run_name, config, training_dataset):
                 NUM_VAL_IMAGES = 2
                 NUM_REGISTRATIONS_PER_IMG = 2
             else:
-                NUM_VAL_IMAGES = 20
-                NUM_REGISTRATIONS_PER_IMG = 10 #TODO automate
+                # Settings for staple pretraining
+                NUM_VAL_IMAGES = 0
+                NUM_REGISTRATIONS_PER_IMG = 1 #TODO automate
 
             val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
