@@ -992,12 +992,20 @@ def train_DL(run_name, config, training_dataset):
                             #     batch_bins[b_idx][:len(_bins)] = _bins
                             # loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
                             b_parallel_seg_idxs = shuffled_parallel_3d_idxs[:, p_idx].cuda()
+
                             training_dataset.train(augment=False)
+
                             b_seg_modified = torch.stack([training_dataset[idx]['modified_label'] for idx in b_parallel_seg_idxs])
                             b_seg_modified = b_seg_modified.cuda()
                             _, b_seg_modified, _ = spatial_augment(b_label=b_seg_modified, use_2d=training_dataset.use_2d(),
-                                b_grid_override=b_spat_aug_grid, pre_interpolation_factor=2.
+                                b_grid_override=b_spat_aug_grid, pre_interpolation_factor=1.
                             ) # TODO check pre interpolation factor
+                            b_seg = torch.stack([training_dataset[idx]['label'] for idx in b_parallel_seg_idxs])
+                            b_seg = b_seg.cuda()
+                            _, b_seg, _ = spatial_augment(b_label=b_seg, use_2d=training_dataset.use_2d(),
+                                b_grid_override=b_spat_aug_grid, pre_interpolation_factor=1.
+                            ) # TODO check pre interpolation factor
+
                             training_dataset.train(augment=True)
 
                             loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
@@ -1050,7 +1058,19 @@ def train_DL(run_name, config, training_dataset):
                             # Prepare logits for scoring
                             logits_for_score = logits.argmax(1)
 
-                        # parallel_loss = parallel_loss + loss
+                        # parallel_loss = parallel_loss + loss # TODO check
+
+                        # Calculate dice score
+                        b_dice = dice_func(
+                            torch.nn.functional.one_hot(logits_for_score, len(training_dataset.label_tags)),
+                            torch.nn.functional.one_hot(b_seg, len(training_dataset.label_tags)), # Calculate dice score with original segmentation (no disturbance)
+                            one_hot_torch_style=True
+                        )
+
+                        dices.append(get_batch_dice_over_all(
+                            b_dice, exclude_bg=True))
+                        class_dices.append(get_batch_dice_per_class(
+                            b_dice, training_dataset.label_tags, exclude_bg=True))
 
                         scaler.scale(loss).backward(retain_graph=True)
 
@@ -1062,18 +1082,6 @@ def train_DL(run_name, config, training_dataset):
                 scaler.update()
 
                 epx_losses.append(loss.item())
-
-                # Calculate dice score
-                b_dice = dice_func(
-                    torch.nn.functional.one_hot(logits_for_score, len(training_dataset.label_tags)),
-                    torch.nn.functional.one_hot(b_seg, len(training_dataset.label_tags)), # Calculate dice score with original segmentation (no disturbance)
-                    one_hot_torch_style=True
-                )
-
-                dices.append(get_batch_dice_over_all(
-                    b_dice, exclude_bg=True))
-                class_dices.append(get_batch_dice_per_class(
-                    b_dice, training_dataset.label_tags, exclude_bg=True))
 
                 ###  Scheduler management ###
                 if config.use_cosine_annealing:
