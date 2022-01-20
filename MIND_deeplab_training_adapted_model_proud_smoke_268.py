@@ -51,7 +51,7 @@ from mdl_seg_class.metrics import dice3d, dice2d
 from mdl_seg_class.visualization import visualize_seg
 
 from curriculum_deeplab.mindssc import mindssc
-from curriculum_deeplab.utils import interpolate_sample, in_notebook, dilate_label_class, LabelDisturbanceMode, ensure_dense
+from curriculum_deeplab.utils import interpolate_sample, in_notebook, dilate_label_class, LabelDisturbanceMode, ensure_dense, spatial_augment
 from curriculum_deeplab.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader, get_crossmoda_data_load_closure
 from curriculum_deeplab.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D, MobileNet_ASPP_3D
 
@@ -995,8 +995,9 @@ def train_DL(run_name, config, training_dataset):
                             training_dataset.train(augment=False)
                             b_seg_modified = torch.stack([training_dataset[idx]['modified_label'] for idx in b_parallel_seg_idxs])
                             b_seg_modified = b_seg_modified.cuda()
-                            b_seg_modified = F.grid_sample(b_seg_modified, b_spat_aug_grid,
-                                padding_mode='zeros', align_corners=False)
+                            _, b_seg_modified, _ = spatial_augment(b_label=b_seg_modified, use_2d=training_dataset.use_2d(),
+                                b_grid_override=b_spat_aug_grid, pre_interpolation_factor=1.
+                            )
 
                             loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
                             loss = loss.mean(n_dims)
