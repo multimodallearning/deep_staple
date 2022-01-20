@@ -191,6 +191,11 @@ config_dict = DotDict({
     'save_every': 200,
     'mdl_save_prefix': 'data/models',
 
+    # config_dict['checkpoint_name'] = 'ethereal-serenity-1138',
+    # config_dict['fold_override'] = 0,
+    # config_dict['checkpoint_epx'] = 39,
+    'lraspp_checkpoint': "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/summer-deluge-1197_fold0_epx39/lraspp.pth",
+
     'do_plot': False,
     'save_dp_figures': False,
     'debug': False,
@@ -603,6 +608,10 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
     else:
         print("Generating fresh lr-aspp model, optimizer and grad scaler.")
+
+    if config.lraspp_checkpoint is not None:
+        print(f"Loading special lr-aspp checkpoint from {config.lraspp_checkpoint}")
+        lraspp.load_state_dict(torch.load(config.lraspp_checkpoint, map_location=device))
 
     return (lraspp, optimizer, optimizer_dp, embedding, scaler)
 
