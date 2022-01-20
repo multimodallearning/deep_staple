@@ -996,8 +996,9 @@ def train_DL(run_name, config, training_dataset):
                             b_seg_modified = torch.stack([training_dataset[idx]['modified_label'] for idx in b_parallel_seg_idxs])
                             b_seg_modified = b_seg_modified.cuda()
                             _, b_seg_modified, _ = spatial_augment(b_label=b_seg_modified, use_2d=training_dataset.use_2d(),
-                                b_grid_override=b_spat_aug_grid, pre_interpolation_factor=1.
-                            )
+                                b_grid_override=b_spat_aug_grid, pre_interpolation_factor=2.
+                            ) # TODO check pre interpolation factor
+                            training_dataset.train(augment=True)
 
                             loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
                             loss = loss.mean(n_dims)
