@@ -554,7 +554,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         # Use custom 3d model
         lraspp = MobileNet_LRASPP_3D(
             in_num=in_channels, num_classes=num_classes,
-            use_checkpointing=False
+            use_checkpointing=True
         )
 
     # lraspp.register_parameter('sigmoid_offset', nn.Parameter(torch.tensor([0.])))
@@ -1000,11 +1000,11 @@ def train_DL(run_name, config, training_dataset):
                             _, b_seg_modified, _ = spatial_augment(b_label=b_seg_modified, use_2d=training_dataset.use_2d(),
                                 b_grid_override=b_spat_aug_grid, pre_interpolation_factor=1.
                             ) # TODO check pre interpolation factor
-                            b_seg = torch.stack([training_dataset[idx]['label'] for idx in b_parallel_seg_idxs])
-                            b_seg = b_seg.cuda()
-                            _, b_seg, _ = spatial_augment(b_label=b_seg, use_2d=training_dataset.use_2d(),
-                                b_grid_override=b_spat_aug_grid, pre_interpolation_factor=1.
-                            ) # TODO check pre interpolation factor
+                            # b_seg = torch.stack([training_dataset[idx]['label'] for idx in b_parallel_seg_idxs])
+                            # b_seg = b_seg.cuda()
+                            # _, b_seg, _ = spatial_augment(b_label=b_seg, use_2d=training_dataset.use_2d(),
+                            #     b_grid_override=b_spat_aug_grid, pre_interpolation_factor=1.
+                            # ) # TODO check pre interpolation factor
 
                             training_dataset.train(augment=True)
 
@@ -1058,7 +1058,7 @@ def train_DL(run_name, config, training_dataset):
                             # Prepare logits for scoring
                             logits_for_score = logits.argmax(1)
 
-                        # parallel_loss = parallel_loss + loss # TODO check
+                        parallel_loss = parallel_loss + loss # TODO check
 
                         # Calculate dice score
                         b_dice = dice_func(
@@ -1072,8 +1072,9 @@ def train_DL(run_name, config, training_dataset):
                         class_dices.append(get_batch_dice_per_class(
                             b_dice, training_dataset.label_tags, exclude_bg=True))
 
-                        scaler.scale(loss).backward(retain_graph=True)
+                        # scaler.scale(loss).backward(retain_graph=True)
 
+                scaler.scale(parallel_loss).backward()
                 scaler.step(optimizer)
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
@@ -1084,7 +1085,7 @@ def train_DL(run_name, config, training_dataset):
                 epx_losses.append(loss.item())
 
                 ###  Scheduler management ###
-                if config.use_cosine_annealing:
+                if config.use_cosine_annealing and epx > 20:
                     scheduler.step()
                     # scheduler_dp.step()
 
