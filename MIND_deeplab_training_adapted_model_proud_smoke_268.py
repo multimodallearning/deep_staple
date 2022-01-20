@@ -757,7 +757,7 @@ def train_DL(run_name, config, training_dataset):
 
             if config.debug:
                 NUM_VAL_IMAGES = 2
-                NUM_REGISTRATIONS_PER_IMG = 1
+                NUM_REGISTRATIONS_PER_IMG = 2
             else:
                 NUM_VAL_IMAGES = 20
                 NUM_REGISTRATIONS_PER_IMG = 10
@@ -785,7 +785,7 @@ def train_DL(run_name, config, training_dataset):
 
             if config.debug:
                 NUM_VAL_IMAGES = 2
-                NUM_REGISTRATIONS_PER_IMG = 1
+                NUM_REGISTRATIONS_PER_IMG = 2
             else:
                 NUM_VAL_IMAGES = 20
                 NUM_REGISTRATIONS_PER_IMG = 10 #TODO automate
@@ -982,7 +982,7 @@ def train_DL(run_name, config, training_dataset):
                     for b_idx in range(b_parallel_idxs.shape[0]):
                         shuffled_parallel_3d_idxs[b_idx] = torch.tensor(np.random.permutation(b_parallel_idxs[b_idx]))
 
-                    # parallel_loss = 0.
+                    parallel_loss = 0.
                     for p_idx in range(NUM_REGISTRATIONS_PER_IMG):
                         if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
                             # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
@@ -1003,7 +1003,7 @@ def train_DL(run_name, config, training_dataset):
                             weight = weight/weight.mean()
 
                             # This improves scores significantly: Reweight with log(gt_numel)
-                            weight = weight/t_metric[b_idxs_dataset]
+                            weight = weight/t_metric[b_parallel_seg_idxs]
 
                             # Prepare logits for scoring
                             logits_for_score = logits.argmax(1)
@@ -1044,9 +1044,9 @@ def train_DL(run_name, config, training_dataset):
                             # Prepare logits for scoring
                             logits_for_score = logits.argmax(1)
 
-                        # parallel_loss = parallel_loss + loss
+                        parallel_loss = parallel_loss + loss
 
-                        scaler.scale(loss).backward(retain_graph=True)
+                scaler.scale(parallel_loss).backward()
 
                 scaler.step(optimizer)
 
