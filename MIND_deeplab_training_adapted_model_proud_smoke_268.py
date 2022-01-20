@@ -923,7 +923,7 @@ def train_DL(run_name, config, training_dataset):
             lraspp.train()
 
             ### Disturb samples ###
-            training_dataset.train(use_modified=(epx >= config.start_disturbing_after_ep))
+            training_dataset.train(use_modified=True)
             wandb.log({"use_modified": float(training_dataset.use_modified)}, step=global_idx)
 
             epx_losses = []
@@ -932,6 +932,7 @@ def train_DL(run_name, config, training_dataset):
 
             # Load data
             for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch #", total=len(train_dataloader)):
+                training_dataset.train()
                 optimizer.zero_grad()
                 if optimizer_dp:
                     optimizer_dp.zero_grad()
@@ -991,8 +992,11 @@ def train_DL(run_name, config, training_dataset):
                             #     batch_bins[b_idx][:len(_bins)] = _bins
                             # loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
                             b_parallel_seg_idxs = shuffled_parallel_3d_idxs[:, p_idx].cuda()
+                            training_dataset.train(augment=False)
                             b_seg_modified = torch.stack([training_dataset[idx]['modified_label'] for idx in b_parallel_seg_idxs])
                             b_seg_modified = b_seg_modified.cuda()
+                            b_seg_modified = F.grid_sample(b_seg_modified, b_spat_aug_grid,
+                                padding_mode='zeros', align_corners=False)
 
                             loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
                             loss = loss.mean(n_dims)
