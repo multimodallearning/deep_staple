@@ -175,7 +175,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -183,9 +183,9 @@ config_dict = DotDict({
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': None,
-    'fixed_weight_min_quantile': None,
-    'fixed_weight_min_value': 0.,
+    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/dashing-surf-1206_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_min_quantile': .9,
+    'fixed_weight_min_value': None,
     # ),
 
     'save_every': 200,
@@ -965,6 +965,12 @@ def train_DL(run_name, config, training_dataset):
                     lraspp.use_checkpointing = True
                     logits = lraspp(b_img)['out']
 
+                    ### Calculate loss ###
+                    assert logits.dim() == len(n_dims)+2, \
+                        f"Input shape for loss must be BxNUM_CLASSESxSPATIAL but is {logits.shape}"
+                    assert b_seg_modified.dim() == len(n_dims)+1, \
+                        f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
+
                     ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
                     # Prepare logits for scoring
                     logits_for_score = logits.argmax(1)
@@ -972,12 +978,6 @@ def train_DL(run_name, config, training_dataset):
                     scaler.scale(ce_loss).backward()
                     scaler.step(optimizer)
                     scaler.update()
-
-                    ### Calculate loss ###
-                    assert logits.dim() == len(n_dims)+2, \
-                        f"Input shape for loss must be BxNUM_CLASSESxSPATIAL but is {logits.shape}"
-                    assert b_seg_modified.dim() == len(n_dims)+1, \
-                        f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
 
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
                         # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
@@ -1033,7 +1033,7 @@ def train_DL(run_name, config, training_dataset):
                         dp_loss = (loss.unsqueeze(1)*weight).sum()
 
                         # Prepare logits for scoring
-                        logits_for_score = (logits*weight).argmax(1)
+                        logits_for_score = logits.argmax(1)
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     dp_scaler.scale(dp_loss).backward()
@@ -1454,18 +1454,18 @@ sweep_config_dict = dict(
         # disturbed_percentage=dict(
         #     values=[0.3, 0.6]
         # ),
-        data_param_mode=dict(
-            values=[
-                DataParamMode.INSTANCE_PARAMS,
-                DataParamMode.DISABLED,
-            ]
-        ),
+        # data_param_mode=dict(
+        #     values=[
+        #         DataParamMode.INSTANCE_PARAMS,
+        #         DataParamMode.DISABLED,
+        #     ]
+        # ),
         # use_risk_regularization=dict(
         #     values=[False, True]
         # ),
-        # fixed_weight_min_quantile=dict(
-        #     values=[0., .2, .4, .6, .8, 1.]
-        # ),
+        fixed_weight_min_quantile=dict(
+            values=[0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
+        ),
     )
 )
 
