@@ -158,7 +158,7 @@ config_dict = DotDict({
     # 'checkpoint_epx': 0,
 
     'use_mind': False,
-    'epochs': 400,
+    'epochs': 40,
 
     'batch_size': 4,
     'val_batch_size': 1,
