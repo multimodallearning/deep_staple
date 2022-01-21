@@ -175,7 +175,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -858,7 +858,7 @@ def train_DL(run_name, config, training_dataset):
 
         (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
-        scaler_dp = amp.GradScaler()
+        dp_scaler = amp.GradScaler()
         # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         #     optimizer, T_0=10, T_mult=2)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.99)
@@ -959,8 +959,19 @@ def train_DL(run_name, config, training_dataset):
                 with amp.autocast(enabled=True):
                     assert b_img.dim() == len(n_dims)+2, \
                         f"Input image for model must be {len(n_dims)+2}D: BxCxSPATIAL but is {b_img.shape}"
+                    for param in lraspp.parameters():
+                        param.requires_grad = True
 
+                    lraspp.use_checkpointing = True
                     logits = lraspp(b_img)['out']
+
+                    ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
+                    # Prepare logits for scoring
+                    logits_for_score = logits.argmax(1)
+
+                    scaler.scale(ce_loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
 
                     ### Calculate loss ###
                     assert logits.dim() == len(n_dims)+2, \
@@ -974,6 +985,10 @@ def train_DL(run_name, config, training_dataset):
                         # for b_idx, _bins in enumerate(bin_list):
                         #     batch_bins[b_idx][:len(_bins)] = _bins
                         # loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
+                        for param in lraspp.parameters():
+                            param.requires_grad = False
+                        lraspp.use_checkpointing = False
+                        logits = lraspp(b_img)['out']
 
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
                         loss = loss.mean(n_dims)
@@ -1020,16 +1035,8 @@ def train_DL(run_name, config, training_dataset):
                         # Prepare logits for scoring
                         logits_for_score = (logits*weight).argmax(1)
 
-                    ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
-                    # Prepare logits for scoring
-                    logits_for_score = logits.argmax(1)
-
-                scaler.scale(ce_loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
-                    dp_scaler.scale(dp_loss)
+                    dp_scaler.scale(dp_loss).backward()
                     dp_scaler.step(optimizer_dp)
                     dp_scaler.update()
 
