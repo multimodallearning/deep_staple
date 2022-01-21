@@ -183,7 +183,7 @@ config_dict = DotDict({
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/dashing-surf-1206_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/dashing-surf-1206_fold0_epx39/train_label_snapshot.pth",
     'fixed_weight_min_quantile': .9,
     'fixed_weight_min_value': None,
     # ),
@@ -196,7 +196,7 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
-    'do_sweep': False,
+    'do_sweep': True,
 
     'disturbance_mode': None,
     'disturbance_strength': 0.,
