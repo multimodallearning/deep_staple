@@ -1463,9 +1463,9 @@ sweep_config_dict = dict(
         # use_risk_regularization=dict(
         #     values=[False, True]
         # ),
-        fixed_weight_min_quantile=dict(
-            values=[0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
-        ),
+        # fixed_weight_min_quantile=dict(
+        #     values=[0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
+        # ),
     )
 )
 
