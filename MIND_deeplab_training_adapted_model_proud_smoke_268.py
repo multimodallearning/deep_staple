@@ -883,9 +883,9 @@ def train_DL(run_name, config, training_dataset):
             print("Fetching training metrics for samples.")
             # _, wise_lbls, mod_lbls = training_dataset.get_data()
             training_dataset.eval(use_modified=True)
-            for sample in tqdm(training_dataset, desc="training sample: ", total=len(training_dataset)):
-                wise_label, mod_label = sample['label'], sample['modified_label']
+            for sample in tqdm((training_dataset[idx] for idx in train_idxs), desc="training sample: ", total=len(train_idxs)):
                 d_idxs = sample['dataset_idx']
+                wise_label, mod_label = sample['label'], sample['modified_label']
                 mod_label = mod_label.cuda()
                 wise_label = wise_label.cuda()
                 mod_label, _ = ensure_dense(mod_label)
@@ -1033,7 +1033,7 @@ def train_DL(run_name, config, training_dataset):
                     dp_scaler.step(optimizer_dp)
                     dp_scaler.update()
 
-                epx_losses.append(loss.item())
+                epx_losses.append(ce_loss.item())
 
                 # Calculate dice score
                 b_dice = dice_func(
