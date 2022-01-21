@@ -1052,7 +1052,7 @@ def train_DL(run_name, config, training_dataset):
                     scheduler.step()
                     # scheduler_dp.step()
 
-                if config.save_dp_figures and batch_idx % 10 == 0:
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and batch_idx % 10 == 0:
                     # Output data parameter figure
                     train_params = embedding.weight[train_idxs].squeeze()
                     # order = np.argsort(train_params.cpu().detach()) # Order by DP value
