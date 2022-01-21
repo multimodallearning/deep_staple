@@ -83,7 +83,26 @@ class HybridIdLoader(Dataset):
             for del_key in sorted(list(self.modified_label_data_3d.keys()))[max_load_3d_num:]:
                 del self.modified_label_data_3d[del_key]
 
+        if fixed_weight_file is not None:
+            fixed_weightdata = torch.load(fixed_weight_file)
+            fixed_weights = fixed_weightdata['data_parameters'].detach().cpu()
+            fixed_d_ids = fixed_weightdata['d_ids']
+            print(f"Fixed weight quantiles are: {np.quantile(fixed_weights, np.linspace(0.,1.,5))}")
+            if fixed_weight_min_quantile is not None:
+                fixed_weight_min_value = np.quantile(fixed_weights, fixed_weight_min_quantile)
+            elif fixed_weight_min_value is not None:
+                pass
+            else:
+                raise ValueError()
+
+            for key, weight in zip(fixed_d_ids, fixed_weights):
+                if weight < fixed_weight_min_value:
+                    del self.img_data_3d[key]
+                    del self.label_data_3d[key]
+                    del self.modified_label_data_3d[key]
+
         postprocessed_3d_num = len(self.label_data_3d.keys())
+
         print(f"Removed {orig_3d_num - postprocessed_3d_num} 3D images in postprocessing")
         #check for consistency
         print(f"Equal image and label numbers: {set(self.img_data_3d)==set(self.label_data_3d)==set(self.modified_label_data_3d)} ({len(self.img_data_3d)})")
