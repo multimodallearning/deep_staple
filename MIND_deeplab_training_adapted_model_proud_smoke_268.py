@@ -858,7 +858,7 @@ def train_DL(run_name, config, training_dataset):
 
         (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
-
+        scaler_dp = amp.GradScaler()
         # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         #     optimizer, T_0=10, T_mult=2)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.99)
@@ -867,7 +867,7 @@ def train_DL(run_name, config, training_dataset):
             # scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             #     optimizer_dp, T_0=10, T_mult=2)
             # scheduler_dp = torch.optim.lr_scheduler.ExponentialLR(optimizer_dp, gamma=.999)
-            pass
+            scheduler_dp = None
         else:
             scheduler_dp = None
 
@@ -996,9 +996,9 @@ def train_DL(run_name, config, training_dataset):
                             else:
                                 risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-3]*logits_for_score.shape[-2]*logits_for_score.shape[-1])
 
-                            loss = (loss*weight).sum() + risk_regularization.sum()
+                            dp_loss = (loss*weight).sum() + risk_regularization.sum()
                         else:
-                            loss = (loss*weight).sum()
+                            dp_loss = (loss*weight).sum()
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
@@ -1015,23 +1015,23 @@ def train_DL(run_name, config, training_dataset):
                         weight = weight/weight.mean()
                         weight = F.grid_sample(weight, b_spat_aug_grid,
                             padding_mode='border', align_corners=False)
-                        loss = (loss.unsqueeze(1)*weight).sum()
+                        dp_loss = (loss.unsqueeze(1)*weight).sum()
 
                         # Prepare logits for scoring
                         logits_for_score = (logits*weight).argmax(1)
 
-                    else:
-                        loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
-                        # Prepare logits for scoring
-                        logits_for_score = logits.argmax(1)
+                    ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
+                    # Prepare logits for scoring
+                    logits_for_score = logits.argmax(1)
 
-                scaler.scale(loss).backward()
+                scaler.scale(ce_loss).backward()
                 scaler.step(optimizer)
+                scaler.update()
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
-                    scaler.step(optimizer_dp)
-
-                scaler.update()
+                    dp_scaler.scale(dp_loss)
+                    dp_scaler.step(optimizer_dp)
+                    dp_scaler.update()
 
                 epx_losses.append(loss.item())
 
