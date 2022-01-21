@@ -88,18 +88,32 @@ class HybridIdLoader(Dataset):
             fixed_weights = fixed_weightdata['data_parameters'].detach().cpu()
             fixed_d_ids = fixed_weightdata['d_ids']
             print(f"Fixed weight quantiles are: {np.quantile(fixed_weights, np.linspace(0.,1.,5))}")
-            if fixed_weight_min_quantile is not None:
+            if True:
+                fixed_weight_best_quantile_lower_bound = np.quantile(fixed_weights, .9)
+                fixed_weight_worst_quantile_upper_bound =  np.quantile(fixed_weights, .1)
+                for key, weight in zip(fixed_d_ids, fixed_weights):
+                    if fixed_weight_worst_quantile_upper_bound > weight:
+                        pass
+                    elif fixed_weight_best_quantile_lower_bound < weight:
+                        pass
+                    else:
+                        del self.img_data_3d[key]
+                        del self.label_data_3d[key]
+                        del self.modified_label_data_3d[key]
+
+
+            elif fixed_weight_min_quantile is not None:
                 fixed_weight_min_value = np.quantile(fixed_weights, fixed_weight_min_quantile)
             elif fixed_weight_min_value is not None:
                 pass
             else:
                 raise ValueError()
 
-            for key, weight in zip(fixed_d_ids, fixed_weights):
-                if weight < fixed_weight_min_value:
-                    del self.img_data_3d[key]
-                    del self.label_data_3d[key]
-                    del self.modified_label_data_3d[key]
+            # for key, weight in zip(fixed_d_ids, fixed_weights):
+            #     if weight < fixed_weight_min_value:
+            #         del self.img_data_3d[key]
+            #         del self.label_data_3d[key]
+            #         del self.modified_label_data_3d[key]
 
         postprocessed_3d_num = len(self.label_data_3d.keys())
 
