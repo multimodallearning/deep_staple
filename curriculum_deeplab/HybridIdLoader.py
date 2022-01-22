@@ -95,11 +95,11 @@ class HybridIdLoader(Dataset):
             else:
                 raise ValueError()
 
-            for key, weight in zip(fixed_d_ids, fixed_weights):
-                if weight < fixed_weight_min_value:
-                    del self.img_data_3d[key]
-                    del self.label_data_3d[key]
-                    del self.modified_label_data_3d[key]
+            # for key, weight in zip(fixed_d_ids, fixed_weights): TODO use separated fixed weights for 2D and 3D
+            #     if weight < fixed_weight_min_value:
+            #         del self.img_data_3d[key]
+            #         del self.label_data_3d[key]
+            #         del self.modified_label_data_3d[key]
 
         postprocessed_3d_num = len(self.label_data_3d.keys())
 

@@ -175,7 +175,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.DISABLED,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -183,8 +183,8 @@ config_dict = DotDict({
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': None,
-    'fixed_weight_min_quantile': None,
+    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/skilled-haze-1227_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_min_quantile': .9,
     'fixed_weight_min_value': None,
     # ),
 
@@ -196,7 +196,7 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
-    'do_sweep': False,
+    'do_sweep': True,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 2.,
@@ -754,15 +754,34 @@ def train_DL(run_name, config, training_dataset):
         # Training happens in 2D, validation happens in 3D:
         # Read 2D dataset idxs which are used for training,
         # get their 3D super-ids and substract these from all 3D ids to get val_3d_idxs
-
-        # Only use one set of image i
-        trained_3d_dataset_ids = training_dataset.get_3d_from_2d_identifiers(train_idxs, 'id')
-        # trained_3d_trained_ids = training_dataset.switch_3d_identifiers(trained_3d_dataset_idxs)
         all_3d_ids = training_dataset.get_3d_ids()
-        val_3d_ids = set(all_3d_ids) - set(trained_3d_dataset_ids)
-        val_3d_idxs = list({
-            training_dataset.extract_short_3d_id(_id):idx \
-                for idx, _id in enumerate(all_3d_ids) if _id in val_3d_ids}.values())
+
+        if config.use_2d_normal_to is not None:
+            # Override idxs
+            NUM_VAL_IMAGES = 35
+            val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES)))
+            val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
+
+            train_3d_idxs = list(range(NUM_VAL_IMAGES, len(all_3d_ids)))
+            train_idxs = torch.tensor(train_3d_idxs)
+            train_2d_ids = []
+            dcts = training_dataset.get_id_dicts()
+            for id_dict in dcts:
+                _2d_id = id_dict['2d_id']
+                _3d_idx = id_dict['3d_dataset_idx']
+                if _2d_id in training_dataset.label_data_2d.keys() and _3d_idx in train_3d_idxs:
+                    train_2d_ids.append(_2d_id)
+
+            train_2d_idxs = training_dataset.switch_2d_identifiers(train_2d_ids)
+            train_idxs = torch.tensor(train_2d_idxs)
+
+        else:
+            NUM_VAL_IMAGES = 35
+            val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES)))
+            val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
+
+            train_3d_idxs = list(range(NUM_VAL_IMAGES, len(all_3d_ids)))
+            train_idxs = torch.tensor(train_3d_idxs)
 
         print("Will run validation with these 3D samples:", val_3d_idxs)
 
@@ -1404,32 +1423,32 @@ sweep_config_dict = dict(
     method='grid',
     metric=dict(goal='maximize', name='scores/val_dice_mean_tumour_fold0'),
     parameters=dict(
-        disturbance_mode=dict(
-            values=[
-               'LabelDisturbanceMode.AFFINE',
-            ]
-        ),
+        # disturbance_mode=dict(
+        #     values=[
+        #        'LabelDisturbanceMode.AFFINE',
+        #     ]
+        # ),
         # reg_state=dict(
         #     values=['best','combined']
         # ),
-        disturbance_strength=dict(
-            values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
-        ),
-        disturbed_percentage=dict(
-            values=[0.3, 0.6]
-        ),
-        data_param_mode=dict(
-            values=[
-                DataParamMode.INSTANCE_PARAMS,
-                DataParamMode.DISABLED,
-            ]
-        ),
+        # disturbance_strength=dict(
+        #     values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
+        # ),
+        # disturbed_percentage=dict(
+        #     values=[0.3, 0.6]
+        # ),
+        # data_param_mode=dict(
+        #     values=[
+        #         DataParamMode.INSTANCE_PARAMS,
+        #         DataParamMode.DISABLED,
+        #     ]
+        # ),
         # use_risk_regularization=dict(
         #     values=[False, True]
         # ),
-        # fixed_weight_min_quantile=dict(
-        #     values=[0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
-        # ),
+        fixed_weight_min_quantile=dict(
+            values=[0.95, 0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
+        ),
     )
 )
 
