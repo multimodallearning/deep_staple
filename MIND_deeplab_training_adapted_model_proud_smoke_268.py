@@ -160,9 +160,9 @@ config_dict = DotDict({
     'use_mind': False,
     'epochs': 40,
 
-    'batch_size': 8,
+    'batch_size': 32,
     'val_batch_size': 1,
-    'use_2d_normal_to': None,
+    'use_2d_normal_to': "W",
     'train_patchwise': False,
 
     'dataset': 'crossmoda',
@@ -171,11 +171,11 @@ config_dict = DotDict({
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
 
-    'lr': 0.01,
+    'lr': 0.0005,
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -183,8 +183,8 @@ config_dict = DotDict({
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/dashing-surf-1206_fold0_epx39/train_label_snapshot.pth",
-    'fixed_weight_min_quantile': .9,
+    'fixed_weight_file': None,
+    'fixed_weight_min_quantile': None,
     'fixed_weight_min_value': None,
     # ),
 
@@ -192,15 +192,15 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'do_plot': False,
-    'save_dp_figures': True,
+    'save_dp_figures': False,
     'debug': False,
-    'wandb_mode': 'online', # e.g. online, disabled
+    'wandb_mode': 'disabled', # e.g. online, disabled
     'checkpoint_name': None,
-    'do_sweep': True,
+    'do_sweep': False,
 
     'disturbance_mode': None,
     'disturbance_strength': 0.,
-    'disturbed_percentage': 0.,
+    'disturbed_percentage': .0,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
@@ -725,7 +725,7 @@ def train_DL(run_name, config, training_dataset):
     # Configure folds
     kf = KFold(n_splits=config.num_folds)
     # kf.get_n_splits(training_dataset.__len__(use_2d_override=False))
-    fold_iter = enumerate(kf.split(range(training_dataset.__len__(use_2d_override=False))))
+    fold_iter = enumerate(kf.split(training_dataset))
 
     if config.get('fold_override', None):
         selected_fold = config.get('fold_override', 0)
@@ -743,6 +743,11 @@ def train_DL(run_name, config, training_dataset):
 
     fold_means_no_bg = []
 
+    if config.use_2d_normal_to is not None:
+        n_dims = (-2,-1)
+    else:
+        n_dims = (-3,-2,-1)
+
     for fold_idx, (train_idxs, val_idxs) in fold_iter:
         train_idxs = torch.tensor(train_idxs)
         val_idxs = torch.tensor(val_idxs)
@@ -750,71 +755,31 @@ def train_DL(run_name, config, training_dataset):
         # Read 2D dataset idxs which are used for training,
         # get their 3D super-ids and substract these from all 3D ids to get val_3d_idxs
 
-        if config.use_2d_normal_to is not None:
-            n_dims = (-2,-1)
-            # Override idxs
-            all_3d_ids = training_dataset.get_3d_ids()
+        # Only use one set of image i
+        trained_3d_dataset_ids = training_dataset.get_3d_from_2d_identifiers(train_idxs, 'id')
+        # trained_3d_trained_ids = training_dataset.switch_3d_identifiers(trained_3d_dataset_idxs)
+        all_3d_ids = training_dataset.get_3d_ids()
+        val_3d_ids = set(all_3d_ids) - set(trained_3d_dataset_ids)
+        val_3d_idxs = list({
+            training_dataset.extract_short_3d_id(_id):idx \
+                for idx, _id in enumerate(all_3d_ids) if _id in val_3d_ids}.values())
 
-            if config.debug:
-                NUM_VAL_IMAGES = 2
-                NUM_REGISTRATIONS_PER_IMG = 1
-            else:
-                NUM_VAL_IMAGES = 20
-                NUM_REGISTRATIONS_PER_IMG = 10
-
-            val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
-            val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
-
-            train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
-            train_idxs = torch.tensor(train_3d_idxs)
-            # train_2d_ids = []
-            # dcts = training_dataset.get_id_dicts()
-            # for id_dict in dcts:
-            #     _2d_id = id_dict['2d_id']
-            #     _3d_idx = id_dict['3d_dataset_idx']
-            #     if _2d_id in training_dataset.label_data_2d.keys() and _3d_idx in train_3d_idxs:
-            #         train_2d_ids.append(_2d_id)
-
-            # train_2d_idxs = training_dataset.switch_2d_identifiers(train_2d_ids)
-            # train_idxs = torch.tensor(train_2d_idxs)
-
-        else:
-            n_dims = (-3,-2,-1)
-                        # Override idxs
-            all_3d_ids = training_dataset.get_3d_ids()
-
-            if config.debug:
-                NUM_VAL_IMAGES = 2
-                NUM_REGISTRATIONS_PER_IMG = 1
-            else:
-                NUM_VAL_IMAGES = 20
-                NUM_REGISTRATIONS_PER_IMG = 10 #TODO automate
-
-            val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
-            val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
-
-            train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
-            train_idxs = torch.tensor(train_3d_idxs)
-            # val_3d_idxs = val_idxs
-        print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
+        print("Will run validation with these 3D samples:", val_3d_idxs)
 
         _, _, all_modified_segs = training_dataset.get_data()
 
-        if config.disturbed_percentage > 0.:
-            with torch.no_grad():
-                non_empty_train_idxs = train_idxs#[(all_modified_segs[train_idxs].sum(dim=n_dims) > 0)]
+        non_empty_train_idxs = train_idxs[(all_modified_segs[train_idxs].sum(dim=(-2,-1)) > 0)]
 
-            ### Disturb dataset (only non-emtpy idxs)###
-            proposed_disturbed_idxs = np.random.choice(non_empty_train_idxs, size=int(len(non_empty_train_idxs)*config.disturbed_percentage), replace=False)
-            proposed_disturbed_idxs = torch.tensor(proposed_disturbed_idxs)
-            training_dataset.disturb_idxs(proposed_disturbed_idxs,
-                disturbance_mode=config.disturbance_mode,
-                disturbance_strength=config.disturbance_strength
-            )
-            disturbed_bool_vect = torch.zeros(len(training_dataset))
-            disturbed_bool_vect[training_dataset.disturbed_idxs] = 1.
-        else:
-            disturbed_bool_vect = torch.zeros(len(training_dataset))
+        ### Disturb dataset (only non-emtpy idxs)###
+        proposed_disturbed_idxs = np.random.choice(non_empty_train_idxs, size=int(len(non_empty_train_idxs)*config.disturbed_percentage), replace=False)
+        proposed_disturbed_idxs = torch.tensor(proposed_disturbed_idxs)
+        training_dataset.disturb_idxs(proposed_disturbed_idxs,
+            disturbance_mode=config.disturbance_mode,
+            disturbance_strength=config.disturbance_strength
+        )
+
+        disturbed_bool_vect = torch.zeros(len(training_dataset))
+        disturbed_bool_vect[training_dataset.disturbed_idxs] = 1.
 
         clean_idxs = train_idxs[np.isin(train_idxs, training_dataset.disturbed_idxs, invert=True)]
         print("Disturbed indexes:", sorted(training_dataset.disturbed_idxs))
@@ -856,18 +821,14 @@ def train_DL(run_name, config, training_dataset):
         else:
             _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
 
-        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
-            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
+        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
         dp_scaler = amp.GradScaler()
-        # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        #     optimizer, T_0=10, T_mult=2)
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.99)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=500, T_mult=2)
 
         if optimizer_dp:
-            # scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            #     optimizer_dp, T_0=10, T_mult=2)
-            # scheduler_dp = torch.optim.lr_scheduler.ExponentialLR(optimizer_dp, gamma=.999)
-            scheduler_dp = None
+            scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer_dp, T_0=500, T_mult=2)
         else:
             scheduler_dp = None
 
@@ -926,7 +887,7 @@ def train_DL(run_name, config, training_dataset):
             class_dices = []
 
             # Load data
-            for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch #", total=len(train_dataloader)):
+            for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch", total=len(train_dataloader)):
 
                 optimizer.zero_grad()
                 if optimizer_dp:
@@ -1466,9 +1427,9 @@ sweep_config_dict = dict(
         # use_risk_regularization=dict(
         #     values=[False, True]
         # ),
-        fixed_weight_min_quantile=dict(
-            values=[0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
-        ),
+        # fixed_weight_min_quantile=dict(
+        #     values=[0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
+        # ),
     )
 )
 
