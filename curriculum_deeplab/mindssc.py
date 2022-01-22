@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from . import utils
+from . import mind_utils
 
 def mindssc(img, delta=1, sigma=0.8):
     # see http://mpheinrich.de/pub/miccai2013_943_mheinrich.pdf for details on the MIND-SSC descriptor
@@ -18,7 +18,7 @@ def mindssc(img, delta=1, sigma=0.8):
                                       [1, 2, 1]], dtype=torch.float, device=device)
 
     # squared distances
-    dist = utils.pdist(six_neighbourhood.unsqueeze(0)).squeeze(0)
+    dist = mind_utils.pdist(six_neighbourhood.unsqueeze(0)).squeeze(0)
 
     # define comparison mask
     x, y = torch.meshgrid(torch.arange(6, device=device), torch.arange(6, device=device))
@@ -34,7 +34,7 @@ def mindssc(img, delta=1, sigma=0.8):
     rpad = nn.ReplicationPad3d(delta)
 
     # compute patch-ssd
-    ssd = utils.smooth(((F.conv3d(rpad(img), mshift1, dilation=delta) - F.conv3d(rpad(img), mshift2, dilation=delta)) ** 2), sigma)
+    ssd = mind_utils.smooth(((F.conv3d(rpad(img), mshift1, dilation=delta) - F.conv3d(rpad(img), mshift2, dilation=delta)) ** 2), sigma)
 
     # MIND equation
     mind = ssd - torch.min(ssd, 1, keepdim=True)[0]
