@@ -194,13 +194,13 @@ config_dict = DotDict({
     'do_plot': False,
     'save_dp_figures': False,
     'debug': False,
-    'wandb_mode': 'disabled', # e.g. online, disabled
+    'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
     'do_sweep': False,
 
-    'disturbance_mode': None,
-    'disturbance_strength': 0.,
-    'disturbed_percentage': .0,
+    'disturbance_mode': LabelDisturbanceMode.AFFINE,
+    'disturbance_strength': 2.,
+    'disturbed_percentage': .3,
     'start_disturbing_after_ep': 0,
 
     'start_dilate_kernel_sz': 1
