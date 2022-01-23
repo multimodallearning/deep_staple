@@ -179,7 +179,7 @@ config_dict = DotDict({
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
-    'use_parallel_dp_loss': True,
+    'use_parallel_dp_loss': False,
 
     'grid_size_y': 64,
     'grid_size_x': 64,
@@ -194,7 +194,7 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'disabled', # e.g. online, disabled
+    'wandb_mode': 'online', # e.g. online, disabled
     'do_sweep': False,
 
     'checkpoint_name': None,
