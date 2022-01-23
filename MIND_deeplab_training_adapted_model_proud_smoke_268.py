@@ -175,16 +175,17 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
+    'use_parallel_dp_loss': True,
 
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/dashing-surf-1206_fold0_epx39/train_label_snapshot.pth",
-    'fixed_weight_min_quantile': .9,
+    'fixed_weight_file': None,#"/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/dashing-surf-1206_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_min_quantile': None,#.9,
     'fixed_weight_min_value': None,
     # ),
 
@@ -972,26 +973,28 @@ def train_DL(run_name, config, training_dataset):
                         f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
 
                     ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
-                    # Prepare logits for scoring
-                    logits_for_score = logits.argmax(1)
 
-                    scaler.scale(ce_loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
+                    if config.use_parallel_dp_loss:
+                        scaler.scale(ce_loss).backward()
+                        scaler.step(optimizer)
+                        scaler.update()
 
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
-                        # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
-                        # bin_list = [slc.view(-1).bincount() for slc in b_seg_modified]
-                        # for b_idx, _bins in enumerate(bin_list):
-                        #     batch_bins[b_idx][:len(_bins)] = _bins
-                        # loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
-                        for param in lraspp.parameters():
-                            param.requires_grad = False
-                        lraspp.use_checkpointing = False
-                        logits = lraspp(b_img)['out']
+                        if config.use_parallel_dp_loss:
+                            # Run second consecutive forward pass
+                            for param in lraspp.parameters():
+                                param.requires_grad = False
+                            lraspp.use_checkpointing = False
+                            dp_logits = lraspp(b_img)['out']
+                        else:
+                            # Do not run a second forward pass
+                            for param in lraspp.parameters():
+                                param.requires_grad = True
+                            lraspp.use_checkpointing = True
+                            dp_logits = logits
 
-                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
-                        loss = loss.mean(n_dims)
+                        dp_loss = nn.CrossEntropyLoss(reduction='none')(dp_logits, b_seg_modified)
+                        dp_loss = dp_loss.mean(n_dims)
 
                         bare_weight = embedding(b_idxs_dataset).squeeze()
 
@@ -1001,9 +1004,6 @@ def train_DL(run_name, config, training_dataset):
                         # This improves scores significantly: Reweight with log(gt_numel)
                         weight = weight/t_metric[b_idxs_dataset]
 
-                        # Prepare logits for scoring
-                        logits_for_score = logits.argmax(1)
-
                         if config.use_risk_regularization:
                             p_pred_num = (logits_for_score > 0).sum(dim=n_dims).detach()
                             if config.use_2d_normal_to is not None:
@@ -1011,12 +1011,12 @@ def train_DL(run_name, config, training_dataset):
                             else:
                                 risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-3]*logits_for_score.shape[-2]*logits_for_score.shape[-1])
 
-                            dp_loss = (loss*weight).sum() + risk_regularization.sum()
+                            dp_loss = (dp_loss*weight).sum() + risk_regularization.sum()
                         else:
-                            dp_loss = (loss*weight).sum()
+                            dp_loss = (dp_loss*weight).sum()
 
                     elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-                        loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
+                        dp_loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
                         m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
                         weight = embedding(m_dp_idxs)
                         weight = weight.reshape(-1, config.grid_size_y, config.grid_size_x)
@@ -1030,16 +1030,21 @@ def train_DL(run_name, config, training_dataset):
                         weight = weight/weight.mean()
                         weight = F.grid_sample(weight, b_spat_aug_grid,
                             padding_mode='border', align_corners=False)
-                        dp_loss = (loss.unsqueeze(1)*weight).sum()
-
-                        # Prepare logits for scoring
-                        logits_for_score = logits.argmax(1)
+                        dp_loss = (dp_loss.unsqueeze(1)*weight).sum()
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     dp_scaler.scale(dp_loss).backward()
-                    dp_scaler.step(optimizer_dp)
-                    dp_scaler.update()
 
+                    if config.use_parallel_dp_loss:
+                        # LRASPP already stepped.
+                        dp_scaler.step(optimizer_dp)
+                        dp_scaler.update()
+                    else:
+                        dp_scaler.step(optimizer)
+                        dp_scaler.step(optimizer_dp)
+                        dp_scaler.update()
+
+                logits_for_score = logits.argmax(1)
                 epx_losses.append(ce_loss.item())
 
                 # Calculate dice score
