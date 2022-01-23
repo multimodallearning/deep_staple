@@ -841,6 +841,15 @@ def train_DL(run_name, config, training_dataset):
             _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
 
         (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
+        fixed_weightdata = torch.load(config.fixed_weight_file)
+        fixed_weights = fixed_weightdata['reweighted_weigths']
+        fixed_d_ids = fixed_weightdata['d_ids']
+
+        corresp_dataset_idxs = [training_dataset.get_2d_ids().index(_id) for _id in fixed_d_ids]
+        embedding_weight_tensor = torch.zeros_like(embedding.weight)
+        embedding_weight_tensor[corresp_dataset_idxs] = fixed_weights.view(-1,1).cuda()
+        embedding = nn.Embedding(len(training_dataset), 1, sparse=True, _weight=embedding_weight_tensor)
+
         dp_scaler = amp.GradScaler()
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, T_0=500, T_mult=2)
