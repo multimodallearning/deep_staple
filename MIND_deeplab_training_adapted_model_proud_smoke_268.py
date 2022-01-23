@@ -184,16 +184,17 @@ config_dict = DotDict({
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': None,#"/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/dashing-surf-1206_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/classic-sunset-1245_fold0_epx39/train_label_snapshot.pth",
     'fixed_weight_min_quantile': None,#.9,
     'fixed_weight_min_value': None,
+    'override_embedding_weights': True,
     # ),
 
     'save_every': 200,
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'online', # e.g. online, disabled
+    'wandb_mode': 'disabled', # e.g. online, disabled
     'do_sweep': False,
 
     'checkpoint_name': None,
@@ -850,6 +851,19 @@ def train_DL(run_name, config, training_dataset):
 
         (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
+
+        if config.override_embedding_weights:
+            fixed_weightdata = torch.load(config.fixed_weight_file)
+            fixed_weights = fixed_weightdata['data_parameters']
+            fixed_d_ids = fixed_weightdata['d_ids']
+
+            corresp_dataset_idxs = [training_dataset.get_2d_ids().index(_id) for _id in fixed_d_ids]
+            embedding_weight_tensor = torch.zeros_like(embedding.weight)
+            embedding_weight_tensor[corresp_dataset_idxs] = fixed_weights.view(-1,1).cuda()
+            embedding = nn.Embedding(len(training_dataset), 1, sparse=True, _weight=embedding_weight_tensor)
+
+
+
         dp_scaler = amp.GradScaler()
 
         if config.use_2d_normal_to is not None:
@@ -1024,11 +1038,13 @@ def train_DL(run_name, config, training_dataset):
 
                     if config.use_parallel_dp_loss:
                         # LRASPP already stepped.
-                        dp_scaler.step(optimizer_dp)
-                        dp_scaler.update()
+                        if not config.override_embedding_weights:
+                            dp_scaler.step(optimizer_dp)
+                            dp_scaler.update()
                     else:
                         dp_scaler.step(optimizer)
-                        dp_scaler.step(optimizer_dp)
+                        if not config.override_embedding_weights:
+                            dp_scaler.step(optimizer_dp)
                         dp_scaler.update()
 
                 logits_for_score = logits.argmax(1)
