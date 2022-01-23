@@ -175,16 +175,16 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
-    'use_risk_regularization': True,
+    'use_risk_regularization': False,
 
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/skilled-haze-1227_fold0_epx39/train_label_snapshot.pth",
-    'fixed_weight_min_quantile': .9,
+    'fixed_weight_file': None,#"/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/skilled-haze-1227_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_min_quantile': None,#.9,
     'fixed_weight_min_value': None,
     # ),
 
@@ -196,7 +196,7 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
-    'do_sweep': True,
+    'do_sweep': False,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 2.,
@@ -979,7 +979,7 @@ def train_DL(run_name, config, training_dataset):
                         weight = weight/weight.mean()
 
                         # This improves scores significantly: Reweight with log(gt_numel)
-                        weight = weight/t_metric[b_idxs_dataset]
+                        # weight = weight/t_metric[b_idxs_dataset]
 
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
