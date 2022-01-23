@@ -192,12 +192,13 @@ config_dict = DotDict({
     'save_every': 200,
     'mdl_save_prefix': 'data/models',
 
+    'debug': False,
+    'wandb_mode': 'disabled', # e.g. online, disabled
+    'do_sweep': False,
+
+    'checkpoint_name': None,
     'do_plot': False,
     'save_dp_figures': True,
-    'debug': False,
-    'wandb_mode': 'online', # e.g. online, disabled
-    'checkpoint_name': None,
-    'do_sweep': True,
 
     'disturbance_mode': None,
     'disturbance_strength': 0.,
@@ -279,10 +280,8 @@ def prepare_data(config):
             for fixed_id, moving_dict in bare_data.items():
                 sorted_moving_dict = OrderedDict(moving_dict)
                 for idx_mov, (moving_id, moving_sample) in enumerate(sorted_moving_dict.items()):
-                    # Only use every third warped sample
-                    if idx_mov % 3 == 0:
-                        label_data.append(moving_sample['warped_label'].cpu())
-                        loaded_identifier.append(f"{fixed_id}:m{moving_id}")
+                    label_data.append(moving_sample['warped_label'].cpu())
+                    loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
         else:
             raise ValueError()
@@ -1005,11 +1004,11 @@ def train_DL(run_name, config, training_dataset):
                         weight = weight/t_metric[b_idxs_dataset]
 
                         if config.use_risk_regularization:
-                            p_pred_num = (logits_for_score > 0).sum(dim=n_dims).detach()
+                            p_pred_num = (dp_logits.argmax(1) > 0).sum(dim=n_dims).detach()
                             if config.use_2d_normal_to is not None:
-                                risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-2]*logits_for_score.shape[-1])
+                                risk_regularization = -weight*p_pred_num/(dp_logits.shape[-2]*dp_logits.shape[-1])
                             else:
-                                risk_regularization = -weight*p_pred_num/(logits_for_score.shape[-3]*logits_for_score.shape[-2]*logits_for_score.shape[-1])
+                                risk_regularization = -weight*p_pred_num/(dp_logits.shape[-3]*dp_logits.shape[-2]*dp_logits.shape[-1])
 
                             dp_loss = (dp_loss*weight).sum() + risk_regularization.sum()
                         else:
