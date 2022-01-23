@@ -175,7 +175,7 @@ config_dict = DotDict({
     'use_cosine_annealing': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
@@ -184,7 +184,7 @@ config_dict = DotDict({
     'grid_size_x': 64,
 
     'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/skilled-haze-1227_fold0_epx39/train_label_snapshot.pth",
-    'fixed_weight_min_quantile': .9,
+    'fixed_weight_min_quantile': None,
     'fixed_weight_min_value': None,
     # ),
 
@@ -196,7 +196,7 @@ config_dict = DotDict({
     'debug': False,
     'wandb_mode': 'online', # e.g. online, disabled
     'checkpoint_name': None,
-    'do_sweep': True,
+    'do_sweep': False,
 
     'disturbance_mode': LabelDisturbanceMode.AFFINE,
     'disturbance_strength': 2.,
@@ -791,7 +791,9 @@ def train_DL(run_name, config, training_dataset):
 
         ### Disturb dataset (only non-emtpy idxs)###
         proposed_disturbed_idxs = np.random.choice(non_empty_train_idxs, size=int(len(non_empty_train_idxs)*config.disturbed_percentage), replace=False)
+        proposed_disturbed_idxs = [1785, 1811, 1812, 1813, 1816, 1817, 1821, 1822, 1824, 1825, 1826, 1834, 1837, 1838, 1841, 1844, 1852, 1860, 1861, 1865, 1866, 1867, 1868, 1870, 1871, 1874, 1877, 1879, 1883, 1889, 1890, 1893, 1895, 1898, 1916, 1919, 1976, 1982, 2017, 2018, 2022, 2024, 2033, 2035, 2060, 2063, 2064, 2067, 2105, 2109, 2112, 2114, 2115, 2124, 2128, 2130, 2135, 2140, 2143, 2144, 2147, 2174, 2176, 2178, 2180, 2188, 2189, 2191, 2193, 2194, 2208, 2212, 2214, 2218, 2225, 2230, 2234, 2236, 2237, 2238, 2239, 2244, 2245, 2247, 2249, 2262, 2263, 2266, 2271, 2273, 2274, 2284, 2289, 2293, 2294, 2295, 2297, 2298, 2324, 2325, 2328, 2331, 2332, 2334, 2336, 2369, 2376, 2378, 2385, 2417, 2421, 2423, 2429, 2467, 2468, 2516, 2519, 2524, 2525, 2526, 2530, 2531, 2533, 2539, 2542, 2545, 2568, 2572, 2585, 2587, 2617, 2619, 2621, 2623, 2626, 2629, 2635, 2636, 2671, 2672, 2673, 2675, 2679, 2688, 2689, 2718, 2719, 2721, 2725, 2726, 2727, 2729, 2769, 2779, 2781, 2783, 2784, 2821, 2822, 2826, 2827, 2828, 2829, 2860, 2861, 2865, 2868, 2869, 2871, 2875, 2877, 2882, 2885, 2910, 2914, 2915, 2920, 2921, 2922, 2925, 2926, 2929, 2932, 2935, 2936, 2939, 2940, 2944, 2961, 2962, 2967, 2974, 2975, 2980, 2981, 2984, 2986, 2994, 2998, 2999, 3013, 3016, 3021, 3023, 3026, 3029, 3033, 3036, 3069, 3070, 3075, 3077, 3079, 3087, 3114, 3115, 3116, 3119, 3130, 3131, 3135, 3138, 3139, 3140, 3167, 3168, 3171, 3172, 3173, 3174, 3177, 3179, 3184, 3219, 3222, 3223, 3237, 3238, 3239, 3274, 3276, 3278, 3279, 3281, 3284, 3290, 3302, 3303, 3305, 3306, 3309, 3310, 3312, 3315, 3317, 3320, 3321, 3323, 3331, 3332, 3334, 3354, 3355, 3370, 3372, 3375, 3384, 3385, 3389, 3392, 3398, 3417, 3422, 3426, 3429, 3431, 3432, 3438, 3452, 3454, 3455, 3457, 3461, 3463, 3465, 3467, 3472, 3476, 3480, 3481, 3484, 3485, 3490, 3498, 3513, 3514, 3516, 3519, 3521, 3523, 3524, 3528, 3532, 3534, 3535, 3542, 3547, 3568, 3571, 3573, 3576, 3581, 3582, 3608, 3612, 3615, 3617, 3619, 3620, 3621, 3625, 3628, 3633, 3640, 3644, 3658, 3660, 3663, 3665, 3676, 3683, 3685, 3687, 3690, 3692, 3697, 3698, 3714, 3715, 3718, 3719, 3721, 3724, 3728, 3729, 3732, 3739, 3742, 3743, 3767, 3777, 3778, 3779, 3793, 3796, 3797, 3819, 3821, 3822, 3823, 3831, 3833, 3868, 3870, 3875, 3878, 3882, 3883, 3907, 3908, 3909, 3912, 3913, 3921, 3924, 3940, 3942, 3944, 3945, 3968, 3970, 3973, 3975, 3978, 3980, 3982, 3986, 3987, 3988, 4012, 4014, 4015, 4016, 4018, 4023, 4026, 4031, 4065, 4070, 4076, 4077, 4078, 4080, 4081, 4082, 4087, 4090, 4117, 4118, 4121, 4128, 4131, 4163, 4165, 4170, 4185, 4187, 4190, 4193, 4220, 4222, 4225, 4227, 4229, 4231, 4232, 4261, 4267, 4269, 4281, 4285, 4287, 4289, 4292, 4293, 4294, 4295, 4311, 4313, 4320, 4327, 4328, 4331, 4334, 4337, 4340, 4342, 4358, 4360, 4363, 4364, 4365, 4367, 4368, 4369, 4370, 4373, 4377, 4380, 4386, 4389, 4392, 4395, 4399, 4415, 4419, 4421, 4422, 4424, 4426, 4427, 4431, 4472, 4473, 4475, 4476, 4510, 4511, 4512, 4514, 4520, 4521, 4522, 4524, 4526, 4529, 4537, 4556, 4561, 4566, 4570, 4581, 4582, 4585, 4590, 4594, 4609, 4610, 4611, 4613, 4614, 4619, 4622, 4624, 4626, 4629, 4632, 4634, 4642, 4646, 4648, 4672, 4673, 4674, 4717, 4724, 4733, 4736, 4739, 4746, 4747, 4755, 4757, 4758, 4761, 4762, 4763, 4774, 4775, 4776, 4778, 4781, 4783, 4790, 4793, 4799, 4809, 4811, 4813, 4816, 4822, 4824, 4827, 4830, 4835, 4844, 4847, 4870, 4873, 4874, 4881, 4916, 4919, 4922, 4924, 4925, 4928, 4932, 4969, 4970, 4971, 4975, 4976, 4981, 4983, 5021, 5022, 5023, 5066, 5067, 5069, 5073, 5075, 5077, 5080, 5083, 5086, 5088, 5093, 5094, 5095, 5119, 5121, 5122, 5126, 5127, 5141, 5146, 5148, 5157, 5160, 5164, 5167, 5176, 5181, 5182, 5184, 5186, 5187, 5189, 5192, 5196, 5212, 5214, 5217, 5218, 5227, 5228, 5229, 5230, 5236, 5237, 5238, 5239, 5261, 5267, 5268, 5274, 5277, 5284, 5285, 5286, 5289, 5293, 5296, 5297, 5317, 5319, 5322, 5326, 5327, 5333, 5334]
         proposed_disturbed_idxs = torch.tensor(proposed_disturbed_idxs)
+        # Override idxs
         training_dataset.disturb_idxs(proposed_disturbed_idxs,
             disturbance_mode=config.disturbance_mode,
             disturbance_strength=config.disturbance_strength
@@ -842,7 +844,7 @@ def train_DL(run_name, config, training_dataset):
 
         (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags), THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
         fixed_weightdata = torch.load(config.fixed_weight_file)
-        fixed_weights = fixed_weightdata['reweighted_weigths']
+        fixed_weights = fixed_weightdata['data_parameters']
         fixed_d_ids = fixed_weightdata['d_ids']
 
         corresp_dataset_idxs = [training_dataset.get_2d_ids().index(_id) for _id in fixed_d_ids]
@@ -960,13 +962,13 @@ def train_DL(run_name, config, training_dataset):
                     assert b_seg_modified.dim() == len(n_dims)+1, \
                         f"Target shape for loss must be BxSPATIAL but is {b_seg_modified.shape}"
 
-                    ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
-                    # Prepare logits for scoring
-                    logits_for_score = logits.argmax(1)
+                    # ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
+                    # # Prepare logits for scoring
+                    # logits_for_score = logits.argmax(1)
 
-                    scaler.scale(ce_loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
+                    # scaler.scale(ce_loss).backward() #TODO automate parallel loss
+                    # scaler.step(optimizer)
+                    # scaler.update()
 
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
                         # batch_bins = torch.zeros([len(b_idxs_dataset), len(training_dataset.label_tags)]).to(logits.device)
@@ -974,9 +976,9 @@ def train_DL(run_name, config, training_dataset):
                         # for b_idx, _bins in enumerate(bin_list):
                         #     batch_bins[b_idx][:len(_bins)] = _bins
                         # loss = CELoss(logits, b_seg_modified, bin_weight=batch_bins)
-                        for param in lraspp.parameters():
-                            param.requires_grad = False
-                        lraspp.use_checkpointing = False
+                        # for param in lraspp.parameters():
+                        #     param.requires_grad = False
+                        # lraspp.use_checkpointing = False
                         logits = lraspp(b_img)['out']
 
                         loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
@@ -1025,11 +1027,14 @@ def train_DL(run_name, config, training_dataset):
                         logits_for_score = logits.argmax(1)
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
-                    dp_scaler.scale(dp_loss).backward()
-                    dp_scaler.step(optimizer_dp)
-                    dp_scaler.update()
+                    scaler.scale(dp_loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                    # dp_scaler.scale(dp_loss).backward()
+                    # dp_scaler.step(optimizer_dp)
+                    # dp_scaler.update()
 
-                epx_losses.append(ce_loss.item())
+                epx_losses.append(dp_loss.item())
 
                 # Calculate dice score
                 b_dice = dice_func(

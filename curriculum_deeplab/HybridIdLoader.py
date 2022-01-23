@@ -93,7 +93,7 @@ class HybridIdLoader(Dataset):
             elif fixed_weight_min_value is not None:
                 pass
             else:
-                raise ValueError()
+                pass
 
             # for key, weight in zip(fixed_d_ids, fixed_weights): TODO use separated fixed weights for 2D and 3D
             #     if weight < fixed_weight_min_value:
@@ -165,13 +165,13 @@ class HybridIdLoader(Dataset):
                 elif fixed_weight_min_value is not None:
                     pass
                 else:
-                    raise ValueError()
+                    pass
 
-                for key, weight in zip(fixed_d_ids, fixed_weights):
-                    if weight < fixed_weight_min_value:
-                        del self.img_data_2d[key]
-                        del self.label_data_2d[key]
-                        del self.modified_label_data_2d[key]
+                # for key, weight in zip(fixed_d_ids, fixed_weights):
+                #     if weight < fixed_weight_min_value:
+                #         del self.img_data_2d[key]
+                #         del self.label_data_2d[key]
+                #         del self.modified_label_data_2d[key]
 
 
             postprocessed_2d_num = len(self.label_data_2d.keys())
