@@ -193,7 +193,7 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'disabled', # e.g. online, disabled
+    'wandb_mode': 'online', # e.g. online, disabled
     'do_sweep': False,
 
     'checkpoint_name': None,
@@ -208,6 +208,8 @@ config_dict = DotDict({
     'start_dilate_kernel_sz': 1
 })
 
+if config_dict.train_patchwise:
+    raise NotImplementedError()
 
 # %%
 def prepare_data(config):
@@ -741,68 +743,61 @@ def train_DL(run_name, config, training_dataset):
         #                 for smp in training_dataset]
         # wandb.log({'datasets/training_dataset':wandb.Table(columns=['dataset_idx', 'id', 'image', 'label'], data=dataset_info)}, step=0)
 
+    if config.use_2d_normal_to is not None:
+        n_dims = (-2,-1)
+    else:
+        n_dims = (-3,-2,-1)
+
     fold_means_no_bg = []
 
     for fold_idx, (train_idxs, val_idxs) in fold_iter:
         train_idxs = torch.tensor(train_idxs)
         val_idxs = torch.tensor(val_idxs)
-        # Training happens in 2D, validation happens in 3D:
-        # Read 2D dataset idxs which are used for training,
-        # get their 3D super-ids and substract these from all 3D ids to get val_3d_idxs
+        all_3d_ids = training_dataset.get_3d_ids()
+
+        # Override fold idxs #TODO automate
+        if config.debug:
+            NUM_VAL_IMAGES = 2
+            NUM_REGISTRATIONS_PER_IMG = 1
+        else:
+            NUM_VAL_IMAGES = 20
+            NUM_REGISTRATIONS_PER_IMG = 30 #TODO automate
 
         if config.use_2d_normal_to is not None:
-            n_dims = (-2,-1)
             # Override idxs
             all_3d_ids = training_dataset.get_3d_ids()
 
-            if config.debug:
-                NUM_VAL_IMAGES = 2
-                NUM_REGISTRATIONS_PER_IMG = 1
-            else:
-                NUM_VAL_IMAGES = 20
-                NUM_REGISTRATIONS_PER_IMG = 10
-
             val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
             train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
-            train_idxs = torch.tensor(train_3d_idxs)
-            # train_2d_ids = []
-            # dcts = training_dataset.get_id_dicts()
-            # for id_dict in dcts:
-            #     _2d_id = id_dict['2d_id']
-            #     _3d_idx = id_dict['3d_dataset_idx']
-            #     if _2d_id in training_dataset.label_data_2d.keys() and _3d_idx in train_3d_idxs:
-            #         train_2d_ids.append(_2d_id)
 
-            # train_2d_idxs = training_dataset.switch_2d_identifiers(train_2d_ids)
-            # train_idxs = torch.tensor(train_2d_idxs)
+            # Get corresponding 2D idxs
+            train_2d_ids = []
+            dcts = training_dataset.get_id_dicts()
+            for id_dict in dcts:
+                _2d_id = id_dict['2d_id']
+                _3d_idx = id_dict['3d_dataset_idx']
+                if _2d_id in training_dataset.label_data_2d.keys() and _3d_idx in train_3d_idxs:
+                    train_2d_ids.append(_2d_id)
+
+            train_2d_idxs = training_dataset.switch_2d_identifiers(train_2d_ids)
+            train_idxs = torch.tensor(train_2d_idxs)
 
         else:
-            n_dims = (-3,-2,-1)
-                        # Override idxs
-            all_3d_ids = training_dataset.get_3d_ids()
-
-            if config.debug:
-                NUM_VAL_IMAGES = 2
-                NUM_REGISTRATIONS_PER_IMG = 1
-            else:
-                NUM_VAL_IMAGES = 20
-                NUM_REGISTRATIONS_PER_IMG = 10 #TODO automate
-
             val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
             train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
             train_idxs = torch.tensor(train_3d_idxs)
-            # val_3d_idxs = val_idxs
+
         print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
 
         _, _, all_modified_segs = training_dataset.get_data()
 
         if config.disturbed_percentage > 0.:
             with torch.no_grad():
-                non_empty_train_idxs = train_idxs#[(all_modified_segs[train_idxs].sum(dim=n_dims) > 0)]
+                non_empty_train_idxs = [(all_modified_segs[train_idxs].sum(dim=n_dims) > 0)]
 
             ### Disturb dataset (only non-emtpy idxs)###
             proposed_disturbed_idxs = np.random.choice(non_empty_train_idxs, size=int(len(non_empty_train_idxs)*config.disturbed_percentage), replace=False)
@@ -844,9 +839,6 @@ def train_DL(run_name, config, training_dataset):
 
         # training_dataset.set_augment_at_collate(True)
 
-#         val_dataloader = DataLoader(training_dataset, batch_size=config.val_batch_size,
-#                                     sampler=val_subsampler, pin_memory=True, drop_last=False)
-
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
         epx_start = config.get('checkpoint_epx', 0)
 
@@ -859,17 +851,13 @@ def train_DL(run_name, config, training_dataset):
         (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
         dp_scaler = amp.GradScaler()
-        # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        #     optimizer, T_0=10, T_mult=2)
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.99)
 
-        if optimizer_dp:
-            # scheduler_dp = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            #     optimizer_dp, T_0=10, T_mult=2)
-            # scheduler_dp = torch.optim.lr_scheduler.ExponentialLR(optimizer_dp, gamma=.999)
-            scheduler_dp = None
+        if config.use_2d_normal_to is not None:
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=10, T_mult=2)
         else:
-            scheduler_dp = None
+            # Use ExponentialLR in 3D
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.99)
 
         t0 = time.time()
 
@@ -883,7 +871,7 @@ def train_DL(run_name, config, training_dataset):
             print("Fetching training metrics for samples.")
             # _, wise_lbls, mod_lbls = training_dataset.get_data()
             training_dataset.eval(use_modified=True)
-            for sample in tqdm((training_dataset[idx] for idx in train_idxs), desc="training sample: ", total=len(train_idxs)):
+            for sample in tqdm((training_dataset[idx] for idx in train_idxs), desc="metric:", total=len(train_idxs)):
                 d_idxs = sample['dataset_idx']
                 wise_label, mod_label = sample['label'], sample['modified_label']
                 mod_label = mod_label.cuda()
@@ -926,7 +914,7 @@ def train_DL(run_name, config, training_dataset):
             class_dices = []
 
             # Load data
-            for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch #", total=len(train_dataloader)):
+            for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="batch:", total=len(train_dataloader)):
 
                 optimizer.zero_grad()
                 if optimizer_dp:
