@@ -979,7 +979,7 @@ def train_DL(run_name, config, training_dataset):
                         weight = weight/weight.mean()
 
                         # This improves scores significantly: Reweight with log(gt_numel)
-                        # weight = weight/t_metric[b_idxs_dataset]
+                        weight = weight/t_metric[b_idxs_dataset]
 
                         # Prepare logits for scoring
                         logits_for_score = logits.argmax(1)
