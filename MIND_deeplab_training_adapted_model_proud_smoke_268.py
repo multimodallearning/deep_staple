@@ -178,7 +178,7 @@ config_dict = DotDict({
     'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
-    'use_risk_regularization': True,
+    'use_risk_regularization': False,
 
     'grid_size_y': 64,
     'grid_size_x': 64,
