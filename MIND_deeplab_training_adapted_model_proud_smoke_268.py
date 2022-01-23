@@ -856,8 +856,10 @@ def train_DL(run_name, config, training_dataset):
             fixed_weightdata = torch.load(config.fixed_weight_file)
             fixed_weights = fixed_weightdata['data_parameters']
             fixed_d_ids = fixed_weightdata['d_ids']
-
-            corresp_dataset_idxs = [training_dataset.get_2d_ids().index(_id) for _id in fixed_d_ids]
+            if config.use_2d_normal_to is not None:
+                corresp_dataset_idxs = [training_dataset.get_2d_ids().index(_id) for _id in fixed_d_ids]
+            else:
+                corresp_dataset_idxs = [training_dataset.get_3d_ids().index(_id) for _id in fixed_d_ids]
             embedding_weight_tensor = torch.zeros_like(embedding.weight)
             embedding_weight_tensor[corresp_dataset_idxs] = fixed_weights.view(-1,1).cuda()
             embedding = nn.Embedding(len(training_dataset), 1, sparse=True, _weight=embedding_weight_tensor)

@@ -140,7 +140,7 @@ class HybridIdLoader(Dataset):
             postprocessed_2d_num = len(self.label_data_2d.keys())
             print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
 
-        if fixed_weight_file is not None and any(fixed_weight_min_quantile, fixed_weight_min_value):
+        if fixed_weight_file is not None and any([fixed_weight_min_quantile, fixed_weight_min_value]):
             fixed_weightdata = torch.load(fixed_weight_file)
             fixed_weights = fixed_weightdata['data_parameters'].detach().cpu()
             fixed_d_ids = fixed_weightdata['d_ids']
