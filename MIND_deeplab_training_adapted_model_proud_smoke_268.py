@@ -1020,22 +1020,22 @@ def train_DL(run_name, config, training_dataset):
                         else:
                             dp_loss = (dp_loss*weight).sum()
 
-                    elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-                        dp_loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
-                        m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
-                        weight = embedding(m_dp_idxs)
-                        weight = weight.reshape(-1, config.grid_size_y, config.grid_size_x)
-                        weight = weight.unsqueeze(1)
-                        weight = torch.nn.functional.interpolate(
-                            weight,
-                            size=(b_seg_modified.shape[-2:]),
-                            mode='bilinear',
-                            align_corners=True
-                        )
-                        weight = weight/weight.mean()
-                        weight = F.grid_sample(weight, b_spat_aug_grid,
-                            padding_mode='border', align_corners=False)
-                        dp_loss = (dp_loss.unsqueeze(1)*weight).sum()
+                    # elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
+                    #     dp_loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
+                    #     m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
+                    #     weight = embedding(m_dp_idxs)
+                    #     weight = weight.reshape(-1, config.grid_size_y, config.grid_size_x)
+                    #     weight = weight.unsqueeze(1)
+                    #     weight = torch.nn.functional.interpolate(
+                    #         weight,
+                    #         size=(b_seg_modified.shape[-2:]),
+                    #         mode='bilinear',
+                    #         align_corners=True
+                    #     )
+                    #     weight = weight/weight.mean()
+                    #     weight = F.grid_sample(weight, b_spat_aug_grid,
+                    #         padding_mode='border', align_corners=False)
+                    #     dp_loss = (dp_loss.unsqueeze(1)*weight).sum()
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     dp_scaler.scale(dp_loss).backward()
