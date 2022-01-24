@@ -979,7 +979,7 @@ def train_DL(run_name, config, training_dataset):
 
                     ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
 
-                    if config.use_parallel_dp_loss:
+                    if config.data_param_mode == str(DataParamMode.DISABLED) or config.use_parallel_dp_loss:
                         scaler.scale(ce_loss).backward()
                         scaler.step(optimizer)
                         scaler.update()
