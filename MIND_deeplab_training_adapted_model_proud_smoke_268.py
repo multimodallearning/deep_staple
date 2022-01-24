@@ -179,15 +179,15 @@ config_dict = DotDict({
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
-    'use_parallel_dp_loss': False,
+    'use_parallel_dp_loss': True,
 
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/classic-sunset-1245_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_file': None,#"/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/classic-sunset-1245_fold0_epx39/train_label_snapshot.pth",
     'fixed_weight_min_quantile': None,#.9,
     'fixed_weight_min_value': None,
-    'override_embedding_weights': True,
+    'override_embedding_weights': False,
     # ),
 
     'save_every': 200,
@@ -283,8 +283,10 @@ def prepare_data(config):
             for fixed_id, moving_dict in bare_data.items():
                 sorted_moving_dict = OrderedDict(moving_dict)
                 for idx_mov, (moving_id, moving_sample) in enumerate(sorted_moving_dict.items()):
-                    label_data.append(moving_sample['warped_label'].cpu())
-                    loaded_identifier.append(f"{fixed_id}:m{moving_id}")
+                    # Only use every third warped sample
+                    if idx_mov % 3 == 0:
+                        label_data.append(moving_sample['warped_label'].cpu())
+                        loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
         else:
             raise ValueError()
@@ -762,7 +764,7 @@ def train_DL(run_name, config, training_dataset):
             NUM_REGISTRATIONS_PER_IMG = 1
         else:
             NUM_VAL_IMAGES = 20
-            NUM_REGISTRATIONS_PER_IMG = 30 #TODO automate
+            NUM_REGISTRATIONS_PER_IMG = 10 #TODO automate
 
         if config.use_2d_normal_to is not None:
             # Override idxs
