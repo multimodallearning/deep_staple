@@ -179,15 +179,15 @@ config_dict = DotDict({
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
-    'use_parallel_dp_loss': True,
+    'use_parallel_dp_loss': False,
 
     'grid_size_y': 64,
     'grid_size_x': 64,
 
-    'fixed_weight_file': None,#"/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/classic-sunset-1245_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/swept-wind-1249_fold0_epx39/train_label_snapshot.pth",
     'fixed_weight_min_quantile': None,#.9,
     'fixed_weight_min_value': None,
-    'override_embedding_weights': False,
+    'override_embedding_weights': True,
     # ),
 
     'save_every': 200,
