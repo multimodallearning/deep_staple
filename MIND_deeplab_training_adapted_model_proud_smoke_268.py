@@ -172,7 +172,7 @@ config_dict = DotDict({
     'crop_2d_slices_gt_num_threshold': 0,
 
     'lr': 0.01,
-    'use_cosine_annealing': True,
+    'use_scheduling': True,
 
     # Data parameter config
     'data_param_mode': DataParamMode.INSTANCE_PARAMS,
@@ -1067,7 +1067,7 @@ def train_DL(run_name, config, training_dataset):
                     b_dice, training_dataset.label_tags, exclude_bg=True))
 
                 ###  Scheduler management ###
-                if config.use_cosine_annealing:
+                if config.use_scheduling and epx % NUM_REGISTRATIONS_PER_IMG == 0:
                     scheduler.step()
                     # scheduler_dp.step()
 
