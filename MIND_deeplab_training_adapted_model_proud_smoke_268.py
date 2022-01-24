@@ -1051,8 +1051,11 @@ def train_DL(run_name, config, training_dataset):
                             dp_scaler.step(optimizer_dp)
                         dp_scaler.update()
 
+                    epx_losses.append(dp_loss.item())
+                else:
+                    epx_losses.append(ce_loss.item())
+
                 logits_for_score = logits.argmax(1)
-                epx_losses.append(ce_loss.item())
 
                 # Calculate dice score
                 b_dice = dice_func(
