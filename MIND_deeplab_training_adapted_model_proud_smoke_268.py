@@ -998,7 +998,7 @@ def train_DL(run_name, config, training_dataset):
                             lraspp.use_checkpointing = True
                             dp_logits = logits
 
-                        dp_loss = nn.CrossEntropyLoss(reduction='none')(dp_logits, b_seg_modified)
+                        dp_loss = nn.CrossEntropyLoss(weight=class_weights, reduction='none')(dp_logits, b_seg_modified)
                         dp_loss = dp_loss.mean(n_dims)
 
                         bare_weight = embedding(b_idxs_dataset).squeeze()
