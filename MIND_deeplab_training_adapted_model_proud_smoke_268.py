@@ -158,7 +158,7 @@ config_dict = DotDict({
     # 'checkpoint_epx': 0,
 
     'use_mind': False,
-    'epochs': 40,
+    'epochs': 30,
 
     'batch_size': 8,
     'val_batch_size': 1,
@@ -166,7 +166,7 @@ config_dict = DotDict({
     'train_patchwise': False,
 
     'dataset': 'crossmoda',
-    'reg_state': "acummulate_deeds_FT2_MT1",
+    'reg_state': "acummulate_every_deeds_FT2_MT1",
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -175,11 +175,11 @@ config_dict = DotDict({
     'use_scheduling': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.DISABLED,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
-    'use_parallel_dp_loss': False,
+    'use_parallel_dp_loss': True,
 
     'grid_size_y': 64,
     'grid_size_x': 64,
@@ -199,7 +199,7 @@ config_dict = DotDict({
 
     'checkpoint_name': None,
     'do_plot': False,
-    'save_dp_figures': True,
+    'save_dp_figures': False,
 
     'disturbance_mode': None,
     'disturbance_strength': 0.,
@@ -275,7 +275,7 @@ def prepare_data(config):
                     label_data.append(moving_sample['warped_label'])
                     loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
-        elif config.reg_state == "acummulate_deeds_FT2_MT1":
+        elif config.reg_state == "acummulate_every_third_deeds_FT2_MT1":
             domain = 'target'
             bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth")
             label_data = []
@@ -287,6 +287,18 @@ def prepare_data(config):
                     if idx_mov % 3 == 0:
                         label_data.append(moving_sample['warped_label'].cpu())
                         loaded_identifier.append(f"{fixed_id}:m{moving_id}")
+
+        elif config.reg_state == "acummulate_every_deeds_FT2_MT1":
+            domain = 'target'
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth")
+            label_data = []
+            loaded_identifier = []
+            for fixed_id, moving_dict in bare_data.items():
+                sorted_moving_dict = OrderedDict(moving_dict)
+                for idx_mov, (moving_id, moving_sample) in enumerate(sorted_moving_dict.items()):
+                    label_data.append(moving_sample['warped_label'].cpu())
+                    loaded_identifier.append(f"{fixed_id}:m{moving_id}")
+
 
         else:
             raise ValueError()
@@ -764,7 +776,7 @@ def train_DL(run_name, config, training_dataset):
             NUM_REGISTRATIONS_PER_IMG = 1
         else:
             NUM_VAL_IMAGES = 20
-            NUM_REGISTRATIONS_PER_IMG = 10 #TODO automate
+            NUM_REGISTRATIONS_PER_IMG = 30 #TODO automate
 
         if config.use_2d_normal_to is not None:
             # Override idxs
@@ -1072,9 +1084,8 @@ def train_DL(run_name, config, training_dataset):
                 ###  Scheduler management ###
                 if config.use_scheduling and epx % NUM_REGISTRATIONS_PER_IMG == 0:
                     scheduler.step()
-                    # scheduler_dp.step()
 
-                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and batch_idx % 10 == 0:
+                if str(config.data_param_mode) != str(DataParamMode.DISABLED) and batch_idx % 10 == 0 and config.save_dp_figures:
                     # Output data parameter figure
                     train_params = embedding.weight[train_idxs].squeeze()
                     # order = np.argsort(train_params.cpu().detach()) # Order by DP value
@@ -1478,9 +1489,9 @@ sweep_config_dict = dict(
         # use_risk_regularization=dict(
         #     values=[False, True]
         # ),
-        fixed_weight_min_quantile=dict(
-            values=[0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
-        ),
+        # fixed_weight_min_quantile=dict(
+        #     values=[0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
+        # ),
     )
 )
 
@@ -1492,6 +1503,7 @@ def normal_run():
         ) as run:
 
         run_name = run.name
+        print("Running", run_name)
         config = wandb.config
         training_dataset = prepare_data(config)
         train_DL(run_name, config, training_dataset)
@@ -1504,6 +1516,7 @@ def sweep_run():
         )
 
         run_name = run.name
+        print("Running", run_name)
         config = wandb.config
         training_dataset = prepare_data(config)
         train_DL(run_name, config, training_dataset)
