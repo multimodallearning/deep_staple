@@ -775,7 +775,7 @@ def train_DL(run_name, config, training_dataset):
             NUM_VAL_IMAGES = 2
             NUM_REGISTRATIONS_PER_IMG = 1
         else:
-            NUM_VAL_IMAGES = 20
+            NUM_VAL_IMAGES = 0
             NUM_REGISTRATIONS_PER_IMG = 30 #TODO automate
 
         if config.use_2d_normal_to is not None:
@@ -1010,7 +1010,7 @@ def train_DL(run_name, config, training_dataset):
                             lraspp.use_checkpointing = True
                             dp_logits = logits
 
-                        dp_loss = nn.CrossEntropyLoss(weight=class_weights, reduction='none')(dp_logits, b_seg_modified)
+                        dp_loss = nn.CrossEntropyLoss(reduction='none')(dp_logits, b_seg_modified)
                         dp_loss = dp_loss.mean(n_dims)
 
                         bare_weight = embedding(b_idxs_dataset).squeeze()
