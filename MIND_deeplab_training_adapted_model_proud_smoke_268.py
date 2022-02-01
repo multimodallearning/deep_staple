@@ -1547,3 +1547,69 @@ if config_dict['do_sweep']:
 
 else:
     normal_run()
+
+# %%
+if not in_notebook():
+    sys.exit(0)
+
+d_set = prepare_data(config_dict)
+
+# %%
+config = config_dict
+training_dataset = d_set
+all_3d_ids = training_dataset.get_3d_ids()
+if config.debug:
+    NUM_VAL_IMAGES = 2
+    NUM_REGISTRATIONS_PER_IMG = 1
+else:
+    NUM_VAL_IMAGES = 00
+    NUM_REGISTRATIONS_PER_IMG = 30 #TODO automate
+
+if config.use_2d_normal_to is not None:
+    # Override idxs
+    all_3d_ids = training_dataset.get_3d_ids()
+
+    val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
+    val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
+
+    train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
+
+    # Get corresponding 2D idxs
+    train_2d_ids = []
+    dcts = training_dataset.get_id_dicts()
+    for id_dict in dcts:
+        _2d_id = id_dict['2d_id']
+        _3d_idx = id_dict['3d_dataset_idx']
+        if _2d_id in training_dataset.label_data_2d.keys() and _3d_idx in train_3d_idxs:
+            train_2d_ids.append(_2d_id)
+
+    train_2d_idxs = training_dataset.switch_2d_identifiers(train_2d_ids)
+    train_idxs = torch.tensor(train_2d_idxs)
+
+else:
+    val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
+    val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
+
+    train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
+    train_idxs = torch.tensor(train_3d_idxs)
+
+print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
+
+
+# %%
+train_3d_ids = training_dataset.switch_3d_identifiers(train_3d_idxs)
+val_label_paths = set([training_dataset.img_paths[_id] for _id in val_3d_ids])
+val_image_paths = set([training_dataset.img_paths[_id] for _id in val_3d_ids])
+train_label_paths = set([training_dataset.label_paths[_id] for _id in train_3d_ids])
+train_image_paths = set([training_dataset.img_paths[_id] for _id in train_3d_ids])
+
+
+path_dict = {}
+path_dict['val_label_paths'] = list(val_label_paths)
+path_dict['val_image_paths'] = list(val_image_paths)
+path_dict['train_label_paths'] = list(train_label_paths)
+path_dict['train_image_paths'] = list(train_image_paths)
+print(len(val_label_paths), len(val_image_paths), len(train_label_paths), len(train_image_paths))
+torch.save(path_dict, f'network_dataset_path_dict_train_{len(train_labels)}.pth')
+
+# %%
