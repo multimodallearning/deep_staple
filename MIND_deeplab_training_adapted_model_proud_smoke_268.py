@@ -1598,18 +1598,19 @@ print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted
 
 # %%
 train_3d_ids = training_dataset.switch_3d_identifiers(train_3d_idxs)
-val_label_paths = set([training_dataset.img_paths[_id] for _id in val_3d_ids])
-val_image_paths = set([training_dataset.img_paths[_id] for _id in val_3d_ids])
-train_label_paths = set([training_dataset.label_paths[_id] for _id in train_3d_ids])
-train_image_paths = set([training_dataset.img_paths[_id] for _id in train_3d_ids])
+val_label_paths = {_id: training_dataset.img_paths[_id] for _id in val_3d_ids}
+val_image_paths = {_id: training_dataset.img_paths[_id] for _id in val_3d_ids}
+train_label_paths = {_id: training_dataset.label_paths[_id] for _id in train_3d_ids}
+train_image_paths = {_id: training_dataset.img_paths[_id] for _id in train_3d_ids}
+print(train_3d_ids)
 
 
 path_dict = {}
-path_dict['val_label_paths'] = list(val_label_paths)
-path_dict['val_image_paths'] = list(val_image_paths)
-path_dict['train_label_paths'] = list(train_label_paths)
-path_dict['train_image_paths'] = list(train_image_paths)
+path_dict['val_label_paths'] = val_label_paths
+path_dict['val_image_paths'] = val_image_paths
+path_dict['train_label_paths'] = train_label_paths
+path_dict['train_image_paths'] = train_image_paths
 print(len(val_label_paths), len(val_image_paths), len(train_label_paths), len(train_image_paths))
-torch.save(path_dict, f'network_dataset_path_dict_train_{len(train_labels)}.pth')
+torch.save(path_dict, f'network_dataset_path_dict_train_{len(train_label_paths)}.pth')
 
 # %%
