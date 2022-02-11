@@ -165,7 +165,7 @@ config_dict = DotDict({
     'train_patchwise': False,
 
     'dataset': 'crossmoda',
-    'reg_state': "acummulate_every_deeds_FT2_MT1",
+    'reg_state': "acummulate_every_third_deeds_FT2_MT1",
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -178,7 +178,8 @@ config_dict = DotDict({
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
-    'use_parallel_dp_loss': True,
+    'use_fixed_weighting': True,
+    'use_ool_dp_loss': True,
 
     'fixed_weight_file': None,#"/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/swept-wind-1249_fold0_epx39/train_label_snapshot.pth",
     'fixed_weight_min_quantile': None,#.9,
@@ -191,18 +192,16 @@ config_dict = DotDict({
 
     'debug': False,
     'wandb_mode': 'online', # e.g. online, disabled
-    'do_sweep': False,
+    'do_sweep': True,
 
     'checkpoint_name': None,
     'do_plot': False,
     'save_dp_figures': False,
+    'save_labels': False,
 
     'disturbance_mode': None,
     'disturbance_strength': 0.,
     'disturbed_percentage': 0.,
-    'start_disturbing_after_ep': 0,
-
-    'start_dilate_kernel_sz': 1
 })
 
 if config_dict.train_patchwise:
@@ -909,11 +908,10 @@ def train_DL(run_name, config, training_dataset):
             class_weights = 1/(bn_count).float().pow(.35)
             class_weights /= class_weights.mean()
 
-            t_metric = (gt_num+np.exp(1)).log()+np.exp(1)
+            fixed_weighting = (gt_num+np.exp(1)).log()+np.exp(1)
 
         class_weights = class_weights.cuda()
-        gt_num = gt_num.cuda()
-        t_metric = t_metric.cuda()
+        fixed_weighting = fixed_weighting.cuda()
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -921,8 +919,7 @@ def train_DL(run_name, config, training_dataset):
             lraspp.train()
 
             ### Disturb samples ###
-            training_dataset.train(use_modified=(epx >= config.start_disturbing_after_ep))
-            wandb.log({"use_modified": float(training_dataset.use_modified)}, step=global_idx)
+            training_dataset.train(use_modified=True)
 
             epx_losses = []
             dices = []
@@ -976,13 +973,13 @@ def train_DL(run_name, config, training_dataset):
 
                     ce_loss = nn.CrossEntropyLoss(class_weights)(logits, b_seg_modified)
 
-                    if config.data_param_mode == str(DataParamMode.DISABLED) or config.use_parallel_dp_loss:
+                    if config.data_param_mode == str(DataParamMode.DISABLED) or config.use_ool_dp_loss:
                         scaler.scale(ce_loss).backward()
                         scaler.step(optimizer)
                         scaler.update()
 
                     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
-                        if config.use_parallel_dp_loss:
+                        if config.use_ool_dp_loss:
                             # Run second consecutive forward pass
                             for param in lraspp.parameters():
                                 param.requires_grad = False
@@ -1004,7 +1001,8 @@ def train_DL(run_name, config, training_dataset):
                         weight = weight/weight.mean()
 
                         # This improves scores significantly: Reweight with log(gt_numel)
-                        weight = weight/t_metric[b_idxs_dataset]
+                        if config.use_fixed_weighting:
+                            weight = weight/fixed_weighting[b_idxs_dataset]
 
                         if config.use_risk_regularization:
                             p_pred_num = (dp_logits.argmax(1) > 0).sum(dim=n_dims).detach()
@@ -1020,7 +1018,7 @@ def train_DL(run_name, config, training_dataset):
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     dp_scaler.scale(dp_loss).backward()
 
-                    if config.use_parallel_dp_loss:
+                    if config.use_ool_dp_loss:
                         # LRASPP already stepped.
                         if not config.override_embedding_weights:
                             dp_scaler.step(optimizer_dp)
@@ -1058,11 +1056,11 @@ def train_DL(run_name, config, training_dataset):
                     train_params = embedding.weight[train_idxs].squeeze()
                     # order = np.argsort(train_params.cpu().detach()) # Order by DP value
                     order = torch.arange(len(train_params))
-                    wise_corr_coeff = np.corrcoef(train_params.cpu().detach(), wise_dice[train_idxs][:,1].cpu().detach())[0,1]
+                    pearson_corr_coeff = np.corrcoef(train_params.cpu().detach(), wise_dice[train_idxs][:,1].cpu().detach())[0,1]
                     dp_figure_path = Path(f"data/output_figures/{wandb.run.name}_fold{fold_idx}/dp_figure_epx{epx:03d}_batch{batch_idx:03d}.png")
                     dp_figure_path.parent.mkdir(parents=True, exist_ok=True)
-                    save_parameter_figure(dp_figure_path, wandb.run.name, f"corr. coeff. DP vs. dice(expert label, train gt): {wise_corr_coeff:4f}",
-                        train_params[order], train_params[order]/t_metric[train_idxs][order], dices=wise_dice[train_idxs][:,1][order])
+                    save_parameter_figure(dp_figure_path, wandb.run.name, f"corr. coeff. DP vs. dice(expert label, train gt): {pearson_corr_coeff:4f}",
+                        train_params[order], train_params[order]/fixed_weighting[train_idxs][order], dices=wise_dice[train_idxs][:,1][order])
 
                 if config.debug:
                     break
@@ -1089,11 +1087,11 @@ def train_DL(run_name, config, training_dataset):
                 # Calculate dice score corr coeff (unknown to network)
                 train_params = embedding.weight[train_idxs].squeeze()
                 order = np.argsort(train_params.cpu().detach())
-                wise_corr_coeff = np.corrcoef(train_params[order].cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())[0,1]
+                pearson_corr_coeff = np.corrcoef(train_params[order].cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())[0,1]
                 spearman_corr_coeff, spearman_p = scipy.stats.spearmanr(train_params[order].cpu().detach(), wise_dice[train_idxs][:,1][order].cpu().detach())
 
                 wandb.log(
-                    {f'data_parameters/wise_corr_coeff_fold{fold_idx}': wise_corr_coeff},
+                    {f'data_parameters/pearson_corr_coeff_fold{fold_idx}': pearson_corr_coeff},
                     step=global_idx
                 )
                 wandb.log(
@@ -1104,7 +1102,7 @@ def train_DL(run_name, config, training_dataset):
                     {f'data_parameters/spearman_p_fold{fold_idx}': spearman_p},
                     step=global_idx
                 )
-                print(f'data_parameters/wise_corr_coeff_fold{fold_idx}', f"{wise_corr_coeff:.2f}")
+                print(f'data_parameters/pearson_corr_coeff_fold{fold_idx}', f"{pearson_corr_coeff:.2f}")
                 print(f'data_parameters/spearman_corr_coeff_fold{fold_idx}', f"{spearman_corr_coeff:.2f}")
                 print(f'data_parameters/spearman_p_fold{fold_idx}', f"{spearman_p:.5f}")
 
@@ -1217,8 +1215,9 @@ def train_DL(run_name, config, training_dataset):
             if config.debug:
                 break
 
-        if str(config.data_param_mode) != str(DataParamMode.DISABLED):
+        if str(config.data_param_mode) == str(DataParamMode.INSTANCE_PARAMS):
             # Write sample data
+            save_dict = {}
 
             training_dataset.eval(use_modified=True)
             all_idxs = torch.tensor(range(len(training_dataset))).cuda()
@@ -1227,60 +1226,65 @@ def train_DL(run_name, config, training_dataset):
 
             train_label_snapshot_path.parent.mkdir(parents=True, exist_ok=True)
 
-            if str(config.data_param_mode) == str(DataParamMode.INSTANCE_PARAMS):
-                dp_weights = embedding(all_idxs)
-                save_data = []
-                data_generator = zip(
-                    dp_weights[train_idxs], \
-                    disturbed_bool_vect[train_idxs],
-                    torch.utils.data.Subset(training_dataset, train_idxs)
+            dp_weights = embedding(all_idxs)
+            save_data = []
+            data_generator = zip(
+                dp_weights[train_idxs], \
+                disturbed_bool_vect[train_idxs],
+                torch.utils.data.Subset(training_dataset, train_idxs)
+            )
+
+            for dp_weight, disturb_flg, sample in data_generator:
+                data_tuple = ( \
+                    dp_weight,
+                    bool(disturb_flg.item()),
+                    sample['id'],
+                    sample['dataset_idx'],
+                    # sample['image'],
+                    sample['label'].to_sparse(),
+                    sample['modified_label'].to_sparse(),
+                    inference_wrap(lraspp, sample['image'].cuda(), use_2d=training_dataset.use_2d(), use_mind=config.use_mind).to_sparse()
                 )
+                save_data.append(data_tuple)
 
-                for dp_weight, disturb_flg, sample in data_generator:
-                    data_tuple = ( \
-                        dp_weight,
-                        bool(disturb_flg.item()),
-                        sample['id'],
-                        sample['dataset_idx'],
-                        # sample['image'],
-                        sample['label'].to_sparse(),
-                        sample['modified_label'].to_sparse(),
-                        inference_wrap(lraspp, sample['image'].cuda(), use_2d=training_dataset.use_2d(), use_mind=config.use_mind).to_sparse()
-                    )
-                    save_data.append(data_tuple)
+            save_data = sorted(save_data, key=lambda tpl: tpl[0])
+            (dp_weight, disturb_flags,
+                d_ids, dataset_idxs,
+            #  _imgs,
+                _labels, _modified_labels, _predictions) = zip(*save_data)
 
-                save_data = sorted(save_data, key=lambda tpl: tpl[0])
-                (dp_weight, disturb_flags,
-                 d_ids, dataset_idxs,
-                #  _imgs,
-                 _labels, _modified_labels, _predictions) = zip(*save_data)
+            dp_weight = torch.stack(dp_weight)
+            dataset_idxs = torch.stack(dataset_idxs)
 
-                dp_weight = torch.stack(dp_weight)
-                dataset_idxs = torch.stack(dataset_idxs)
-                # _imgs = torch.stack(_imgs)
+            save_dict.update(
+                {
+                    'data_parameters': dp_weight.cpu(),
+                    'disturb_flags': disturb_flags,
+                    'd_ids': d_ids,
+                    'dataset_idxs': dataset_idxs.cpu(),
+                }
+            )
+
+            if config.save_labels:
                 _labels = torch.stack(_labels)
                 _modified_labels = torch.stack(_modified_labels)
                 _predictions = torch.stack(_predictions)
-
-                print("Saving data parameters.")
-                torch.save(
+                save_dict.update(
                     {
-                        'data_parameters': dp_weight.cpu(),
-                        'disturb_flags': disturb_flags,
-                        'd_ids': d_ids,
-                        'dataset_idxs': dataset_idxs.cpu(),
                         'labels': _labels.cpu(),
                         'modified_labels': _modified_labels.cpu(),
-                        'train_predictions': _predictions.cpu(),
-                    },
-                    train_label_snapshot_path
+                        'train_predictions': _predictions.cpu()
+                    }
                 )
+
+            print(f"Writing data parameters output to '{train_label_snapshot_path}'")
+            torch.save(save_dict, train_label_snapshot_path)
 
             if len(training_dataset.disturbed_idxs) > 0:
                 # Log histogram
                 separated_params = list(zip(dp_weights[clean_idxs], dp_weights[training_dataset.disturbed_idxs]))
                 s_table = wandb.Table(columns=['clean_idxs', 'disturbed_idxs'], data=separated_params)
-                fields = {"primary_bins" : "clean_idxs", "secondary_bins" : "disturbed_idxs", "title" : "Data parameter composite histogram"}
+                fields = {"primary_bins": "clean_idxs", "secondary_bins": "disturbed_idxs", "title": "Data parameter composite histogram"}
                 composite_histogram = wandb.plot_table(vega_spec_name="rap1ide/composite_histogram", data_table=s_table, fields=fields)
                 wandb.log({f"data_parameters/separated_params_fold_{fold_idx}": composite_histogram})
 
@@ -1295,6 +1299,7 @@ def train_DL(run_name, config, training_dataset):
                 in_type = "batch_3D"
                 skip_writeout = len(training_dataset) > 150
             skip_writeout = True
+
             if not skip_writeout:
                 print("Writing train sample image.")
                 # overlay text example: d_idx=0, dp_i=1.00, dist? False
@@ -1356,9 +1361,12 @@ sweep_config_dict = dict(
         #         DataParamMode.DISABLED,
         #     ]
         # ),
-        # use_risk_regularization=dict(
-        #     values=[False, True]
-        # ),
+        use_risk_regularization=dict(
+            values=[False, True]
+        ),
+        use_fixed_weighting=dict(
+            values=[False, True]
+        ),
         # fixed_weight_min_quantile=dict(
         #     values=[0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
         # ),
