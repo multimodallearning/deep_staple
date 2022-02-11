@@ -134,7 +134,6 @@ def make_3d_from_2d_stack(b_input, stack_dim, orig_stack_size):
 # %%
 class DataParamMode(Enum):
     INSTANCE_PARAMS = auto()
-    GRIDDED_INSTANCE_PARAMS = auto()
     DISABLED = auto()
 
 class DotDict(dict):
@@ -180,9 +179,6 @@ config_dict = DotDict({
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
     'use_parallel_dp_loss': True,
-
-    'grid_size_y': 64,
-    'grid_size_x': 64,
 
     'fixed_weight_file': None,#"/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/swept-wind-1249_fold0_epx39/train_label_snapshot.pth",
     'fixed_weight_min_quantile': None,#.9,
@@ -591,8 +587,6 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         # embedding.sigmoid_offset.register_hook(lambda grad: torch.sparse_coo_tensor([[0]], grad, size=(1,)))
         embedding = embedding.to(device)
 
-    elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-        embedding = nn.Embedding(dataset_len*config.grid_size_y*config.grid_size_x, 1, sparse=True).to(device)
     else:
         embedding = None
 
@@ -713,11 +707,6 @@ def CELoss(logits, targets, bin_weight=None):
     return loss.sum(dim=1)
 
 # %%
-def map_embedding_idxs(idxs, grid_size_y, grid_size_x):
-    with torch.no_grad():
-        t_sz = grid_size_y * grid_size_x
-        return ((idxs*t_sz).long().repeat(t_sz).view(t_sz, idxs.numel())+torch.tensor(range(t_sz)).to(idxs).view(t_sz,1)).permute(1,0).reshape(-1)
-
 def inference_wrap(lraspp, img, use_2d, use_mind):
     with torch.inference_mode():
         b_img = img.unsqueeze(0).unsqueeze(0).float()
@@ -922,10 +911,6 @@ def train_DL(run_name, config, training_dataset):
 
             t_metric = (gt_num+np.exp(1)).log()+np.exp(1)
 
-        if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-            union_wise_mod_label = torch.logical_or(wise_labels, mod_labels)
-            union_wise_mod_label = union_wise_mod_label.cuda()
-
         class_weights = class_weights.cuda()
         gt_num = gt_num.cuda()
         t_metric = t_metric.cuda()
@@ -1032,23 +1017,6 @@ def train_DL(run_name, config, training_dataset):
                         else:
                             dp_loss = (dp_loss*weight).sum()
 
-                    # elif config.data_param_mode == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-                    #     dp_loss = nn.CrossEntropyLoss(reduction='none')(logits, b_seg_modified)
-                    #     m_dp_idxs = map_embedding_idxs(b_idxs_dataset, config.grid_size_y, config.grid_size_x)
-                    #     weight = embedding(m_dp_idxs)
-                    #     weight = weight.reshape(-1, config.grid_size_y, config.grid_size_x)
-                    #     weight = weight.unsqueeze(1)
-                    #     weight = torch.nn.functional.interpolate(
-                    #         weight,
-                    #         size=(b_seg_modified.shape[-2:]),
-                    #         mode='bilinear',
-                    #         align_corners=True
-                    #     )
-                    #     weight = weight/weight.mean()
-                    #     weight = F.grid_sample(weight, b_spat_aug_grid,
-                    #         padding_mode='border', align_corners=False)
-                    #     dp_loss = (dp_loss.unsqueeze(1)*weight).sum()
-
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
                     dp_scaler.scale(dp_loss).backward()
 
@@ -1142,20 +1110,6 @@ def train_DL(run_name, config, training_dataset):
 
                 # Log stats of data parameters and figure
                 log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
-
-                # Map gridded instance parameters
-                if str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-                    m_tr_idxs = map_embedding_idxs(train_idxs,
-                        config.grid_size_y, config.grid_size_x
-                    ).cuda()
-                    masks = union_wise_mod_label[train_idxs].float()
-                    masked_weights = torch.nn.functional.interpolate(
-                        embedding(m_tr_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
-                        size=(masks.shape[-2:]),
-                        mode='bilinear',
-                        align_corners=True
-                    ).squeeze(1) * masks
-                    masked_weights[masked_weights==0.] = float('nan')
 
             if (epx % config.save_every == 0 and epx != 0) \
                 or (epx+1 == config.epochs):
@@ -1320,90 +1274,6 @@ def train_DL(run_name, config, training_dataset):
                         'train_predictions': _predictions.cpu(),
                     },
                     train_label_snapshot_path
-                )
-
-            elif str(config.data_param_mode) == str(DataParamMode.GRIDDED_INSTANCE_PARAMS):
-                # Log histogram of clean and disturbed parameters
-                if not training_dataset.use_2d():
-                    raise NotImplementedError("Script does not support 3D model and GRIDDED_INSTANCE_PARAMS yet.")
-
-                m_all_idxs = map_embedding_idxs(all_idxs,
-                        config.grid_size_y, config.grid_size_x
-                ).cuda()
-                masks = union_wise_mod_label[all_idxs].float()
-                all_weights = torch.nn.functional.interpolate(
-                    embedding(m_all_idxs).view(-1,1,config.grid_size_y, config.grid_size_x),
-                    size=(masks.shape[-2:]),
-                    mode='bilinear',
-                    align_corners=True
-                ).squeeze(1)
-
-                masked_weights = all_weights * masks
-                masked_weights[masked_weights==0.] = float('nan')
-                dp_weights = np.nanmean(masked_weights.detach().cpu(), axis=n_dims)
-
-                weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/data_parameter_weightmap.png")
-
-                save_data = []
-                data_generator = zip(
-                    dp_weights[train_idxs],
-                    all_weights[train_idxs],
-                    disturbed_bool_vect[train_idxs],
-                    torch.utils.data.Subset(training_dataset,train_idxs)
-                )
-
-                for dp_weight, weightmap, disturb_flg, sample in data_generator:
-                    data_tuple = (
-                        dp_weight,
-                        weightmap,
-                        bool(disturb_flg.item()),
-                        sample['id'],
-                        sample['dataset_idx'],
-                        sample['image'],
-                        sample['label'],
-                        sample['modified_label']
-                    )
-                    save_data.append(data_tuple)
-
-                save_data = sorted(save_data, key=lambda tpl: tpl[0])
-
-                (dp_weight, dp_weightmap, disturb_flags,
-                 d_ids, dataset_idxs, _2d_imgs,
-                 _2d_labels, _2d_modified_labels) = zip(*save_data)
-
-                dp_weight = torch.stack(dp_weight)
-                dp_weightmap = torch.stack(dp_weightmap)
-                dataset_idxs = torch.stack(dataset_idxs)
-                _2d_imgs = torch.stack(_2d_imgs)
-                _2d_labels = torch.stack(_2d_labels)
-                _2d_modified_labels = torch.stack(_2d_modified_labels)
-                _2d_predictions = torch.stack(_2d_predictions)
-
-                torch.save(
-                    {
-                        'data_parameters': dp_weight.cpu(),
-                        'data_parameter_weightmaps': dp_weightmap.cpu(),
-                        'disturb_flags': disturb_flags,
-                        'd_ids': d_ids,
-                        'dataset_idxs': dataset_idxs.cpu(),
-                        'labels': _2d_labels.cpu().to_sparse(),
-                        'modified_labels': _2d_modified_labels.cpu().to_sparse(),
-                        'train_predictions': _2d_predictions.cpu().to_sparse(),
-                    },
-                    train_label_snapshot_path
-                )
-
-                print("Writing weight map image.")
-                weightmap_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}_data_parameter_weightmap.png")
-                visualize_seg(in_type="batch_2D",
-                    img=torch.stack(dp_weightmap).unsqueeze(1),
-                    seg=torch.stack(_2d_modified_labels),
-                    alpha_seg = 0.,
-                    n_per_row=70,
-                    overlay_text=overlay_text_list,
-                    annotate_color=(0,255,255),
-                    frame_elements=disturb_flags,
-                    file_path=weightmap_out_path,
                 )
 
             if len(training_dataset.disturbed_idxs) > 0:
