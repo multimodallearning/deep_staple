@@ -588,45 +588,64 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     optimizer = torch.optim.AdamW(lraspp.parameters(), lr=config.lr)
     scaler = amp.GradScaler()
 
+    if config.use_2d_normal_to is not None:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=10, T_mult=2)
+    else:
+        # Use ExponentialLR in 3D
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.99)
+
     # Add data paramters embedding and optimizer
     if config.data_param_mode == str(DataParamMode.INSTANCE_PARAMS):
         embedding = nn.Embedding(dataset_len, 1, sparse=True)
-        # p_offset = torch.zeros(1, layout=torch.strided, requires_grad=True)
-        # p_offset.grad = torch.sparse_coo_tensor([[0]], 1., size=(1,))
-
-        # embedding.register_parameter('sigmoid_offset', nn.Parameter(torch.tensor([0.])))
-        # embedding.sigmoid_offset.register_hook(lambda grad: torch.sparse_coo_tensor([[0]], grad, size=(1,)))
         embedding = embedding.to(device)
 
-    else:
-        embedding = None
+        # Init embedding values
+        #
+        if config.override_embedding_weights:
+            fixed_weightdata = torch.load(config.fixed_weight_file)
+            fixed_weights = fixed_weightdata['data_parameters']
+            fixed_d_ids = fixed_weightdata['d_ids']
+            if config.use_2d_normal_to is not None:
+                corresp_dataset_idxs = [training_dataset.get_2d_ids().index(_id) for _id in fixed_d_ids]
+            else:
+                corresp_dataset_idxs = [training_dataset.get_3d_ids().index(_id) for _id in fixed_d_ids]
+            embedding_weight_tensor = torch.zeros_like(embedding.weight)
+            embedding_weight_tensor[corresp_dataset_idxs] = fixed_weights.view(-1,1).cuda()
+            embedding = nn.Embedding(len(training_dataset), 1, sparse=True, _weight=embedding_weight_tensor)
 
-
-    if str(config.data_param_mode) != str(DataParamMode.DISABLED):
-        optimizer_dp = torch.optim.SparseAdam(
-            embedding.parameters(), lr=config.lr_inst_param,
-            betas=(0.9, 0.999), eps=1e-08)
-        torch.nn.init.normal_(embedding.weight.data, mean=config.init_inst_param, std=0.00)
-
-        if _path and _path.is_dir():
-            print(f"Loading embedding and dp_optimizer from {_path}")
-            optimizer_dp.load_state_dict(torch.load(_path.joinpath('optimizer_dp.pth'), map_location=device))
+        elif _path and _path.is_dir():
             embedding.load_state_dict(torch.load(_path.joinpath('embedding.pth'), map_location=device))
+        else:
+            torch.nn.init.normal_(embedding.weight.data, mean=config.init_inst_param, std=0.00)
 
         print(f"Param count embedding: {sum(p.numel() for p in embedding.parameters())}")
 
+        optimizer_dp = torch.optim.SparseAdam(
+            embedding.parameters(), lr=config.lr_inst_param,
+            betas=(0.9, 0.999), eps=1e-08)
+        scaler_dp =  amp.GradScaler()
+
+        if _path and _path.is_dir():
+            print(f"Loading dp_optimizer and scaler_dp from {_path}")
+            optimizer_dp.load_state_dict(torch.load(_path.joinpath('optimizer_dp.pth'), map_location=device))
+            scaler_dp.load_state_dict(torch.load(_path.joinpath('scaler_dp.pth'), map_location=device))
+
     else:
+        embedding = None
         optimizer_dp = None
+        scaler_dp = None
 
     if _path and _path.is_dir():
         print(f"Loading lr-aspp model, optimizers and grad scalers from {_path}")
         lraspp.load_state_dict(torch.load(_path.joinpath('lraspp.pth'), map_location=device))
         optimizer.load_state_dict(torch.load(_path.joinpath('optimizer.pth'), map_location=device))
+        scheduler.load_state_dict(torch.load(_path.joinpath('scheduler.pth'), map_location=device))
         scaler.load_state_dict(torch.load(_path.joinpath('scaler.pth'), map_location=device))
     else:
         print("Generating fresh lr-aspp model, optimizer and grad scaler.")
 
-    return (lraspp, optimizer, optimizer_dp, embedding, scaler)
+    return (lraspp, optimizer, scheduler, optimizer_dp, embedding, scaler, scaler_dp)
 
 
 # %%
@@ -863,31 +882,8 @@ def train_DL(run_name, config, training_dataset):
         else:
             _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
 
-        (lraspp, optimizer, optimizer_dp, embedding, scaler) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
+        (lraspp, optimizer, scheduler, optimizer_dp, embedding, scaler, scaler_dp) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
-
-        if config.override_embedding_weights:
-            fixed_weightdata = torch.load(config.fixed_weight_file)
-            fixed_weights = fixed_weightdata['data_parameters']
-            fixed_d_ids = fixed_weightdata['d_ids']
-            if config.use_2d_normal_to is not None:
-                corresp_dataset_idxs = [training_dataset.get_2d_ids().index(_id) for _id in fixed_d_ids]
-            else:
-                corresp_dataset_idxs = [training_dataset.get_3d_ids().index(_id) for _id in fixed_d_ids]
-            embedding_weight_tensor = torch.zeros_like(embedding.weight)
-            embedding_weight_tensor[corresp_dataset_idxs] = fixed_weights.view(-1,1).cuda()
-            embedding = nn.Embedding(len(training_dataset), 1, sparse=True, _weight=embedding_weight_tensor)
-
-
-
-        dp_scaler = amp.GradScaler()
-
-        if config.use_2d_normal_to is not None:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer, T_0=10, T_mult=2)
-        else:
-            # Use ExponentialLR in 3D
-            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=.99)
 
         t0 = time.time()
 
@@ -1028,18 +1024,18 @@ def train_DL(run_name, config, training_dataset):
                             dp_loss = (dp_loss*weight).sum()
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED):
-                    dp_scaler.scale(dp_loss).backward()
+                    scaler_dp.scale(dp_loss).backward()
 
                     if config.use_ool_dp_loss:
                         # LRASPP already stepped.
                         if not config.override_embedding_weights:
-                            dp_scaler.step(optimizer_dp)
-                            dp_scaler.update()
+                            scaler_dp.step(optimizer_dp)
+                            scaler_dp.update()
                     else:
-                        dp_scaler.step(optimizer)
+                        scaler_dp.step(optimizer)
                         if not config.override_embedding_weights:
-                            dp_scaler.step(optimizer_dp)
-                        dp_scaler.update()
+                            scaler_dp.step(optimizer_dp)
+                        scaler_dp.update()
 
                     epx_losses.append(dp_loss.item())
                 else:
@@ -1129,9 +1125,10 @@ def train_DL(run_name, config, training_dataset):
                     lraspp=lraspp,
                     optimizer=optimizer, optimizer_dp=optimizer_dp,
                     scheduler=scheduler,
-                    # scheduler_dp=scheduler_dp,
                     embedding=embedding,
-                    scaler=scaler)
+                    scaler=scaler,
+                    scaler_dp=scaler_dp)
+
                 (lraspp, optimizer, optimizer_dp, embedding, scaler) = \
                     get_model(
                         config, len(training_dataset),
