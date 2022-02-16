@@ -196,9 +196,9 @@ config_dict = DotDict({
     'wandb_mode': 'online', # e.g. online, disabled
     'do_sweep': False,
 
-    'checkpoint_name': 'dashing-surf-1206',
+    'checkpoint_name': 'elated-leaf-17',
     'fold_override': 0,
-    'checkpoint_epx': 39,
+    'checkpoint_epx': 29,
 
     'do_plot': False,
     'save_dp_figures': False,
