@@ -157,12 +157,14 @@ config_dict = DotDict({
     # 'checkpoint_epx': 0,
 
     'use_mind': False,
-    'epochs': 30,
+    'epochs': 70,
 
     'batch_size': 8,
     'val_batch_size': 1,
     'use_2d_normal_to': None,
     'train_patchwise': False,
+
+    'num_val_images': 20,
 
     'dataset': 'crossmoda',
     'reg_state': "acummulate_every_third_deeds_FT2_MT1",
@@ -179,12 +181,12 @@ config_dict = DotDict({
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
     'use_fixed_weighting': True,
-    'use_ool_dp_loss': True,
+    'use_ool_dp_loss': False,
 
-    'fixed_weight_file': None,#"/share/data_supergrover1/weihsbach/shared_data/tmp/curriculum_deeplab/data/output/swept-wind-1249_fold0_epx39/train_label_snapshot.pth",
+    'fixed_weight_file': "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/data/output/dashing-surf-1206_fold0_epx39/train_label_snapshot.pth",
     'fixed_weight_min_quantile': None,#.9,
     'fixed_weight_min_value': None,
-    'override_embedding_weights': False,
+    'override_embedding_weights': True,
     # ),
 
     'save_every': 200,
@@ -192,9 +194,12 @@ config_dict = DotDict({
 
     'debug': False,
     'wandb_mode': 'online', # e.g. online, disabled
-    'do_sweep': True,
+    'do_sweep': False,
 
-    'checkpoint_name': None,
+    'checkpoint_name': 'dashing-surf-1206',
+    'fold_override': 0,
+    'checkpoint_epx': 39,
+
     'do_plot': False,
     'save_dp_figures': False,
     'save_labels': False,
@@ -214,6 +219,7 @@ def prepare_data(config):
         print("Loading registered data.")
 
         if config.reg_state == "mix_combined_best":
+            config.num_registrations_per_img = 1
             domain = 'source'
             label_data_left = torch.load('./data/optimal_reg_left.pth')
             label_data_right = torch.load('./data/optimal_reg_right.pth')
@@ -233,6 +239,7 @@ def prepare_data(config):
             loaded_identifier = [f"{_id}:{var_id}" for _id, var_id in zip(loaded_identifier, var_identifier)]
 
         elif config.reg_state == "acummulate_combined_best":
+            config.num_registrations_per_img = 2
             domain = 'source'
             label_data_left = torch.load('./data/optimal_reg_left.pth')
             label_data_right = torch.load('./data/optimal_reg_right.pth')
@@ -243,6 +250,7 @@ def prepare_data(config):
             loaded_identifier = [_id+':mBST' for _id in loaded_identifier] + [_id+':mCMB' for _id in loaded_identifier]
 
         elif config.reg_state == "best":
+            config.num_registrations_per_img = 1
             domain = 'source'
             label_data_left = torch.load('./data/optimal_reg_left.pth')
             label_data_right = torch.load('./data/optimal_reg_right.pth')
@@ -252,6 +260,7 @@ def prepare_data(config):
             loaded_identifier = [_id+':'+postfix for _id in loaded_identifier]
 
         elif config.reg_state == "combined":
+            config.num_registrations_per_img = 1
             domain = 'source'
             label_data_left = torch.load('./data/optimal_reg_left.pth')
             label_data_right = torch.load('./data/optimal_reg_right.pth')
@@ -261,6 +270,7 @@ def prepare_data(config):
             loaded_identifier = [_id+':'+postfix for _id in loaded_identifier]
 
         elif config.reg_state == "acummulate_convex_adam_FT2_MT1":
+            config.num_registrations_per_img = -1
             domain = 'target'
             bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_convex_registered.pth")
             label_data = []
@@ -271,6 +281,7 @@ def prepare_data(config):
                     loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
         elif config.reg_state == "acummulate_every_third_deeds_FT2_MT1":
+            config.num_registrations_per_img = 10
             domain = 'target'
             bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth")
             label_data = []
@@ -284,6 +295,7 @@ def prepare_data(config):
                         loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
         elif config.reg_state == "acummulate_every_deeds_FT2_MT1":
+            config.num_registrations_per_img = 30
             domain = 'target'
             bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth")
             label_data = []
@@ -760,20 +772,20 @@ def train_DL(run_name, config, training_dataset):
 
         # Override fold idxs #TODO automate
         if config.debug:
-            NUM_VAL_IMAGES = 2
-            NUM_REGISTRATIONS_PER_IMG = 1
+            num_val_images = 2
+            num_registrations_per_img = 1
         else:
-            NUM_VAL_IMAGES = 0
-            NUM_REGISTRATIONS_PER_IMG = 30 #TODO automate
+            num_val_images = config.num_val_images
+            num_registrations_per_img = config.num_registrations_per_img
 
         if config.use_2d_normal_to is not None:
             # Override idxs
             all_3d_ids = training_dataset.get_3d_ids()
 
-            val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
+            val_3d_idxs = torch.tensor(list(range(0, num_val_images*num_registrations_per_img, num_registrations_per_img)))
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
-            train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
+            train_3d_idxs = list(range(num_val_images*num_registrations_per_img, len(all_3d_ids)))
 
             # Get corresponding 2D idxs
             train_2d_ids = []
@@ -788,10 +800,10 @@ def train_DL(run_name, config, training_dataset):
             train_idxs = torch.tensor(train_2d_idxs)
 
         else:
-            val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
+            val_3d_idxs = torch.tensor(list(range(0, num_val_images*num_registrations_per_img, num_registrations_per_img)))
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
-            train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
+            train_3d_idxs = list(range(num_val_images*num_registrations_per_img, len(all_3d_ids)))
             train_idxs = torch.tensor(train_3d_idxs)
 
         print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
@@ -1048,7 +1060,7 @@ def train_DL(run_name, config, training_dataset):
                     b_dice, training_dataset.label_tags, exclude_bg=True))
 
                 ###  Scheduler management ###
-                if config.use_scheduling and epx % NUM_REGISTRATIONS_PER_IMG == 0:
+                if config.use_scheduling and epx % num_registrations_per_img == 0:
                     scheduler.step()
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED) and batch_idx % 10 == 0 and config.save_dp_figures:
@@ -1437,20 +1449,20 @@ config = config_dict
 training_dataset = d_set
 all_3d_ids = training_dataset.get_3d_ids()
 if config.debug:
-    NUM_VAL_IMAGES = 2
-    NUM_REGISTRATIONS_PER_IMG = 1
+    num_val_images = 2
+    num_registrations_per_img = 1
 else:
-    NUM_VAL_IMAGES = 00
-    NUM_REGISTRATIONS_PER_IMG = 30 #TODO automate
+    num_val_images = 00
+    num_registrations_per_img = 30 #TODO automate
 
 if config.use_2d_normal_to is not None:
     # Override idxs
     all_3d_ids = training_dataset.get_3d_ids()
 
-    val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
+    val_3d_idxs = torch.tensor(list(range(0, num_val_images*num_registrations_per_img, num_registrations_per_img)))
     val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
-    train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
+    train_3d_idxs = list(range(num_val_images*num_registrations_per_img, len(all_3d_ids)))
 
     # Get corresponding 2D idxs
     train_2d_ids = []
@@ -1465,10 +1477,10 @@ if config.use_2d_normal_to is not None:
     train_idxs = torch.tensor(train_2d_idxs)
 
 else:
-    val_3d_idxs = torch.tensor(list(range(0, NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, NUM_REGISTRATIONS_PER_IMG)))
+    val_3d_idxs = torch.tensor(list(range(0, num_val_images*num_registrations_per_img, num_registrations_per_img)))
     val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
-    train_3d_idxs = list(range(NUM_VAL_IMAGES*NUM_REGISTRATIONS_PER_IMG, len(all_3d_ids)))
+    train_3d_idxs = list(range(num_val_images*num_registrations_per_img, len(all_3d_ids)))
     train_idxs = torch.tensor(train_3d_idxs)
 
 print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
