@@ -262,7 +262,7 @@ def prepare_data(config):
 
         elif config.reg_state == "acummulate_convex_adam_FT2_MT1":
             domain = 'target'
-            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_convex_registered.pth")
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220318_crossmoda_convex_adam_lr/crossmoda_convex_registered_new_convex.pth")
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
