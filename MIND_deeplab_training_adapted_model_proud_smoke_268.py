@@ -166,7 +166,7 @@ config_dict = DotDict({
     'train_patchwise': False,
 
     'dataset': 'crossmoda',
-    'reg_state': "acummulate_deeds_FT2_MT1",
+    'reg_state': "acummulate_convex_adam_FT2_MT1",
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -266,9 +266,12 @@ def prepare_data(config):
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
-                for moving_id, moving_sample in moving_dict.items():
-                    label_data.append(moving_sample['warped_label'])
-                    loaded_identifier.append(f"{fixed_id}:m{moving_id}")
+                sorted_moving_dict = OrderedDict(moving_dict)
+                for idx_mov, (moving_id, moving_sample) in enumerate(sorted_moving_dict.items()):
+                    # Only use every third warped sample
+                    if idx_mov % 3 == 0:
+                        label_data.append(moving_sample['warped_label'].cpu())
+                        loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
         elif config.reg_state == "acummulate_deeds_FT2_MT1":
             domain = 'target'
