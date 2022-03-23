@@ -157,7 +157,7 @@ config_dict = DotDict({
     # 'checkpoint_epx': 0,
 
     'use_mind': False,
-    'epochs': 70,
+    'epochs': 40,
 
     'batch_size': 8,
     'val_batch_size': 1,
@@ -168,7 +168,7 @@ config_dict = DotDict({
     'atlas_count': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': None,
+    'reg_state': "acummulate_convex_adam_FT2_MT1",
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,
@@ -271,15 +271,18 @@ def prepare_data(config):
             loaded_identifier = [_id+':'+postfix for _id in loaded_identifier]
 
         elif config.reg_state == "acummulate_convex_adam_FT2_MT1":
-            config.atlas_count = -1
+            config.atlas_count = 10
             domain = 'target'
-            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_convex_registered.pth")
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220318_crossmoda_convex_adam_lr/crossmoda_convex_registered_new_convex.pth")
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
-                for moving_id, moving_sample in moving_dict.items():
-                    label_data.append(moving_sample['warped_label'])
-                    loaded_identifier.append(f"{fixed_id}:m{moving_id}")
+                sorted_moving_dict = OrderedDict(moving_dict)
+                for idx_mov, (moving_id, moving_sample) in enumerate(sorted_moving_dict.items()):
+                    # Only use every third warped sample
+                    if idx_mov % 3 == 0:
+                        label_data.append(moving_sample['warped_label'].cpu())
+                        loaded_identifier.append(f"{fixed_id}:m{moving_id}")
 
         elif config.reg_state == "acummulate_every_third_deeds_FT2_MT1":
             config.atlas_count = 10
@@ -399,123 +402,132 @@ if False:
     plt.ylabel("ground truth>0")
     plt.plot(sum_over_w);
 
+
+# %%
+def get_global_idx(fold_idx, epoch_idx, max_epochs):
+    # Get global index e.g. 2250 for fold_idx=2, epoch_idx=250 @ max_epochs<1000
+    return 10**len(str(int(max_epochs)))*fold_idx + epoch_idx
+
+
+
+def save_parameter_figure(_path, title, text, parameters, reweighted_parameters, dices):
+    # Show weights and weights with compensation
+    fig, axs = plt.subplots(1,2, figsize=(12, 4), dpi=80)
+    sc1 = axs[0].scatter(
+        range(len(parameters)),
+        parameters.cpu().detach(), c=dices,s=1, cmap='plasma', vmin=0., vmax=1.)
+    sc2 = axs[1].scatter(
+        range(len(reweighted_parameters)),
+        reweighted_parameters.cpu().detach(), s=1,c=dices, cmap='plasma', vmin=0., vmax=1.)
+
+    fig.suptitle(title, fontsize=14)
+    fig.text(0, 0, text)
+    axs[0].set_title('Bare parameters')
+    axs[1].set_title('Reweighted parameters')
+    axs[0].set_ylim(-10, 10)
+    axs[1].set_ylim(-3, 1)
+    plt.colorbar(sc2)
+    plt.savefig(_path)
+    plt.clf()
+    plt.close()
+
+
+
+def calc_inst_parameters_in_target_pos_ratio(dpm, disturbed_inst_idxs, target_pos='min'):
+
+    assert target_pos == 'min' or target_pos == 'max', "Value of target_pos must be 'min' or 'max'."
+    descending = False if target_pos == 'min' else True
+
+    target_len = len(disturbed_inst_idxs)
+
+    disturbed_params = dpm.get_parameter_list(inst_keys=disturbed_inst_idxs)
+    all_params = sorted(dpm.get_parameter_list(inst_keys='all'), reverse=descending)
+    target_param_ids = [id(param) for param in all_params[:target_len]]
+
+    ratio = [1. for param in disturbed_params if id(param) in target_param_ids]
+    ratio = sum(ratio)/target_len
+    return ratio
+
+def log_data_parameter_stats(log_path, epx, data_parameters):
+    """Log stats for data parameters on wandb."""
+    wandb.log({f'{log_path}/highest': torch.max(data_parameters).item()}, step=epx)
+    wandb.log({f'{log_path}/lowest': torch.min(data_parameters).item()}, step=epx)
+    wandb.log({f'{log_path}/mean': torch.mean(data_parameters).item()}, step=epx)
+    wandb.log({f'{log_path}/std': torch.std(data_parameters).item()}, step=epx)
+
+
+
+def reset_determinism():
+    torch.manual_seed(0)
+    random.seed(0)
+    np.random.seed(0)
+    # torch.use_deterministic_algorithms(True)
+
+
+
+
+def log_class_dices(log_prefix, log_postfix, class_dices, log_idx):
+    if not class_dices:
+        return
+
+    for cls_name in class_dices[0].keys():
+        log_path = f"{log_prefix}{cls_name}{log_postfix}"
+
+        cls_dices = list(map(lambda dct: dct[cls_name], class_dices))
+        mean_per_class =np.nanmean(cls_dices)
+        print(log_path, f"{mean_per_class*100:.2f}%")
+        wandb.log({log_path: mean_per_class}, step=log_idx)
+
+def CELoss(logits, targets, bin_weight=None):
+    # -logits[0,targets[0,0,0],0,0]+torch.log(logits[0,:,0,0].exp().sum())
+    targets = torch.nn.functional.one_hot(targets).permute(0,3,1,2)
+    loss = -targets*F.log_softmax(logits, 1)
+
+    if bin_weight is not None:
+        brdcast_shape = torch.Size((loss.shape[0], loss.shape[1], *((loss.dim()-2)*[1])))
+        inv_weight = (bin_weight+np.exp(1)).log()+np.exp(1)
+        inv_weight = inv_weight/inv_weight.mean()
+        loss = inv_weight.view(brdcast_shape)*loss
+
+    return loss.sum(dim=1)
+
+# %%
+training_dataset = prepare_data(config_dict)
+
 # %%
 if config_dict['do_plot']:
-    training_dataset = prepare_data(config_dict)
-    # Print bare 2D data
-    # print("Displaying 2D bare sample")
-    # for img, label in zip(training_dataset.img_data_2d.values(),
-    #                       training_dataset.label_data_2d.values()):
-    #     display_seg(in_type="single_2D",
-    #                 img=img.unsqueeze(0),
-    #                 ground_truth=label,
-    #                 crop_to_non_zero_gt=True,
-    #                 alpha_gt = .3)
 
     # Print transformed 2D data
-    training_dataset.train(use_modified=False, augment=True)
-    print(training_dataset.disturbed_idxs)
+    training_dataset.train(use_modified=True, augment=False)
+    # print(training_dataset.disturbed_idxs)
 
     print("Displaying 2D training sample")
-    for dist_stren in [0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0]:
-        print(dist_stren)
-        training_dataset.disturb_idxs(list(range(0,20,2)),
-            disturbance_mode=LabelDisturbanceMode.AFFINE,
-            disturbance_strength=dist_stren
-        )
-        img_stack = []
-        label_stack = []
-        mod_label_stack = []
 
-        for sample in (training_dataset[idx] for idx in range(20)):
-            img_stack.append(sample['image'])
-            label_stack.append(sample['label'])
-            mod_label_stack.append(sample['modified_label'])
+    img_stack = []
+    label_stack = []
+    mod_label_stack = []
 
-        # Change label num == hue shift for display
-        img_stack = torch.stack(img_stack).unsqueeze(1)
-        label_stack = torch.stack(label_stack)
-        mod_label_stack = torch.stack(mod_label_stack)
+    for sample in (training_dataset[idx] for idx in [500,590]):
+        print(sample['id'])
+        img_stack.append(sample['image'])
+        label_stack.append(sample['label'])
+        mod_label_stack.append(sample['modified_label'])
 
-        mod_label_stack*=4
+    # Change label num == hue shift for display
+    img_stack = torch.stack(img_stack).unsqueeze(1)
+    label_stack = torch.stack(label_stack)
+    mod_label_stack = torch.stack(mod_label_stack)
 
-        visualize_seg(in_type="batch_2D",
-            img=img_stack,
-            # ground_truth=label_stack,
-            seg=(mod_label_stack-label_stack).abs(),
-            # crop_to_non_zero_gt=True,
-            crop_to_non_zero_seg=True,
-            alpha_seg = .6,
-            file_path=f'out{dist_stren}.png'
-        )
+    mod_label_stack*=4
 
-    # Print transformed 3D data
-    # training_dataset.train()
-    # print("Displaying 3D training sample")
-    # leng = 1# training_dataset.__len__(use_2d_override=False)
-    # for sample in (training_dataset.get_3d_item(idx) for idx in range(leng)):
-    #     # training_dataset.set_dilate_kernel_size(1)
-    #     visualize_seg(in_type="single_3D", reduce_dim="W",
-    #                 img=sample['image'].unsqueeze(0),
-    #                 ground_truth=sample['label'],
-    #                 crop_to_non_zero_gt=True,
-    #                 alpha_gt = .3)
-
-#         # training_dataset.set_dilate_kernel_size(7)
-#         display_seg(in_type="single_3D", reduce_dim="W",
-#                     img=sample['image'].unsqueeze(0),
-#                     ground_truth=sample['modified_label'],
-#                     crop_to_non_zero_gt=True,
-#                     alpha_gt = .3)
-
-    for sidx in [0,]:
-        print(f"Sample {sidx}:")
-
-        training_dataset.eval()
-        sample_eval = training_dataset.get_3d_item(sidx)
-
-        visualize_seg(in_type="single_3D", reduce_dim="W",
-                    img=sample_eval['image'].unsqueeze(0),
-                    ground_truth=sample_eval['label'],
-                    crop_to_non_zero_gt=True,
-                    alpha_gt = .3)
-
-        visualize_seg(in_type="single_3D", reduce_dim="W",
-                    img=sample_eval['image'].unsqueeze(0),
-                    ground_truth=sample_eval['label'],
-                    crop_to_non_zero_gt=True,
-                    alpha_gt = .0)
-
-        training_dataset.train()
-        print("Train sample with ground-truth overlay")
-        sample_train = training_dataset.get_3d_item(sidx)
-        print(sample_train['label'].unique())
-        visualize_seg(in_type="single_3D", reduce_dim="W",
-                    img=sample_train['image'].unsqueeze(0),
-                    ground_truth=sample_train['label'],
-                    crop_to_non_zero_gt=True,
-                    alpha_gt=.3)
-
-        print("Eval/train diff with diff overlay")
-        visualize_seg(in_type="single_3D", reduce_dim="W",
-                    img=(sample_eval['image'] - sample_train['image']).unsqueeze(0),
-                    ground_truth=(sample_eval['label'] - sample_train['label']).clamp(min=0),
-                    crop_to_non_zero_gt=True,
-                    alpha_gt = .3)
-
-    train_plotset = (training_dataset.get_3d_item(idx) for idx in (55, 81, 63))
-    for sample in train_plotset:
-        print(f"Sample {sample['dataset_idx']}:")
-        display_seg(in_type="single_3D", reduce_dim="W",
-            img=sample_eval['image'].unsqueeze(0),
-            ground_truth=sample_eval['label'],
-            crop_to_non_zero_gt=True,
-            alpha_gt = .6)
-        display_seg(in_type="single_3D", reduce_dim="W",
-            img=sample_eval['image'].unsqueeze(0),
-            ground_truth=sample_eval['label'],
-            crop_to_non_zero_gt=True,
-            alpha_gt = .0)
+    visualize_seg(in_type="batch_3D", reduce_dim="W",
+        img=img_stack,
+        # ground_truth=label_stack,
+        seg=(mod_label_stack-label_stack).abs(),
+        # crop_to_non_zero_gt=True,
+        crop_to_non_zero_seg=True,
+        alpha_seg = .5
+    )
 
 # %%
 #Add functions to replace modules of a model
@@ -650,94 +662,11 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
 
 
 # %%
-def get_global_idx(fold_idx, epoch_idx, max_epochs):
-    # Get global index e.g. 2250 for fold_idx=2, epoch_idx=250 @ max_epochs<1000
-    return 10**len(str(int(max_epochs)))*fold_idx + epoch_idx
+def map_embedding_idxs(idxs, grid_size_y, grid_size_x):
+    with torch.no_grad():
+        t_sz = grid_size_y * grid_size_x
+        return ((idxs*t_sz).long().repeat(t_sz).view(t_sz, idxs.numel())+torch.tensor(range(t_sz)).to(idxs).view(t_sz,1)).permute(1,0).reshape(-1)
 
-
-
-def save_parameter_figure(_path, title, text, parameters, reweighted_parameters, dices):
-    # Show weights and weights with compensation
-    fig, axs = plt.subplots(1,2, figsize=(12, 4), dpi=80)
-    sc1 = axs[0].scatter(
-        range(len(parameters)),
-        parameters.cpu().detach(), c=dices,s=1, cmap='plasma', vmin=0., vmax=1.)
-    sc2 = axs[1].scatter(
-        range(len(reweighted_parameters)),
-        reweighted_parameters.cpu().detach(), s=1,c=dices, cmap='plasma', vmin=0., vmax=1.)
-
-    fig.suptitle(title, fontsize=14)
-    fig.text(0, 0, text)
-    axs[0].set_title('Bare parameters')
-    axs[1].set_title('Reweighted parameters')
-    axs[0].set_ylim(-10, 10)
-    axs[1].set_ylim(-3, 1)
-    plt.colorbar(sc2)
-    plt.savefig(_path)
-    plt.clf()
-    plt.close()
-
-
-
-def calc_inst_parameters_in_target_pos_ratio(dpm, disturbed_inst_idxs, target_pos='min'):
-
-    assert target_pos == 'min' or target_pos == 'max', "Value of target_pos must be 'min' or 'max'."
-    descending = False if target_pos == 'min' else True
-
-    target_len = len(disturbed_inst_idxs)
-
-    disturbed_params = dpm.get_parameter_list(inst_keys=disturbed_inst_idxs)
-    all_params = sorted(dpm.get_parameter_list(inst_keys='all'), reverse=descending)
-    target_param_ids = [id(param) for param in all_params[:target_len]]
-
-    ratio = [1. for param in disturbed_params if id(param) in target_param_ids]
-    ratio = sum(ratio)/target_len
-    return ratio
-
-def log_data_parameter_stats(log_path, epx, data_parameters):
-    """Log stats for data parameters on wandb."""
-    wandb.log({f'{log_path}/highest': torch.max(data_parameters).item()}, step=epx)
-    wandb.log({f'{log_path}/lowest': torch.min(data_parameters).item()}, step=epx)
-    wandb.log({f'{log_path}/mean': torch.mean(data_parameters).item()}, step=epx)
-    wandb.log({f'{log_path}/std': torch.std(data_parameters).item()}, step=epx)
-
-
-
-def reset_determinism():
-    torch.manual_seed(0)
-    random.seed(0)
-    np.random.seed(0)
-    # torch.use_deterministic_algorithms(True)
-
-
-
-
-def log_class_dices(log_prefix, log_postfix, class_dices, log_idx):
-    if not class_dices:
-        return
-
-    for cls_name in class_dices[0].keys():
-        log_path = f"{log_prefix}{cls_name}{log_postfix}"
-
-        cls_dices = list(map(lambda dct: dct[cls_name], class_dices))
-        mean_per_class =np.nanmean(cls_dices)
-        print(log_path, f"{mean_per_class*100:.2f}%")
-        wandb.log({log_path: mean_per_class}, step=log_idx)
-
-def CELoss(logits, targets, bin_weight=None):
-    # -logits[0,targets[0,0,0],0,0]+torch.log(logits[0,:,0,0].exp().sum())
-    targets = torch.nn.functional.one_hot(targets).permute(0,3,1,2)
-    loss = -targets*F.log_softmax(logits, 1)
-
-    if bin_weight is not None:
-        brdcast_shape = torch.Size((loss.shape[0], loss.shape[1], *((loss.dim()-2)*[1])))
-        inv_weight = (bin_weight+np.exp(1)).log()+np.exp(1)
-        inv_weight = inv_weight/inv_weight.mean()
-        loss = inv_weight.view(brdcast_shape)*loss
-
-    return loss.sum(dim=1)
-
-# %%
 def inference_wrap(lraspp, img, use_2d, use_mind):
     with torch.inference_mode():
         b_img = img.unsqueeze(0).unsqueeze(0).float()
