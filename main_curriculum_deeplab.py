@@ -1379,12 +1379,9 @@ d_set = prepare_data(config_dict)
 config = config_dict
 training_dataset = d_set
 all_3d_ids = training_dataset.get_3d_ids()
-if config.debug:
-    num_val_images = 2
-    atlas_count = 1
-else:
-    num_val_images = 00
-    atlas_count = 30 #TODO automate
+
+num_val_images = config.num_val_images
+atlas_count = config.atlas_count
 
 if config.use_2d_normal_to is not None:
     # Override idxs
@@ -1414,7 +1411,7 @@ else:
     train_3d_idxs = list(range(num_val_images*atlas_count, len(all_3d_ids)))
     train_idxs = torch.tensor(train_3d_idxs)
 
-print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
+print(f"Validation 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
 
 
 # %%
