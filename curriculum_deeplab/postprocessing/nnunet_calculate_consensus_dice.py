@@ -1,36 +1,90 @@
 
 import sys
 
-sys.path.append('/home/ckruse/PythonProjects')
-sys.path.append('/home/ckruse/MDL_Repositories')
+# sys.path.append('/home/ckruse/PythonProjects')
+# sys.path.append('/home/ckruse/MDL_Repositories')
 import os
 import torch
+import glob
 import nibabel as nib
+import subprocess
+from mdl_seg_class.metrics import dice3d
+from pathlib import Path
+# from UtilityFunctions.dice import dice_coeff
 
-from UtilityFunctions.dice import dice_coeff
+# raw_data_path = Path(os.environ['nnUNet_raw_data_base']).joinpath('nnUNet_raw_data')
+# task_folders = glob.glob(str(raw_data_path) + "Task55*")
 
-path_gt = '/share/data_sam2/ckruse/CrossMoDa_testdata/L4_T2_consensus/val_labels/'
-path_expert = '/share/data_sam2/ckruse/CrossMoDa_testdata/nnUNet_output/T550_L4_T2_val/'
-path_random ='/share/data_sam2/ckruse/CrossMoDa_testdata/nnUNet_output/T551_L4_T2_val/'
-path_simple ='/share/data_sam2/ckruse/CrossMoDa_testdata/nnUNet_output/T552_L4_T2_val/'
-path_staple ='/share/data_sam2/ckruse/CrossMoDa_testdata/nnUNet_output/T553_L4_T2_val/'
-path_all ='/share/data_sam2/ckruse/CrossMoDa_testdata/nnUNet_output/T554_L4_T2_val/'
+# cases = ['400_deeds', '400_convex_adam']
+# current_case = cases[1]
+
+# INPUT_FOLDER = Path(f'/share/data_rechenknecht01_2/weihsbach/nnunet/tmp/{current_case}/val_labels')
+
+# Run prediction all trainers and folders
+# for t_folder in task_folders:
+#     TASK_NAME_OR_ID = re.match(r"^Task[0-9]{3}_", t_folder)
+#     CONFIGURATION = '3d_fullres'
+#     all_trainer_classes = ['nnUNetTrainerV2', 'nnUNetTrainerV2_insaneDA']
+#     for TRAINER_CLASS in all_trainer_classes:
+#         OUTPUT_FOLDER = Path(os.environ['nnUNet_inference']).joinpath(f"T{TASK_NAME_OR_ID}{}")
+#         subprocess.call(
+#             ['nnUNet_predict', '-i', INPUT_FOLDER, '-o', OUTPUT_FOLDER, '-t', TASK_NAME_OR_ID,
+#             '-m', CONFIGURATION, '-f', 'all', '-tr', TRAINER_CLASS]
+#         )
+
+
+task_no = 563
+
+if task_no == 555:
+    path_gt = ''
+    path_target = ''
+
+elif task_no == 556:
+    path_gt = '/share/data_rechenknecht01_2/weihsbach/nnunet/tmp/400_convex_adam/val_labels/'
+    path_target = '/share/data_rechenknecht01_2/weihsbach/nnunet/nnUNet_inference_output/Task556_CM_consensus_random_convex_adam/'
+
+elif task_no == 557:
+    path_gt = '/share/data_rechenknecht01_2/weihsbach/nnunet/tmp/400_convex_adam/val_labels/'
+    path_target = '/share/data_rechenknecht01_2/weihsbach/nnunet/nnUNet_inference_output/Task557_CM_consensus_dp_convex_adam/'
+
+elif task_no == 558:
+    path_gt = '/share/data_rechenknecht01_2/weihsbach/nnunet/tmp/400_convex_adam/val_labels/'
+    path_target = '/share/data_rechenknecht01_2/weihsbach/nnunet/nnUNet_inference_output/Task558_CM_consensus_staple_convex_adam/'
+
+elif task_no == 559:
+    path_gt = '/share/data_rechenknecht01_2/weihsbach/nnunet/tmp/400_convex_adam/val_labels/'
+    path_target = '/share/data_rechenknecht01_2/weihsbach/nnunet/nnUNet_inference_output/Task559_CM_consensus_all_convex_adam/'
+
+elif task_no == 560:
+    path_gt = '/share/data_rechenknecht01_2/weihsbach/nnunet/tmp/400_convex_adam/val_labels/'
+    path_target = ''
+
+elif task_no == 561:
+    path_gt = '/share/data_rechenknecht01_2/weihsbach/nnunet/tmp/400_deeds/val_labels/'
+    path_target = '/share/data_rechenknecht01_2/weihsbach/nnunet/nnUNet_inference_output/Task561_CM_domain_adaptation_insane_moving_deeds/'
+
+elif task_no == 562:
+    path_gt = '/share/data_rechenknecht01_2/weihsbach/nnunet/tmp/400_convex_adam/val_labels/'
+    path_target = '/share/data_rechenknecht01_2/weihsbach/nnunet/nnUNet_inference_output/Task562_CM_domain_adaptation_insane_moving_convex_adam/'
+
+elif task_no == 563:
+    path_gt = '/share/data_rechenknecht01_2/weihsbach/nnunet/tmp/400_convex_adam/val_labels/'
+    path_target = '/share/data_rechenknecht01_2/weihsbach/nnunet/nnUNet_inference_output/Task563_CM_consensus_expert_convex_adam/'
+
+
 files = sorted(os.listdir(path_gt))
-dice_expert = torch.zeros(len(files))
-dice_simple = torch.zeros(len(files))
-dice_staple = torch.zeros(len(files))
-dice_random = torch.zeros(len(files))
-dice_all = torch.zeros(len(files))
-for i,file in enumerate(files):
-    label = torch.from_numpy(nib.load(path_gt+file).get_fdata())
-    expert_label = torch.from_numpy(nib.load(path_expert+file).get_fdata())
-    simple_consensus = torch.from_numpy(nib.load(path_simple+file).get_fdata())
-    staple_consensus = torch.from_numpy(nib.load(path_staple+file).get_fdata())
-    random_reg = torch.from_numpy(nib.load(path_random+file).get_fdata())
-    all_reg = torch.from_numpy(nib.load(path_all+file).get_fdata())
-    dice_expert[i] = dice_coeff(label,expert_label).item()
-    dice_simple[i] = dice_coeff(label,simple_consensus).item()
-    dice_staple[i] = dice_coeff(label,staple_consensus).item()
-    dice_random[i] = dice_coeff(label,random_reg).item()
-    dice_all[i] = dice_coeff(label,all_reg).item()
-print('mean dice scores wenn trained on expert: {}, simple:{}, staple:{}, random: {}, all: {}'.format(dice_expert.mean(),dice_simple.mean(),dice_staple.mean(),dice_random.mean(),dice_all.mean()))
+dice_target = torch.zeros(len(files))
+
+all_dice_scores = []
+
+for i, file in enumerate(files):
+    gt_label = torch.from_numpy(nib.load(path_gt+file).get_fdata())
+    target_label = torch.from_numpy(nib.load(path_target+file).get_fdata())
+
+    one_hot_gt_label = torch.nn.functional.one_hot(gt_label.long(), num_classes=3).unsqueeze(0)
+    one_hot_target_label = torch.nn.functional.one_hot(target_label.long(), num_classes=3).unsqueeze(0)
+
+    dice_score = dice3d(one_hot_gt_label, one_hot_target_label, one_hot_torch_style=True)[0,1].item()
+    all_dice_scores.append(dice_score)
+
+print(task_no, torch.tensor(all_dice_scores).mean())

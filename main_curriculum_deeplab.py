@@ -168,7 +168,7 @@ config_dict = DotDict({
     'atlas_count': 1,
 
     'dataset': 'crossmoda',
-    'reg_state': "acummulate_convex_adam_FT2_MT1",
+    'reg_state': "acummulate_every_third_deeds_FT2_MT1",
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
     'crop_2d_slices_gt_num_threshold': 0,

@@ -8,7 +8,7 @@ from mdl_seg_class.metrics import dice3d
 
 cases = ['400_deeds', '400_convex_adam']
 
-current_case = cases[1]
+current_case = cases[0]
 
 out_path = Path(f'/share/data_rechenknecht01_2/weihsbach/nnunet/tmp/{current_case}/')
 for subfolder in ['all_images','all_reg','images', 'expert_labels', 'dp_consensus', 'staple_consensus', 'random_reg', 'val_images', 'val_labels']:
@@ -16,6 +16,8 @@ for subfolder in ['all_images','all_reg','images', 'expert_labels', 'dp_consensu
 
 if current_case == '400_deeds':
     all_data = torch.load('/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220125_consensus/network_dataset_path_dict_400.pth')
+    all_data['train_image_paths'] = {_path: _path for _path in all_data['train_images']}
+    all_data['val_image_paths'] = {_path: _path for _path in all_data['val_images']}
     consensus_dicts = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220125_consensus/consensus_dict_400_deeds.pth")
 
 elif current_case == '400_convex_adam':
@@ -30,27 +32,31 @@ for img_file in all_data['train_image_paths'].values():
     file_id = img_file.split('/')[-1]
     file_id = file_id.replace('_hrT2_','').split('_')[-1].split('.')[0]
     label_dict = consensus_dicts[file_id]
-    rndm_keys = list(label_dict.keys())
-    rndm_keys.remove("dp_consensus")#
-    rndm_keys.remove("staple_consensus")
-    rndm_keys.remove("expert_label")
-    rndm_keys.remove("prediction")
-    rndm_keys.remove("image_path")
-    rndm_keys.remove("dp_consensus_oracle_dice")
-    rndm_keys.remove("staple_consensus_oracle_dice")
+    m_ids = list(label_dict.keys())
+    m_ids.remove("dp_consensus")#
+    m_ids.remove("staple_consensus")
+    m_ids.remove("expert_label")
+    m_ids.remove("prediction")
+    m_ids.remove("image_path")
+    m_ids.remove("dp_consensus_oracle_dice")
+    m_ids.remove("staple_consensus_oracle_dice")
 
-    rnd_ind = random.randint(0, len(rndm_keys)-1)
+    rnd_ind = random.randint(0, len(m_ids)-1)
 
-    rnd_key = rndm_keys[rnd_ind]
+    rnd_key = m_ids[rnd_ind]
 
     expert_label = label_dict['expert_label'].to_dense()
     dp_consensus = label_dict['dp_consensus'].to_dense()
     staple_consensus = label_dict['staple_consensus'].to_dense()
     random_reg = label_dict[rnd_key]['warped_label'].to_dense()
-    label = torch.from_numpy(nib.load(label_file).get_fdata())
+
+    atlas_label = label_dict[m_ids[count % 10]]['warped_label'].to_dense()
+
     org_img = nib.load(img_file)
+    label = torch.from_numpy(nib.load(label_file).get_fdata())
     image = torch.from_numpy(org_img.get_fdata())
     if 'r' in file_id:
+        atlas_label = atlas_label.fliplr()
         expert_label = expert_label.fliplr()
         dp_consensus = dp_consensus.fliplr()
         staple_consensus = staple_consensus.fliplr()
@@ -63,13 +69,14 @@ for img_file in all_data['train_image_paths'].values():
     image = torch.nn.functional.interpolate(image.unsqueeze(0).unsqueeze(0),scale_factor = 2, mode='trilinear').squeeze()
 
     img_out                 = nib.Nifti1Image(image             , org_img.affine, org_img.header)
+    atlas_out               = nib.Nifti1Image(atlas_label       , org_img.affine, org_img.header)
     expert_out              = nib.Nifti1Image(expert_label      , org_img.affine, org_img.header)
-    simple_consensus_out    = nib.Nifti1Image(dp_consensus  , org_img.affine, org_img.header)
+    simple_consensus_out    = nib.Nifti1Image(dp_consensus      , org_img.affine, org_img.header)
     staple_consensus_out    = nib.Nifti1Image(staple_consensus  , org_img.affine, org_img.header)
     random_reg_out          = nib.Nifti1Image(random_reg        , org_img.affine, org_img.header)
 
     nib.save(img_out, out_path.joinpath('all_images/CrossMoDa_'+str(count).zfill(3)+'_0000.nii.gz'))
-    nib.save(expert_out, out_path.joinpath('all_reg/CrossMoDa_'+str(count).zfill(3)+'.nii.gz'))
+    nib.save(atlas_out, out_path.joinpath('all_reg/CrossMoDa_'+str(count).zfill(3)+'.nii.gz'))
 
     if count % 10 == 0:
         # Here a new fixed id is drawn

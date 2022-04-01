@@ -27,8 +27,6 @@ def restore_sparsity(label, was_sparse):
         return label.to_sparse()
     return label
 
-
-
 def dilate_label_class(b_label, class_max_idx, class_dilate_idx,
                        use_2d, kernel_sz=3):
 
@@ -61,7 +59,7 @@ def dilate_label_class(b_label, class_max_idx, class_dilate_idx,
 
 
 
-    # %%
+# %%
 def in_notebook():
     try:
         get_ipython().__class__.__name__
@@ -69,6 +67,11 @@ def in_notebook():
     except NameError:
         return False
 
+def get_script_dir():
+    if in_notebook:
+        return os.path.abspath('')
+    else:
+        return os.path.dirname(os.path.realpath(__file__))
 
 
 # %%
