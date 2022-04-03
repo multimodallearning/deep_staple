@@ -1,0 +1,1 @@
+Shared data which needs to be accessed by docker container will be (or is) placed here

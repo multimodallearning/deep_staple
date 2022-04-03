@@ -8,11 +8,10 @@ packages = [{include = "curriculum_deeplab"}]
 
 [tool.poetry.dependencies]
 python = "^3.9"
-torch = { file = "/share/data_supergrover1/weihsbach/shared_data/tmp/compile_pytorch/pytorch/dist/torch-1.9.0a0+gitdfbd030-cp39-cp39-linux_x86_64.whl" }
-torchvision = { file = "/share/data_supergrover1/weihsbach/shared_data/tmp/compile_pytorch/vision/dist/torchvision-0.10.0a0+ca1a620-cp39-cp39-linux_x86_64.whl" }
+torch = "*"
+torchvision = "*"
 mdl-seg-class = {git = "git@github.com:MDL-UzL/SegmentationClassification.git", rev = "main"}
 meidic-vtach-utils = {git = "git@github.com:MDL-UzL/meidic_vtach_utils.git", rev = "main"}
-medmnist = { git = "git@github.com:MedMNIST/MedMNIST.git", branch = "main" }
 nibabel = "^3.2.1"
 scipy = "^1.6.0"
 scikit-image = "^0.18.3"
@@ -23,6 +22,8 @@ ipywidgets = "^7.6.5"
 torchio = "^0.18.63"
 jupytext = "^1.13.1"
 nnunet = "^1.7.0"
+pydicom = "^2.3.0"
+natsort = "^8.1.0"
 
 [build-system]
 requires = ["poetry-core"]
