@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from contextlib import contextmanager
 
 from enum import Enum, auto
+
 class LabelDisturbanceMode(Enum):
     FLIP_ROLL = auto()
     AFFINE = auto()

@@ -24,6 +24,7 @@ jupytext = "^1.13.1"
 nnunet = "^1.7.0"
 pydicom = "^2.3.0"
 natsort = "^8.1.0"
+paramiko = "^2.10.3"
 
 [build-system]
 requires = ["poetry-core"]
