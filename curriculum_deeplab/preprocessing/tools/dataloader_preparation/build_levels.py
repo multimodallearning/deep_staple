@@ -78,7 +78,7 @@ def interpolate_and_pad(ni_data, ref_spacing, ref_shape, is_label, device='cpu')
 
     if shape[0] < ref_shape[0]:
         pad = ref_shape[0] - shape[0]
-        pad1 = pad // 2
+        pad1 = (pad / 2).floor().int().item()
         pad2 = pad - pad1
         if not is_label:
             fdata = F.pad(fdata, [0, 0, 0, 0, pad1, pad2], mode='constant', value=fdata.min())
@@ -87,7 +87,7 @@ def interpolate_and_pad(ni_data, ref_spacing, ref_shape, is_label, device='cpu')
 
     if shape[1] < ref_shape[1]:
         pad = ref_shape[1] - shape[1]
-        pad1 = pad // 2
+        pad1 = (pad / 2).floor().int().item()
         pad2 = pad - pad1
         if not is_label:
             fdata = F.pad(fdata, [0, 0, pad1, pad2, 0, 0], mode='constant', value=fdata.min())
@@ -96,7 +96,7 @@ def interpolate_and_pad(ni_data, ref_spacing, ref_shape, is_label, device='cpu')
 
     if shape[2] < ref_shape[2]:
         pad = ref_shape[2] - shape[2]
-        pad1 = pad // 2
+        pad1 = (pad / 2).floor().int().item()
         pad2 = pad - pad1
         if not is_label:
             fdata = F.pad(fdata, [pad1, pad2, 0, 0, 0, 0], mode='constant', value=fdata.min())
@@ -139,7 +139,7 @@ def apply_fine_crop(ni_image, ni_label, is_target_domain, lr_id, bbox_ref_shape,
             center[2] += 40
 
         center = center.round()
-        bbox = torch.stack((center - bbox_ref_shape//2, center + bbox_ref_shape//2)).long()
+        bbox = torch.stack((center - (bbox_ref_shape/2).floor(), center + (bbox_ref_shape/2).floor())).long()
 
         spacing = ni_image.header.get_zooms()
 
@@ -154,78 +154,109 @@ def apply_fine_crop(ni_image, ni_label, is_target_domain, lr_id, bbox_ref_shape,
     else:
         return None, None
 
-def preprocess(source_dir, cochlea_centers_path, device='cpu'):
+def preprocess(base_dir, cochlea_centers_path, device='cpu'):
 
-    l1_nifti_paths = nsets.get_nifti_filepaths(
-        source_dir,
-        with_subdirs=True
-    )
-    # l1_nifti_paths = l1_nifti_paths[0:2] # DEBUG
-
-    l2_nifti_paths = [_path.replace("L1_original", "L2_resampled_05mm") for _path in l1_nifti_paths]
-
-    # Do not override L1 level (would reset world orientation for original data)
-    # for _path in tqdm(nifti_paths):
-    #     # Adjust spacing. Input is original data
-    #     target_path = Path(_path.replace('L1_original', 'L1_original'))
-    #     ni_data = nib.load(_path)
-    #     ni_data = adjust_spacing(ni_data, REF_SPACING, device)
+    subdirs = [
+        '__omitted_labels_target_training__', '__omitted_labels_target_validation__',
+        'source_training_labeled',
+        'target_training_unlabeled', 'target_validation_unlabeled'
+    ]
 
     print("Building L2 ...")
-    for _path in tqdm(l1_nifti_paths):
-        # Resample and pad. Input is original data
-        target_path = Path(_path.replace('L1_original', 'L2_resampled_05mm'))
-        is_label =  ("_Label" in _path)
-        ni_data = nib.load(_path)
-        ni_data = interpolate_and_pad(ni_data, REF_SPACING, REF_SHAPE, is_label, device=device)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        nib.save(ni_data, target_path)
+    for s_dir in subdirs:
+        source_dir = Path(base_dir, s_dir)
+        print(f"Processing {source_dir}")
+        l1_nifti_paths = nsets.get_nifti_filepaths(
+            source_dir,
+            with_subdirs=True
+        )
+        # l1_nifti_paths = l1_nifti_paths[0:2] # DEBUG
+
+        l2_nifti_paths = [_path.replace("L1_original", "L2_resampled_05mm") for _path in l1_nifti_paths]
+
+        # Do not override L1 level (would reset world orientation for original data)
+        # for _path in tqdm(nifti_paths):
+        #     # Adjust spacing. Input is original data
+        #     target_path = Path(_path.replace('L1_original', 'L1_original'))
+        #     ni_data = nib.load(_path)
+        #     ni_data = adjust_spacing(ni_data, REF_SPACING, device)
+
+
+        for _path in tqdm(l1_nifti_paths):
+            # Resample and pad. Input is original data
+            target_path = Path(_path.replace('L1_original', 'L2_resampled_05mm'))
+            is_label =  ("_Label" in _path)
+            ni_data = nib.load(_path)
+            ni_data = interpolate_and_pad(ni_data, REF_SPACING, REF_SHAPE, is_label, device=device)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            nib.save(ni_data, target_path)
 
     print("Building L3 ...")
-    for _path in tqdm(l2_nifti_paths):
-        # Save coarse crops. Input is resampled data at 0.5mm
-        target_path = Path(_path.replace('L2_resampled_05mm', 'L3_coarse_fixed_crop'))
-        is_label =  ("_Label" in _path)
-        is_target_domain = ("hrT2" in _path)
+    for s_dir in subdirs:
+        source_dir = Path(base_dir, s_dir)
+        print(f"Processing {source_dir}")
+        l1_nifti_paths = nsets.get_nifti_filepaths(
+            source_dir,
+            with_subdirs=True
+        )
+        # l1_nifti_paths = l1_nifti_paths[0:2] # DEBUG
 
-        target_path_left = Path(str(target_path).replace('.nii.gz', '_l.nii.gz'))
-        target_path_right = Path(str(target_path).replace('.nii.gz', '_r.nii.gz'))
+        l2_nifti_paths = [_path.replace("L1_original", "L2_resampled_05mm") for _path in l1_nifti_paths]
 
-        ni_data = nib.load(_path)
-        ni_left, ni_right = split_lr_sides_fixed(ni_data, is_target_domain, device=device)
-        target_path_left.parent.mkdir(parents=True, exist_ok=True)
-        nib.save(ni_left, target_path_left)
-        nib.save(ni_right, target_path_right)
+        for _path in tqdm(l2_nifti_paths):
+            # Save coarse crops. Input is resampled data at 0.5mm
+            target_path = Path(_path.replace('L2_resampled_05mm', 'L3_coarse_fixed_crop'))
+            is_label =  ("_Label" in _path)
+            is_target_domain = ("hrT2" in _path)
 
-    l2_label_paths = [_path for _path in l2_nifti_paths if "_Label" in _path]
+            target_path_left = Path(str(target_path).replace('.nii.gz', '_l.nii.gz'))
+            target_path_right = Path(str(target_path).replace('.nii.gz', '_r.nii.gz'))
+
+            ni_data = nib.load(_path)
+            ni_left, ni_right = split_lr_sides_fixed(ni_data, is_target_domain, device=device)
+            target_path_left.parent.mkdir(parents=True, exist_ok=True)
+            nib.save(ni_left, target_path_left)
+            nib.save(ni_right, target_path_right)
 
     print("Building L4 ...")
     cochlea_centers = torch.load(cochlea_centers_path)
 
-    for label_path in tqdm(l2_label_paths):
-        # Save fine crops. Input is coarse crop for cochlea, resampled data at 0.5mm and resampled data at 0.5mm for img and label
-        image_path = label_path.replace('_Label', '')
-        is_target_domain = ("hrT2" in label_path)
+    for s_dir in subdirs:
+        source_dir = Path(base_dir, s_dir)
+        print(f"Processing {source_dir}")
+        l1_nifti_paths = nsets.get_nifti_filepaths(
+            source_dir,
+            with_subdirs=True
+        )
+        # l1_nifti_paths = l1_nifti_paths[0:2] # DEBUG
+        l2_nifti_paths = [_path.replace("L1_original", "L2_resampled_05mm") for _path in l1_nifti_paths]
 
-        if is_target_domain:
-            image_path = image_path.replace('__omitted_labels_target_training__', 'target_training_unlabeled')
-            image_path = image_path.replace('__omitted_labels_target_validation__', 'target_validation_unlabeled')
+        l2_label_paths = [_path for _path in l2_nifti_paths if "_Label" in _path]
 
-        ni_image = nib.load(image_path)
-        ni_label = nib.load(label_path)
-        target_path_image = Path(image_path.replace('L2_resampled_05mm', 'L4_fine_localized_crop'))
-        target_path_label = Path(label_path.replace('L2_resampled_05mm', 'L4_fine_localized_crop'))
-        id_num = re.match(r".*/crossmoda_([0-9]{1,3})_", label_path).group(1)
+        for label_path in tqdm(l2_label_paths):
+            # Save fine crops. Input is coarse crop for cochlea, resampled data at 0.5mm and resampled data at 0.5mm for img and label
+            image_path = label_path.replace('_Label', '')
+            is_target_domain = ("hrT2" in label_path)
 
-        target_path_image.parent.mkdir(parents=True, exist_ok=True)
-        target_path_label.parent.mkdir(parents=True, exist_ok=True)
+            if is_target_domain:
+                image_path = image_path.replace('__omitted_labels_target_training__', 'target_training_unlabeled')
+                image_path = image_path.replace('__omitted_labels_target_validation__', 'target_validation_unlabeled')
 
-        for lr_id in ['l', 'r']:
-            ni_image_cropped, ni_label_cropped = apply_fine_crop(ni_image, ni_label, is_target_domain, lr_id, BBOX_REF_SHAPE, cochlea_centers, id_num)
-            target_path_image_side = Path(str(target_path_image).replace('.nii.gz', f'_{lr_id}.nii.gz'))
-            target_path_label_side = Path(str(target_path_label).replace('.nii.gz', f'_{lr_id}.nii.gz'))
-            if ni_image_cropped: nib.save(ni_image_cropped, target_path_image_side)
-            if ni_label_cropped: nib.save(ni_label_cropped, target_path_label_side)
+            ni_image = nib.load(image_path)
+            ni_label = nib.load(label_path)
+            target_path_image = Path(image_path.replace('L2_resampled_05mm', 'L4_fine_localized_crop'))
+            target_path_label = Path(label_path.replace('L2_resampled_05mm', 'L4_fine_localized_crop'))
+            id_num = re.match(r".*/crossmoda_([0-9]{1,3})_", label_path).group(1)
+
+            target_path_image.parent.mkdir(parents=True, exist_ok=True)
+            target_path_label.parent.mkdir(parents=True, exist_ok=True)
+
+            for lr_id in ['l', 'r']:
+                ni_image_cropped, ni_label_cropped = apply_fine_crop(ni_image, ni_label, is_target_domain, lr_id, BBOX_REF_SHAPE, cochlea_centers, id_num)
+                target_path_image_side = Path(str(target_path_image).replace('.nii.gz', f'_{lr_id}.nii.gz'))
+                target_path_label_side = Path(str(target_path_label).replace('.nii.gz', f'_{lr_id}.nii.gz'))
+                if ni_image_cropped: nib.save(ni_image_cropped, target_path_image_side)
+                if ni_label_cropped: nib.save(ni_label_cropped, target_path_label_side)
 
 
 def main(argv):
@@ -263,23 +294,14 @@ def main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input-folder", required=True)
     parser.add_argument("-c", "--cochlea-centers", required=True)
-    parser.add_argument("-s", "--subdirs", required=False)
     parser.add_argument("-d", "--device", required=False, default="cpu")
     args = parser.parse_args(argv)
 
     base_dir = Path(args.input_folder)
-    if not args.subdirs:
-        all_source_dirs = ['']
-    else:
-        all_subdirs = args.subdirs.split(',')
+    base_dir = base_dir.joinpath("L1_original")
+    assert base_dir.is_dir(), f"Base directory '{base_dir}' does not exist."
 
-    for sub in all_subdirs:
-        source_dir = base_dir.joinpath("L1_original", sub) # TODO widen
-        print(f"Processing {source_dir} ...")
-
-        assert source_dir.is_dir(), f"Source directory '{source_dir}' does not exist."
-
-        preprocess(source_dir, args.cochlea_centers, args.device)
+    preprocess(base_dir, args.cochlea_centers, args.device)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
