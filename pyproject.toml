@@ -23,6 +23,7 @@ nnunet = "^1.7.0"
 pydicom = "^2.3.0"
 natsort = "^8.1.0"
 paramiko = "^2.10.3"
+SimpleITK = "^2.1.1"
 
 [build-system]
 requires = ["poetry-core"]
