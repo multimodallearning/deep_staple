@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.13.5
+#       jupytext_version: 1.13.8
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -21,8 +21,8 @@ import random
 import re
 import warnings
 import glob
-from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars
-os.environ.update(get_vars(select="* -4"))
+from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars # TODO clean
+os.environ.update(get_vars(select="* -4")) # TODO clean
 import pickle
 import copy
 from pathlib import Path
@@ -47,108 +47,25 @@ import matplotlib.pyplot as plt
 from IPython.display import display
 from sklearn.model_selection import KFold
 
-from mdl_seg_class.metrics import dice3d, dice2d
-from mdl_seg_class.visualization import visualize_seg
+from mdl_seg_class.metrics import dice3d, dice2d # TODO clean
+from mdl_seg_class.visualization import visualize_seg # TODO clean
 
 from curriculum_deeplab.mindssc import mindssc
-from curriculum_deeplab.utils import interpolate_sample, in_notebook, dilate_label_class, LabelDisturbanceMode, ensure_dense
 from curriculum_deeplab.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader, get_crossmoda_data_load_closure
 from curriculum_deeplab.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D, MobileNet_ASPP_3D
+from curriculum_deeplab.utils.torch_utils import get_batch_dice_per_class, get_batch_dice_over_all, get_2d_stack_batch_size, \
+    make_2d_stack_from_3d, make_3d_from_2d_stack, interpolate_sample, dilate_label_class, ensure_dense, get_module, set_module, save_model, reset_determinism
+from curriculum_deeplab.utils.common_utils import DotDict, DataParamMode, LabelDisturbanceMode, in_notebook, get_script_dir
+from curriculum_deeplab.utils.log_utils import get_global_idx, log_data_parameter_stats, log_class_dices
 
 print(torch.__version__)
 print(torch.backends.cudnn.version())
 print(torch.cuda.get_device_name(0))
 
-if in_notebook:
-    THIS_SCRIPT_DIR = os.path.abspath('')
-else:
-    THIS_SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+THIS_SCRIPT_DIR = get_script_dir(__file__)
 print(f"Running in: {THIS_SCRIPT_DIR}")
 
-def get_batch_dice_per_class(b_dice, class_tags, exclude_bg=True) -> dict:
-    score_dict = {}
-    for cls_idx, cls_tag in enumerate(class_tags):
-        if exclude_bg and cls_idx == 0:
-            continue
-
-        if torch.all(torch.isnan(b_dice[:,cls_idx])):
-            score = float('nan')
-        else:
-            score = np.nanmean(b_dice[:,cls_idx]).item()
-
-        score_dict[cls_tag] = score
-
-    return score_dict
-
-def get_batch_dice_over_all(b_dice, exclude_bg=True) -> float:
-
-    start_idx = 1 if exclude_bg else 0
-    if torch.all(torch.isnan(b_dice[:,start_idx:])):
-        return float('nan')
-    return np.nanmean(b_dice[:,start_idx:]).item()
-
-
-
-def get_2d_stack_batch_size(b_input_size: torch.Size, stack_dim):
-    assert len(b_input_size) == 5, f"Input size must be 5D: BxCxDxHxW but is {b_input_size}"
-    if stack_dim == "D":
-        return b_input_size[0]*b_input_size[2]
-    if stack_dim == "H":
-        return b_input_size[0]*b_input_size[3]
-    if stack_dim == "W":
-        return b_input_size[0]*b_input_size[4]
-    else:
-        raise ValueError(f"stack_dim '{stack_dim}' must be 'D' or 'H' or 'W'.")
-
-
-
-def make_2d_stack_from_3d(b_input, stack_dim):
-    assert b_input.dim() == 5, f"Input must be 5D: BxCxDxHxW but is {b_input.shape}"
-    B, C, D, H, W = b_input.shape
-
-    if stack_dim == "D":
-        return b_input.permute(0, 2, 1, 3, 4).reshape(B*D, C, H, W)
-    if stack_dim == "H":
-        return b_input.permute(0, 3, 1, 2, 4).reshape(B*H, C, D, W)
-    if stack_dim == "W":
-        return b_input.permute(0, 4, 1, 2, 3).reshape(B*W, C, D, H)
-    else:
-        raise ValueError(f"stack_dim '{stack_dim}' must be 'D' or 'H' or 'W'.")
-
-
-
-def make_3d_from_2d_stack(b_input, stack_dim, orig_stack_size):
-    assert b_input.dim() == 4, f"Input must be 4D: (orig_batch_size/B)xCxSPAT1xSPAT0 but is {b_input.shape}"
-    B, C, SPAT1, SPAT0 = b_input.shape
-    b_input = b_input.reshape(orig_stack_size, int(B//orig_stack_size), C, SPAT1, SPAT0)
-
-    if stack_dim == "D":
-        return b_input.permute(0, 2, 1, 3, 4)
-    if stack_dim == "H":
-        return b_input.permute(0, 2, 3, 1, 4)
-    if stack_dim == "W":
-        return b_input.permute(0, 2, 3, 4, 1)
-    else:
-        raise ValueError(f"stack_dim is '{stack_dim}' but must be 'D' or 'H' or 'W'.")
-
 # %%
-class DataParamMode(Enum):
-    INSTANCE_PARAMS = auto()
-    DISABLED = auto()
-
-class DotDict(dict):
-    """dot.notation access to dictionary attributes
-        See https://stackoverflow.com/questions/49901590/python-using-copy-deepcopy-on-dotdict
-    """
-
-    def __getattr__(self, item):
-        try:
-            return self[item]
-        except KeyError as e:
-            raise AttributeError from e
-
-    __setattr__ = dict.__setitem__
-    __delattr__ = dict.__delitem__
 
 config_dict = DotDict({
     'num_folds': 3,
@@ -162,7 +79,6 @@ config_dict = DotDict({
     'batch_size': 8,
     'val_batch_size': 1,
     'use_2d_normal_to': None,
-    'train_patchwise': False,
 
     'num_val_images': 20,
     'atlas_count': 1,
@@ -177,18 +93,18 @@ config_dict = DotDict({
     'use_scheduling': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS, # DataParamMode.DISABLED
     'init_inst_param': 0.0,
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,
     'use_fixed_weighting': True,
-    'use_ool_dp_loss': False,
+    'use_ool_dp_loss': True,
 
+    # Extended config for loading pretrained data
     'fixed_weight_file': None,
-    'fixed_weight_min_quantile': None,#.9,
+    'fixed_weight_min_quantile': None,
     'fixed_weight_min_value': None,
     'override_embedding_weights': False,
-    # ),
 
     'save_every': 200,
     'mdl_save_prefix': 'data/models',
@@ -205,13 +121,13 @@ config_dict = DotDict({
     'save_dp_figures': False,
     'save_labels': False,
 
-    'disturbance_mode': None,
+    # Disturbance settings
+    'disturbance_mode': None, # LabelDisturbanceMode.FLIP_ROLL, LabelDisturbanceMode.AFFINE
     'disturbance_strength': 0.,
     'disturbed_percentage': 0.,
 })
 
-if config_dict.train_patchwise:
-    raise NotImplementedError()
+
 
 # %%
 def prepare_data(config):
@@ -222,8 +138,8 @@ def prepare_data(config):
         if config.reg_state == "mix_combined_best":
             config.atlas_count = 1
             domain = 'source'
-            label_data_left = torch.load('./data/optimal_reg_left.pth')
-            label_data_right = torch.load('./data/optimal_reg_right.pth')
+            label_data_left = torch.load('./data/optimal_reg_left.pth') # TODO clean
+            label_data_right = torch.load('./data/optimal_reg_right.pth') # TODO clean
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
 
             perm = np.random.permutation(len(loaded_identifier))
@@ -242,8 +158,8 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_combined_best":
             config.atlas_count = 2
             domain = 'source'
-            label_data_left = torch.load('./data/optimal_reg_left.pth')
-            label_data_right = torch.load('./data/optimal_reg_right.pth')
+            label_data_left = torch.load('./data/optimal_reg_left.pth') # TODO clean
+            label_data_right = torch.load('./data/optimal_reg_right.pth') # TODO clean
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
             best_label_data = torch.cat([label_data_left['best_all'][:44], label_data_right['best_all'][:63]], dim=0)
             combined_label_data = torch.cat([label_data_left['combined_all'][:44], label_data_right['combined_all'][:63]], dim=0)
@@ -253,8 +169,8 @@ def prepare_data(config):
         elif config.reg_state == "best":
             config.atlas_count = 1
             domain = 'source'
-            label_data_left = torch.load('./data/optimal_reg_left.pth')
-            label_data_right = torch.load('./data/optimal_reg_right.pth')
+            label_data_left = torch.load('./data/optimal_reg_left.pth') # TODO clean
+            label_data_right = torch.load('./data/optimal_reg_right.pth') # TODO clean
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
             postfix = 'mBST'
@@ -263,8 +179,8 @@ def prepare_data(config):
         elif config.reg_state == "combined":
             config.atlas_count = 1
             domain = 'source'
-            label_data_left = torch.load('./data/optimal_reg_left.pth')
-            label_data_right = torch.load('./data/optimal_reg_right.pth')
+            label_data_left = torch.load('./data/optimal_reg_left.pth') # TODO clean
+            label_data_right = torch.load('./data/optimal_reg_right.pth') # TODO clean
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
             postfix = 'mCMB'
@@ -273,7 +189,7 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_convex_adam_FT2_MT1":
             config.atlas_count = 10
             domain = 'target'
-            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220318_crossmoda_convex_adam_lr/crossmoda_convex_registered_new_convex.pth")
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220318_crossmoda_convex_adam_lr/crossmoda_convex_registered_new_convex.pth") # TODO clean
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
@@ -287,7 +203,7 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_every_third_deeds_FT2_MT1":
             config.atlas_count = 10
             domain = 'target'
-            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth")
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth") # TODO clean
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
@@ -301,7 +217,7 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_every_deeds_FT2_MT1":
             config.atlas_count = 30
             domain = 'target'
-            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth")
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth") # TODO clean
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
@@ -309,7 +225,6 @@ def prepare_data(config):
                 for idx_mov, (moving_id, moving_sample) in enumerate(sorted_moving_dict.items()):
                     label_data.append(moving_sample['warped_label'].cpu())
                     loaded_identifier.append(f"{fixed_id}:m{moving_id}")
-
 
         else:
             raise ValueError()
@@ -333,7 +248,7 @@ def prepare_data(config):
         # Use double size in 2D prediction, normal size in 3D
         pre_interpolation_factor = 2. if config.use_2d_normal_to is not None else 1.5
         clsre = get_crossmoda_data_load_closure(
-            base_dir="/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
+            base_dir="/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/", # TODO clean
             domain=domain, state='l4', use_additional_data=False,
             size=(128,128,128), resample=True, normalize=True, crop_3d_w_dim_range=config.crop_3d_w_dim_range,
             ensure_labeled_pairs=True, modified_3d_label_override=modified_3d_label_override,
@@ -351,49 +266,11 @@ def prepare_data(config):
             fixed_weight_file=config.fixed_weight_file, fixed_weight_min_quantile=config.fixed_weight_min_quantile, fixed_weight_min_value=config.fixed_weight_min_value,
         )
 
-        # validation_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
-        #     domain="validation", state="l4", ensure_labeled_pairs=True)
-        # target_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
-        #     domain="target", state="l4", ensure_labeled_pairs=True)
-
-    if config.dataset == 'ixi':
-        raise NotImplementedError()
-        # Use double size in 2D prediction, normal size in 3D
-        pre_interpolation_factor = 2. if config.use_2d_normal_to is not None else 1.
-        clsre = get_ixi_data_load_closure()
-        training_dataset = IXIHybridIdLoader(
-            clsre,
-            ensure_labeled_pairs=True,
-            max_load_3d_num=config.train_set_max_len,
-            modified_3d_label_override=modified_3d_label_override, prevent_disturbance=prevent_disturbance,
-            use_2d_normal_to=config.use_2d_normal_to,
-            crop_2d_slices_gt_num_threshold=config.crop_2d_slices_gt_num_threshold,
-            pre_interpolation_factor=pre_interpolation_factor
-        )
-        training_dataset.eval()
-        print(f"Nonzero slices: " \
-            f"{sum([b['label'].unique().numel() > 1 for b in training_dataset])/len(training_dataset)*100}%"
-        )
-        # validation_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
-        #     domain="validation", state="l4", ensure_labeled_pairs=True)
-        # target_dataset = CrossmodaHybridIdLoader("/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/",
-        #     domain="target", state="l4", ensure_labeled_pairs=True)
-
-
-    elif config['dataset'] == 'organmnist3d':
-        training_dataset = WrapperOrganMNIST3D(
-            split='train', root='./data/medmnist', download=True, normalize=True,
-            max_load_num=300, crop_3d_w_dim_range=None,
-            disturbed_idxs=None, use_2d_normal_to='W'
-        )
-        print(training_dataset.mnist_set.info)
-        print("Classes: ", training_dataset.label_tags)
-        print("Samples: ", len(training_dataset))
-
     return training_dataset
 
 # %%
-if False:
+if config_dict['do_plot']:
+    # Plot label voxel W-dim distribution
     training_dataset = prepare_data(config_dict)
     _, all_labels, _ = training_dataset.get_data(use_2d_override=False)
     print(all_labels.shape)
@@ -404,12 +281,6 @@ if False:
 
 
 # %%
-def get_global_idx(fold_idx, epoch_idx, max_epochs):
-    # Get global index e.g. 2250 for fold_idx=2, epoch_idx=250 @ max_epochs<1000
-    return 10**len(str(int(max_epochs)))*fold_idx + epoch_idx
-
-
-
 def save_parameter_figure(_path, title, text, parameters, reweighted_parameters, dices):
     # Show weights and weights with compensation
     fig, axs = plt.subplots(1,2, figsize=(12, 4), dpi=80)
@@ -448,48 +319,6 @@ def calc_inst_parameters_in_target_pos_ratio(dpm, disturbed_inst_idxs, target_po
     ratio = sum(ratio)/target_len
     return ratio
 
-def log_data_parameter_stats(log_path, epx, data_parameters):
-    """Log stats for data parameters on wandb."""
-    wandb.log({f'{log_path}/highest': torch.max(data_parameters).item()}, step=epx)
-    wandb.log({f'{log_path}/lowest': torch.min(data_parameters).item()}, step=epx)
-    wandb.log({f'{log_path}/mean': torch.mean(data_parameters).item()}, step=epx)
-    wandb.log({f'{log_path}/std': torch.std(data_parameters).item()}, step=epx)
-
-
-
-def reset_determinism():
-    torch.manual_seed(0)
-    random.seed(0)
-    np.random.seed(0)
-    # torch.use_deterministic_algorithms(True)
-
-
-
-
-def log_class_dices(log_prefix, log_postfix, class_dices, log_idx):
-    if not class_dices:
-        return
-
-    for cls_name in class_dices[0].keys():
-        log_path = f"{log_prefix}{cls_name}{log_postfix}"
-
-        cls_dices = list(map(lambda dct: dct[cls_name], class_dices))
-        mean_per_class =np.nanmean(cls_dices)
-        print(log_path, f"{mean_per_class*100:.2f}%")
-        wandb.log({log_path: mean_per_class}, step=log_idx)
-
-def CELoss(logits, targets, bin_weight=None):
-    # -logits[0,targets[0,0,0],0,0]+torch.log(logits[0,:,0,0].exp().sum())
-    targets = torch.nn.functional.one_hot(targets).permute(0,3,1,2)
-    loss = -targets*F.log_softmax(logits, 1)
-
-    if bin_weight is not None:
-        brdcast_shape = torch.Size((loss.shape[0], loss.shape[1], *((loss.dim()-2)*[1])))
-        inv_weight = (bin_weight+np.exp(1)).log()+np.exp(1)
-        inv_weight = inv_weight/inv_weight.mean()
-        loss = inv_weight.view(brdcast_shape)*loss
-
-    return loss.sum(dim=1)
 
 # %%
 training_dataset = prepare_data(config_dict)
@@ -529,44 +358,6 @@ if config_dict['do_plot']:
         alpha_seg = .5
     )
 
-# %%
-#Add functions to replace modules of a model
-MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, nn.Sequential) \
-                                              else getattr(self, key)
-
-def get_module(module, keychain):
-    """Retrieves any module inside a pytorch module for a given keychain.
-       module.named_ to retrieve valid keychains for layers.
-    """
-
-    return functools.reduce(MOD_GET_FN, keychain.split('.'), module)
-
-def set_module(module, keychain, replacee):
-    """Replaces any module inside a pytorch module for a given keychain with "replacee".
-       Use module.named_modules() to retrieve valid keychains for layers.
-       e.g.
-       first_keychain = list(module.keys())[0]
-       new_first_replacee = torch.nn.Conv1d(1,2,3)
-       set_module(first_keychain, torch.nn.Conv1d(1,2,3))
-    """
-
-    key_list = keychain.split('.')
-    root = functools.reduce(MOD_GET_FN, key_list[:-1], module)
-    leaf = key_list[-1]
-    if isinstance(root, nn.Sequential):
-        root[int(leaf)] = replacee
-    else:
-        setattr(root, leaf, replacee)
-
-
-# %%
-def save_model(_path, **statefuls):
-    _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
-    _path.mkdir(exist_ok=True, parents=True)
-
-    for name, stful in statefuls.items():
-        if stful != None:
-            torch.save(stful.state_dict(), _path.joinpath(name+'.pth'))
 
 
 
@@ -661,12 +452,8 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
     return (lraspp, optimizer, scheduler, optimizer_dp, embedding, scaler, scaler_dp)
 
 
-# %%
-def map_embedding_idxs(idxs, grid_size_y, grid_size_x):
-    with torch.no_grad():
-        t_sz = grid_size_y * grid_size_x
-        return ((idxs*t_sz).long().repeat(t_sz).view(t_sz, idxs.numel())+torch.tensor(range(t_sz)).to(idxs).view(t_sz,1)).permute(1,0).reshape(-1)
 
+# %%
 def inference_wrap(lraspp, img, use_2d, use_mind):
     with torch.inference_mode():
         b_img = img.unsqueeze(0).unsqueeze(0).float()
@@ -684,6 +471,8 @@ def inference_wrap(lraspp, img, use_2d, use_mind):
         b_out = lraspp(b_img)['out']
         b_out = b_out.argmax(1)
         return b_out
+
+
 
 def train_DL(run_name, config, training_dataset):
     reset_determinism()
@@ -718,8 +507,6 @@ def train_DL(run_name, config, training_dataset):
         train_idxs = torch.tensor(train_idxs)
         val_idxs = torch.tensor(val_idxs)
         all_3d_ids = training_dataset.get_3d_ids()
-
-        # Override fold idxs #TODO automate
 
         if config.debug:
             num_val_images = 2
@@ -773,6 +560,7 @@ def train_DL(run_name, config, training_dataset):
             )
             disturbed_bool_vect = torch.zeros(len(training_dataset))
             disturbed_bool_vect[training_dataset.disturbed_idxs] = 1.
+
         else:
             disturbed_bool_vect = torch.zeros(len(training_dataset))
 
@@ -791,8 +579,6 @@ def train_DL(run_name, config, training_dataset):
         else:
             in_channels = 1
 
-
-
         ### Add train sampler and dataloaders ##
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_idxs)
         # val_subsampler = torch.utils.data.SubsetRandomSampler(val_idxs)
@@ -802,7 +588,7 @@ def train_DL(run_name, config, training_dataset):
             # collate_fn=training_dataset.get_efficient_augmentation_collate_fn()
         )
 
-        # training_dataset.set_augment_at_collate(True)
+        # training_dataset.set_augment_at_collate(True) # This function does not work as expected. Scores get worse.
 
         ### Get model, data parameters, optimizers for model and data parameters, as well as grad scaler ###
         if 'checkpoint_epx' in config and config['checkpoint_epx'] is not None:
@@ -819,7 +605,7 @@ def train_DL(run_name, config, training_dataset):
         (lraspp, optimizer, scheduler, optimizer_dp, embedding, scaler, scaler_dp) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
             THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
 
-        t0 = time.time()
+        t_start = time.time()
 
         dice_func = dice2d if config.use_2d_normal_to is not None else dice3d
 
@@ -847,7 +633,7 @@ def train_DL(run_name, config, training_dataset):
                 wise_dice[d_idxs] = dsc.cpu()
                 gt_num[d_idxs] = (mod_label > 0).sum(dim=n_dims).float().cpu()
 
-            class_weights = 1/(bn_count).float().pow(.35)
+            class_weights = 1 / (bn_count).float().pow(.35)
             class_weights /= class_weights.mean()
 
             fixed_weighting = (gt_num+np.exp(1)).log()+np.exp(1)
@@ -876,7 +662,6 @@ def train_DL(run_name, config, training_dataset):
 
                 b_img = batch['image']
                 b_seg = batch['label']
-                b_spat_aug_grid = batch['spat_augment_grid']
 
                 b_seg_modified = batch['modified_label']
                 b_idxs_dataset = batch['dataset_idx']
@@ -886,7 +671,6 @@ def train_DL(run_name, config, training_dataset):
                 b_seg_modified = b_seg_modified.cuda()
                 b_idxs_dataset = b_idxs_dataset.cuda()
                 b_seg = b_seg.cuda()
-                b_spat_aug_grid = b_spat_aug_grid.cuda()
 
                 if training_dataset.use_2d() and config.use_mind:
                     # MIND 2D, in Bx1x1xHxW, out BxMINDxHxW
@@ -927,6 +711,7 @@ def train_DL(run_name, config, training_dataset):
                                 param.requires_grad = False
                             lraspp.use_checkpointing = False
                             dp_logits = lraspp(b_img)['out']
+
                         else:
                             # Do not run a second forward pass
                             for param in lraspp.parameters():
@@ -1008,8 +793,9 @@ def train_DL(run_name, config, training_dataset):
                     break
 
             ### Logging ###
-            print(f"### Log epoch {epx} @ {time.time()-t0:.2f}s")
+            print(f"### Log epoch {epx} @ {time.time()-t_start:.2f}s")
             print("### Training")
+
             ### Log wandb data ###
             # Log the epoch idx per fold - so we can recover the diagram by setting
             # ref_epoch_idx as x-axis in wandb interface
@@ -1236,11 +1022,11 @@ def train_DL(run_name, config, training_dataset):
             if training_dataset.use_2d():
                 reduce_dim = None
                 in_type = "batch_2D"
-                skip_writeout = len(training_dataset) > 3000
+                skip_writeout = len(training_dataset) > 3000 # Restrict dataset size to be visualized
             else:
                 reduce_dim = "W"
                 in_type = "batch_3D"
-                skip_writeout = len(training_dataset) > 150
+                skip_writeout = len(training_dataset) > 150 # Restrict dataset size to be visualized
             skip_writeout = True
 
             if not skip_writeout:
@@ -1342,7 +1128,6 @@ def sweep_run():
         training_dataset = prepare_data(config)
         train_DL(run_name, config, training_dataset)
 
-
 if config_dict['do_sweep']:
     # Integrate all config_dict entries into sweep_dict.parameters -> sweep overrides config_dict
     cp_config_dict = copy.deepcopy(config_dict)
@@ -1373,9 +1158,12 @@ else:
 if not in_notebook():
     sys.exit(0)
 
+# %%
+# Do any postprocessing / visualization in notebook here
+
 d_set = prepare_data(config_dict)
 
-# %%
+# %% TODO clean
 config = config_dict
 training_dataset = d_set
 all_3d_ids = training_dataset.get_3d_ids()
@@ -1414,7 +1202,7 @@ else:
 print(f"Validation 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
 
 
-# %%
+
 train_3d_ids = training_dataset.switch_3d_identifiers(train_3d_idxs)
 val_label_paths = {_id: training_dataset.img_paths[_id] for _id in val_3d_ids}
 val_image_paths = {_id: training_dataset.img_paths[_id] for _id in val_3d_ids}
