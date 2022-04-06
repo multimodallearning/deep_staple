@@ -153,8 +153,8 @@ def prepare_data(config):
             best_choice = perm[:_clen]
             combined_choice = perm[_clen:]
 
-            best_label_data = torch.cat([label_data_left['best_all'][:44], label_data_right['best_all'][:63]], dim=0)[best_choice]
-            combined_label_data = torch.cat([label_data_left['combined_all'][:44], label_data_right['combined_all'][:63]], dim=0)[combined_choice]
+            best_label_data = torch.cat([label_data_left['best_all'].to_dense()[:44], label_data_right['best_all'].to_dense()[:63]], dim=0)[best_choice]
+            combined_label_data = torch.cat([label_data_left['combined_all'].to_dense()[:44], label_data_right['combined_all'].to_dense()[:63]], dim=0)[combined_choice]
             label_data = torch.zeros([107,128,128,128])
             label_data[best_choice] = best_label_data
             label_data[combined_choice] = combined_label_data
@@ -167,8 +167,8 @@ def prepare_data(config):
             label_data_left = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_left.pth"))
             label_data_right = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_right.pth"))
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
-            best_label_data = torch.cat([label_data_left['best_all'][:44], label_data_right['best_all'][:63]], dim=0)
-            combined_label_data = torch.cat([label_data_left['combined_all'][:44], label_data_right['combined_all'][:63]], dim=0)
+            best_label_data = torch.cat([label_data_left['best_all'].to_dense()[:44], label_data_right['best_all'].to_dense()[:63]], dim=0)
+            combined_label_data = torch.cat([label_data_left['combined_all'].to_dense()[:44], label_data_right['combined_all'].to_dense()[:63]], dim=0)
             label_data = torch.cat([best_label_data, combined_label_data])
             loaded_identifier = [_id+':mBST' for _id in loaded_identifier] + [_id+':mCMB' for _id in loaded_identifier]
 
@@ -178,7 +178,7 @@ def prepare_data(config):
             label_data_left = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_left.pth"))
             label_data_right = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_right.pth"))
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
-            label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
+            label_data = torch.cat([label_data_left[config.reg_state+'_all'].to_dense()[:44], label_data_right[config.reg_state+'_all'].to_dense()[:63]], dim=0)
             postfix = 'mBST'
             loaded_identifier = [_id+':'+postfix for _id in loaded_identifier]
 
@@ -188,7 +188,7 @@ def prepare_data(config):
             label_data_left = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_left.pth"))
             label_data_right = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_right.pth"))
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
-            label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
+            label_data = torch.cat([label_data_left[config.reg_state+'_all'].to_dense()[:44], label_data_right[config.reg_state+'_all'].to_dense()[:63]], dim=0)
             postfix = 'mCMB'
             loaded_identifier = [_id+':'+postfix for _id in loaded_identifier]
 
