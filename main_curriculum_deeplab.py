@@ -21,8 +21,6 @@ import random
 import re
 import warnings
 import glob
-from meidic_vtach_utils.run_on_recommended_cuda import get_cuda_environ_vars as get_vars # TODO clean
-os.environ.update(get_vars(select="* -4")) # TODO clean
 import pickle
 import copy
 from pathlib import Path
@@ -33,6 +31,11 @@ import functools
 from enum import Enum, auto
 
 import numpy as np
+
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
+os.environ['MKL_THREADING_LAYER'] = 'GNU'
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -47,9 +50,8 @@ import matplotlib.pyplot as plt
 from IPython.display import display
 from sklearn.model_selection import KFold
 
-from mdl_seg_class.metrics import dice3d, dice2d # TODO clean
-from mdl_seg_class.visualization import visualize_seg # TODO clean
-
+from deep_staple.metrics import dice3d, dice2d
+from deep_staple.visualization import visualize_seg
 from deep_staple.mindssc import mindssc
 from deep_staple.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader, get_crossmoda_data_load_closure
 from deep_staple.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D, MobileNet_ASPP_3D
@@ -84,6 +86,7 @@ config_dict = DotDict({
     'atlas_count': 1,
 
     'dataset': 'crossmoda',
+    'dataset_directory': Path(THIS_SCRIPT_DIR, "data/crossmoda_dataset"),
     'reg_state': "acummulate_every_third_deeds_FT2_MT1",
     'train_set_max_len': None,
     'crop_3d_w_dim_range': (45, 95),
@@ -138,8 +141,8 @@ def prepare_data(config):
         if config.reg_state == "mix_combined_best":
             config.atlas_count = 1
             domain = 'source'
-            label_data_left = torch.load('./data/optimal_reg_left.pth') # TODO clean
-            label_data_right = torch.load('./data/optimal_reg_right.pth') # TODO clean
+            label_data_left = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_left.pth"))
+            label_data_right = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_right.pth"))
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
 
             perm = np.random.permutation(len(loaded_identifier))
@@ -158,8 +161,8 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_combined_best":
             config.atlas_count = 2
             domain = 'source'
-            label_data_left = torch.load('./data/optimal_reg_left.pth') # TODO clean
-            label_data_right = torch.load('./data/optimal_reg_right.pth') # TODO clean
+            label_data_left = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_left.pth"))
+            label_data_right = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_right.pth"))
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
             best_label_data = torch.cat([label_data_left['best_all'][:44], label_data_right['best_all'][:63]], dim=0)
             combined_label_data = torch.cat([label_data_left['combined_all'][:44], label_data_right['combined_all'][:63]], dim=0)
@@ -169,8 +172,8 @@ def prepare_data(config):
         elif config.reg_state == "best":
             config.atlas_count = 1
             domain = 'source'
-            label_data_left = torch.load('./data/optimal_reg_left.pth') # TODO clean
-            label_data_right = torch.load('./data/optimal_reg_right.pth') # TODO clean
+            label_data_left = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_left.pth"))
+            label_data_right = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_right.pth"))
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
             postfix = 'mBST'
@@ -179,8 +182,8 @@ def prepare_data(config):
         elif config.reg_state == "combined":
             config.atlas_count = 1
             domain = 'source'
-            label_data_left = torch.load('./data/optimal_reg_left.pth') # TODO clean
-            label_data_right = torch.load('./data/optimal_reg_right.pth') # TODO clean
+            label_data_left = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_left.pth"))
+            label_data_right = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_right.pth"))
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
             label_data = torch.cat([label_data_left[config.reg_state+'_all'][:44], label_data_right[config.reg_state+'_all'][:63]], dim=0)
             postfix = 'mCMB'
@@ -189,7 +192,7 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_convex_adam_FT2_MT1":
             config.atlas_count = 10
             domain = 'target'
-            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/deep_staple/20220318_crossmoda_convex_adam_lr/crossmoda_convex_registered_new_convex.pth") # TODO clean
+            bare_data = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220318_crossmoda_convex_adam_lr/crossmoda_convex_registered_new_convex.pth"))
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
@@ -203,7 +206,7 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_every_third_deeds_FT2_MT1":
             config.atlas_count = 10
             domain = 'target'
-            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/deep_staple/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth") # TODO clean
+            bare_data = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth"))
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
@@ -217,7 +220,7 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_every_deeds_FT2_MT1":
             config.atlas_count = 30
             domain = 'target'
-            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/deep_staple/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth") # TODO clean
+            bare_data = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth"))
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
@@ -248,7 +251,7 @@ def prepare_data(config):
         # Use double size in 2D prediction, normal size in 3D
         pre_interpolation_factor = 2. if config.use_2d_normal_to is not None else 1.5
         clsre = get_crossmoda_data_load_closure(
-            base_dir="/share/data_supergrover1/weihsbach/shared_data/tmp/CrossMoDa/", # TODO clean
+            base_dir=config.dataset_directory,
             domain=domain, state='l4', use_additional_data=False,
             size=(128,128,128), resample=True, normalize=True, crop_3d_w_dim_range=config.crop_3d_w_dim_range,
             ensure_labeled_pairs=True, modified_3d_label_override=modified_3d_label_override,
@@ -925,7 +928,7 @@ def train_DL(run_name, config, training_dataset):
                             display_seg(in_type="single_3D",
                                 reduce_dim="W",
                                 img=val_sample['image'].unsqueeze(0).cpu(),
-                                seg=val_logits_for_score_3d.squeeze(0).cpu(), # CHECK TODO
+                                seg=val_logits_for_score_3d.squeeze(0).cpu(),
                                 ground_truth=b_val_seg.squeeze(0).cpu(),
                                 crop_to_non_zero_seg=True,
                                 crop_to_non_zero_gt=True,
@@ -1160,63 +1163,3 @@ if not in_notebook():
 
 # %%
 # Do any postprocessing / visualization in notebook here
-
-d_set = prepare_data(config_dict)
-
-# %% TODO clean
-config = config_dict
-training_dataset = d_set
-all_3d_ids = training_dataset.get_3d_ids()
-
-num_val_images = config.num_val_images
-atlas_count = config.atlas_count
-
-if config.use_2d_normal_to is not None:
-    # Override idxs
-    all_3d_ids = training_dataset.get_3d_ids()
-
-    val_3d_idxs = torch.tensor(list(range(0, num_val_images*atlas_count, atlas_count)))
-    val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
-
-    train_3d_idxs = list(range(num_val_images*atlas_count, len(all_3d_ids)))
-
-    # Get corresponding 2D idxs
-    train_2d_ids = []
-    dcts = training_dataset.get_id_dicts()
-    for id_dict in dcts:
-        _2d_id = id_dict['2d_id']
-        _3d_idx = id_dict['3d_dataset_idx']
-        if _2d_id in training_dataset.label_data_2d.keys() and _3d_idx in train_3d_idxs:
-            train_2d_ids.append(_2d_id)
-
-    train_2d_idxs = training_dataset.switch_2d_identifiers(train_2d_ids)
-    train_idxs = torch.tensor(train_2d_idxs)
-
-else:
-    val_3d_idxs = torch.tensor(list(range(0, num_val_images*atlas_count, atlas_count)))
-    val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
-
-    train_3d_idxs = list(range(num_val_images*atlas_count, len(all_3d_ids)))
-    train_idxs = torch.tensor(train_3d_idxs)
-
-print(f"Validation 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
-
-
-
-train_3d_ids = training_dataset.switch_3d_identifiers(train_3d_idxs)
-val_label_paths = {_id: training_dataset.img_paths[_id] for _id in val_3d_ids}
-val_image_paths = {_id: training_dataset.img_paths[_id] for _id in val_3d_ids}
-train_label_paths = {_id: training_dataset.label_paths[_id] for _id in train_3d_ids}
-train_image_paths = {_id: training_dataset.img_paths[_id] for _id in train_3d_ids}
-print(train_3d_ids)
-
-
-path_dict = {}
-path_dict['val_label_paths'] = val_label_paths
-path_dict['val_image_paths'] = val_image_paths
-path_dict['train_label_paths'] = train_label_paths
-path_dict['train_image_paths'] = train_image_paths
-print(len(val_label_paths), len(val_image_paths), len(train_label_paths), len(train_image_paths))
-torch.save(path_dict, f'network_dataset_path_dict_train_{len(train_label_paths)}.pth')
-
-# %%
