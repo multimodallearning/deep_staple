@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 import nibabel as nib
 from tqdm import tqdm
+from pathlib import Path
 
 from deep_staple.HybridIdLoader import HybridIdLoader
 from deep_staple.utils.torch_utils import ensure_dense, restore_sparsity
@@ -107,15 +108,15 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
 
         if not resample: size = states[state.lower()][1] #set size to default defined at top of file
 
-        path = base_dir + state_dir
+        path = Path(base_dir, state_dir)
 
         #get file list
-        if domain.lower() =="ceT1" or domain.lower() =="source":
+        if domain.lower() == "ceT1" or domain.lower() == "source":
             directory = "source_training_labeled/"
             add_directory = "__additional_data_source_domain__"
             domain = "ceT1"
 
-        elif domain.lower() =="hrT2" or domain.lower() =="target":
+        elif domain.lower() == "hrT2" or domain.lower() == "target":
             directory = "target_training_unlabeled/"
             add_directory = "__additional_data_target_domain__"
             domain = "hrT2"
@@ -126,16 +127,16 @@ def get_crossmoda_data_load_closure(base_dir, domain, state, use_additional_data
         else:
             raise Exception("Unknown domain. Choose either 'source', 'target' or 'validation'")
 
-        files = sorted(glob.glob(os.path.join(path+directory , "*.nii.gz")))
+        files = sorted(glob.glob(str(path.joinpath(directory , "*.nii.gz"))))
 
         if domain == "hrT2":
-            files = files+sorted(glob.glob(os.path.join(path+"__omitted_labels_target_training__" , "*.nii.gz")))
+            files = files+sorted(glob.glob(str(path.joinpath("__omitted_labels_target_training__" , "*.nii.gz"))))
 
         if domain.lower() == "validation":
-            files = files+sorted(glob.glob(os.path.join(path+"__omitted_labels_target_validation__" , "*.nii.gz")))
+            files = files+sorted(glob.glob(str(path.joinpath("__omitted_labels_target_validation__" , "*.nii.gz"))))
 
         if use_additional_data and domain.lower() != "validation": #add additional data to file list
-            files = files+sorted(glob.glob(os.path.join(path+add_directory , "*.nii.gz")))
+            files = files+sorted(glob.glob(str(path.joinpath(add_directory , "*.nii.gz"))))
             files = [i for i in files if "additionalLabel" not in i] #remove additional label files
 
         # First read filepaths

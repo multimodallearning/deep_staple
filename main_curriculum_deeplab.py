@@ -134,6 +134,9 @@ config_dict = DotDict({
 
 # %%
 def prepare_data(config):
+
+    assert os.path.isdir(config.dataset_directory), "Dataset directory does not exist."
+
     reset_determinism()
     if config.reg_state:
         print("Loading registered data.")
@@ -251,7 +254,7 @@ def prepare_data(config):
         # Use double size in 2D prediction, normal size in 3D
         pre_interpolation_factor = 2. if config.use_2d_normal_to is not None else 1.5
         clsre = get_crossmoda_data_load_closure(
-            base_dir=config.dataset_directory,
+            base_dir=str(config.dataset_directory),
             domain=domain, state='l4', use_additional_data=False,
             size=(128,128,128), resample=True, normalize=True, crop_3d_w_dim_range=config.crop_3d_w_dim_range,
             ensure_labeled_pairs=True, modified_3d_label_override=modified_3d_label_override,
@@ -272,7 +275,7 @@ def prepare_data(config):
     return training_dataset
 
 # %%
-if config_dict['do_plot']:
+if config_dict['do_plot'] and False:
     # Plot label voxel W-dim distribution
     training_dataset = prepare_data(config_dict)
     _, all_labels, _ = training_dataset.get_data(use_2d_override=False)
@@ -324,10 +327,11 @@ def calc_inst_parameters_in_target_pos_ratio(dpm, disturbed_inst_idxs, target_po
 
 
 # %%
-training_dataset = prepare_data(config_dict)
+
 
 # %%
 if config_dict['do_plot']:
+    training_dataset = prepare_data(config_dict)
 
     # Print transformed 2D data
     training_dataset.train(use_modified=True, augment=False)
@@ -1114,8 +1118,9 @@ def normal_run():
 
         run_name = run.name
         print("Running", run_name)
+        training_dataset = prepare_data(config_dict)
         config = wandb.config
-        training_dataset = prepare_data(config)
+
         train_DL(run_name, config, training_dataset)
 
 def sweep_run():
@@ -1127,8 +1132,9 @@ def sweep_run():
 
         run_name = run.name
         print("Running", run_name)
-        config = wandb.config
         training_dataset = prepare_data(config)
+        config = wandb.config
+
         train_DL(run_name, config, training_dataset)
 
 if config_dict['do_sweep']:

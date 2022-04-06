@@ -6,7 +6,8 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 
-from deep_staple.utils.torch_utils import interpolate_sample, augmentNoise, spatial_augment, LabelDisturbanceMode, torch_manual_seeded, ensure_dense
+from deep_staple.utils.torch_utils import interpolate_sample, augmentNoise, spatial_augment, torch_manual_seeded, ensure_dense
+from deep_staple.utils.common_utils import LabelDisturbanceMode
 
 class HybridIdLoader(Dataset):
     def __init__(self,
@@ -96,19 +97,19 @@ class HybridIdLoader(Dataset):
             for _3d_id, image in self.img_data_3d.items():
                 for idx, img_slc in [(slice_idx, image.select(slice_dim, slice_idx)) \
                                      for slice_idx in range(image.shape[slice_dim])]:
-                    # Set data view for crossmoda id like "003rW100"
+                    # Set data view for id like "003rW100"
                     self.img_data_2d[f"{_3d_id}{use_2d_normal_to}{idx:03d}"] = img_slc
 
             for _3d_id, label in self.label_data_3d.items():
                 for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
                                      for slice_idx in range(label.shape[slice_dim])]:
-                    # Set data view for crossmoda id like "003rW100"
+                    # Set data view for id like "003rW100"
                     self.label_data_2d[f"{_3d_id}{use_2d_normal_to}{idx:03d}"] = lbl_slc
 
             for _3d_id, label in self.modified_label_data_3d.items():
                 for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
                                      for slice_idx in range(label.shape[slice_dim])]:
-                    # Set data view for crossmoda id like "003rW100"
+                    # Set data view for id like "003rW100"
                     self.modified_label_data_2d[f"{_3d_id}{use_2d_normal_to}{idx:03d}"] = lbl_slc
 
             # Postprocessing of 2d slices
@@ -178,7 +179,7 @@ class HybridIdLoader(Dataset):
 
 
         print("Data import finished.")
-        print(f"CrossMoDa loader will yield {'2D' if self.use_2d_normal_to else '3D'} samples")
+        print(f"Dataloader will yield {'2D' if self.use_2d_normal_to else '3D'} samples")
 
     def get_short_3d_ids(self):
         return [self.extract_short_3d_id(_id) for _id in self.get_3d_ids()]
@@ -290,7 +291,7 @@ class HybridIdLoader(Dataset):
             image = self.img_data_2d.get(_id, torch.tensor([]))
             label = self.label_data_2d.get(_id, torch.tensor([]))
 
-            # For 2D crossmoda id cut last 4 "003rW100"
+            # For 2D id cut last 4 "003rW100"
             _3d_id = self.get_3d_from_2d_identifiers(_id)
             image_path = self.img_paths[_3d_id]
             label_path = self.label_paths[_3d_id]

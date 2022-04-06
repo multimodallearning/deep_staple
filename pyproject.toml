@@ -10,8 +10,6 @@ packages = [{include = "deep_staple"}]
 python = "^3.9"
 torch = "*"
 torchvision = "*"
-mdl-seg-class = {git = "git@github.com:MDL-UzL/SegmentationClassification.git", rev = "main"} # TODO clean
-meidic-vtach-utils = {git = "git@github.com:MDL-UzL/meidic_vtach_utils.git", rev = "main"} # TODO clean
 nibabel = "^3.2.1"
 scipy = "^1.6.0"
 scikit-image = "^0.18.3"
