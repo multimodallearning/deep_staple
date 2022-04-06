@@ -4,7 +4,7 @@ import torch
 import nibabel as nib
 import random
 from pathlib import Path
-from mdl_seg_class.metrics import dice3d
+from mdl_seg_class.metrics import dice3d # TODO clean
 
 cases = ['400_deeds', '400_convex_adam']
 

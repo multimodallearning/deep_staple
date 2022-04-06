@@ -1,24 +1,15 @@
 
 import os
 import time
-import random
 import glob
 import re
-import pickle
-import copy
-from pathlib import Path
-import warnings
-from collections.abc import Iterable
-
 import torch
-import torchvision
-import numpy as np
-from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 import nibabel as nib
 from tqdm import tqdm
-from curriculum_deeplab.HybridIdLoader import HybridIdLoader
-from curriculum_deeplab.utils import ensure_dense, restore_sparsity
+
+from deep_staple.HybridIdLoader import HybridIdLoader
+from deep_staple.utils.torch_utils import ensure_dense, restore_sparsity
 
 
 

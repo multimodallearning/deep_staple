@@ -50,13 +50,13 @@ from sklearn.model_selection import KFold
 from mdl_seg_class.metrics import dice3d, dice2d # TODO clean
 from mdl_seg_class.visualization import visualize_seg # TODO clean
 
-from curriculum_deeplab.mindssc import mindssc
-from curriculum_deeplab.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader, get_crossmoda_data_load_closure
-from curriculum_deeplab.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D, MobileNet_ASPP_3D
-from curriculum_deeplab.utils.torch_utils import get_batch_dice_per_class, get_batch_dice_over_all, get_2d_stack_batch_size, \
+from deep_staple.mindssc import mindssc
+from deep_staple.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader, get_crossmoda_data_load_closure
+from deep_staple.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D, MobileNet_ASPP_3D
+from deep_staple.utils.torch_utils import get_batch_dice_per_class, get_batch_dice_over_all, get_2d_stack_batch_size, \
     make_2d_stack_from_3d, make_3d_from_2d_stack, interpolate_sample, dilate_label_class, ensure_dense, get_module, set_module, save_model, reset_determinism
-from curriculum_deeplab.utils.common_utils import DotDict, DataParamMode, LabelDisturbanceMode, in_notebook, get_script_dir
-from curriculum_deeplab.utils.log_utils import get_global_idx, log_data_parameter_stats, log_class_dices
+from deep_staple.utils.common_utils import DotDict, DataParamMode, LabelDisturbanceMode, in_notebook, get_script_dir
+from deep_staple.utils.log_utils import get_global_idx, log_data_parameter_stats, log_class_dices
 
 print(torch.__version__)
 print(torch.backends.cudnn.version())
@@ -189,7 +189,7 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_convex_adam_FT2_MT1":
             config.atlas_count = 10
             domain = 'target'
-            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220318_crossmoda_convex_adam_lr/crossmoda_convex_registered_new_convex.pth") # TODO clean
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/deep_staple/20220318_crossmoda_convex_adam_lr/crossmoda_convex_registered_new_convex.pth") # TODO clean
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
@@ -203,7 +203,7 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_every_third_deeds_FT2_MT1":
             config.atlas_count = 10
             domain = 'target'
-            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth") # TODO clean
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/deep_staple/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth") # TODO clean
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
@@ -217,7 +217,7 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_every_deeds_FT2_MT1":
             config.atlas_count = 30
             domain = 'target'
-            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth") # TODO clean
+            bare_data = torch.load("/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/deep_staple/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth") # TODO clean
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
@@ -1104,7 +1104,7 @@ sweep_config_dict = dict(
 
 # %%
 def normal_run():
-    with wandb.init(project="curriculum_deeplab", group="training", job_type="train",
+    with wandb.init(project="deep_staple", group="training", job_type="train",
             config=config_dict, settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']
         ) as run:
@@ -1148,7 +1148,7 @@ if config_dict['do_sweep']:
 
         merged_sweep_config_dict['parameters'][key] = param_dict
 
-    sweep_id = wandb.sweep(merged_sweep_config_dict, project="curriculum_deeplab")
+    sweep_id = wandb.sweep(merged_sweep_config_dict, project="deep_staple")
     wandb.agent(sweep_id, function=sweep_run)
 
 else:

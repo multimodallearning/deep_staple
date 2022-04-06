@@ -9,7 +9,7 @@ import numpy as np
 import re
 from tqdm import tqdm
 
-import curriculum_deeplab.utils.nifti_sets as nsets
+import deep_staple.utils.nifti_sets as nsets
 
 THIS_SCIPTS_DIR = os.path.dirname(os.path.realpath(__file__))
 

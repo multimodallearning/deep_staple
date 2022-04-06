@@ -33,7 +33,7 @@ from tqdm.notebook import trange, tqdm
 
 # %%
 # Load all 1800 registered labels
-REG_DATA_PATH = "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth"
+REG_DATA_PATH = "/share/data_supergrover1/weihsbach/shared_data/important_data_artifacts/curriculum_deeplab/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth" # TODO clean
 bare_data = torch.load(REG_DATA_PATH)
 
 EVERY = 1
@@ -53,7 +53,7 @@ for fixed_id, moving_dict in bare_data.items():
     sorted_moving_dict = OrderedDict(moving_dict)
     moving_data = []
     selected_moving_ids = []
-    
+
     for idx_mov, (moving_id, moving_sample) in enumerate(sorted_moving_dict.items()):
         # Only use every third warped sample
         print(idx_mov)
@@ -67,7 +67,7 @@ for fixed_id, moving_dict in bare_data.items():
     staple_out = staple_filter.Execute(sitk_moving_data)
     # staple_out = sitk.STAPLE(sitk_moving_data, FOREGROUND) # alternative, if no staple filter instance is used
     staple_consensus = sitk.GetArrayFromImage(staple_out)
-    
+
     specitivity = staple_filter.GetSpecificity()
     sensitivity = staple_filter.GetSensitivity()
     print("iters", staple_filter.GetElapsedIterations())
@@ -77,7 +77,7 @@ for fixed_id, moving_dict in bare_data.items():
 
     if DEBUG: break
 
-torch.save(weight_data, f"../data/staple_calc/deeds_stapled_every_{EVERY}_3d_volumes.pth")
+torch.save(weight_data, f"../data/staple_calc/deeds_stapled_every_{EVERY}_3d_volumes.pth") # TODO clean
 
 
 # %%
@@ -102,7 +102,7 @@ from glob import glob
 import re
 
 staple_weights = None
-staple_description_files = glob("/share/data_supergrover1/heinrich/crossmoda_deeds/Fcrossmoda_*_L_staple*.txt")
+staple_description_files = glob("/share/data_supergrover1/heinrich/crossmoda_deeds/Fcrossmoda_*_L_staple*.txt") # TODO clean
 
 target_t2_keys_w_tumour = ['108r', '111l', '112r', '115l', '118r', '120r', '117l', '123r', '127r', '125l', '134r', '135r', '126l', '142r', '144r', '133l', '148r', '154r', '136l', '160r', '165r', '140l', '166r', '167r', '141l', '168r', '171r', '143l', '173r', '174r', '145l', '179r', '146l', '180r', '181r', '185r', '147l', '195r', '149l', '198r', '204r', '152l', '205r', '209r', '158l', '210r', '162l', '164l', '175l', '177l', '178l', '183l', '187l', '188l', '189l', '190l', '192l', '199l', '200l', '202l']
 source_t1_keys_w_tumour = ['100r', '101r', '102l', '103l', '104l', '105l', '010l', '011r', '012r', '013l', '014l', '015l', '016r', '017r', '018l', '019r', '001r', '020l', '021l', '022l', '023r', '024r', '025r', '026l', '027r', '028l', '029r', '002l', '030r', '031l', '032r', '033r', '034l', '035r', '036r', '037r', '038l', '039r', '003r', '040r', '041l', '042l', '042r', '043l', '044r', '045r', '046r', '047r', '048r', '049l', '004r', '050r', '051l', '052r', '053r', '054r', '055l', '056l', '057r', '058l', '059r', '005r', '060r', '061l', '062l', '063l', '064l', '065r', '066l', '067l', '068r', '069l', '006r', '070r', '071l', '072r', '073r', '074r', '075l', '076r', '077r', '078r', '079l', '007r', '080r', '081l', '082r', '083r', '084r', '085r', '086r', '087l', '088l', '089l', '008l', '090l', '091r', '092r', '093l', '094r', '095r', '096r', '097r', '098r', '099l', '099r', '009r']
@@ -120,7 +120,7 @@ def get_num_lr_id(num_str):
     return _id_str
 
 def get_rater_dict(fixed_id, moving_id, rater_id):
-    fixed_id_dict = consensus_description_dict.get(fixed_id, {}) 
+    fixed_id_dict = consensus_description_dict.get(fixed_id, {})
     moving_id_dict = fixed_id_dict.get(moving_id, {})
     rater_dict = moving_id_dict.get(f"rater_{int(rater_id):03d}", {})
     return rater_dict
@@ -135,7 +135,7 @@ consensus_description_dict = {}
 for _file in staple_description_files:
     for staple_split in ['01','23','45','689']:
         result = re.findall(rf'/share/data_supergrover1/heinrich/crossmoda_deeds/Fcrossmoda_(\w+)_L_staple{staple_split}\.txt', _file)
-        if not result: 
+        if not result:
             continue
         else:
             intra_file_dict = {}
@@ -190,11 +190,11 @@ for _file in stapled_files:
     for staple_split in ['01','23','45','689']:
     # result = re.findall(r'/share/data_supergrover1/heinrich/crossmoda_deeds/Fcrossmoda_(\w+)_L_staple([0-9]+)\.nii\.gz', _file)
         result = re.findall(rf'/share/data_supergrover1/heinrich/crossmoda_deeds/Fcrossmoda_(\w+)_L_staple{staple_split}\.nii\.gz', _file)
-        if not result: 
+        if not result:
             continue
         else:
             fixed_num_str = result[0]
-        
+
         "/share/data_supergrover1/heinrich/crossmoda_deeds/Fcrossmoda_*_L_staple{01,23,45,689}.nii.gz"
         if fixed_num_str+'r' in target_t2_keys_w_tumour:
             fixed_id = fixed_num_str+'r'
@@ -207,7 +207,7 @@ for _file in stapled_files:
         )
         staple_dict[fixed_id] = split_dict
         print(staple_split, fixed_id)
-    
+
 torch.save(staple_dict, "../data/staple_calc/crossmoda_grouped_staple_consensus.pth")
 
 # %% [markdown]
@@ -299,10 +299,10 @@ data_params = np.array([dp.item() for dp in data_params])
 fig, axs = plt.subplots(1,2, figsize=(16, 4), dpi=80)
 
 sc4 = axs[0].scatter(
-    data_params, 
+    data_params,
     dices, c=fcolors, s=10, cmap='rainbow')
 sc5 = axs[1].scatter(
-    data_params, 
+    data_params,
     dices, c=mcolors, s=10, cmap='rainbow')
 
 fig.subplots_adjust(right=0.8)
@@ -354,9 +354,9 @@ for _id in d_ids:
     moving_dict = fixed_dict.get(m_id, {})
     moving_dict['warped_label'] = network_scores['modified_labels'][network_data_lookup_idx]
     moving_dict['data_parameter'] = network_scores['data_parameters'][network_data_lookup_idx]
-    
+
     fixed_dict[m_id] = moving_dict
-    
+
     consensus_dicts[f_id] = fixed_dict
 
 
@@ -393,7 +393,7 @@ def calc_staple_consensus(lbl_list, weighting_list):
     staple_filter.SetForegroundValue(FOREGROUND)
     staple_filter.SetMaximumIterations(200)
     sitk_moving_data = [sitk.GetImageFromArray(lbl.to_dense().numpy().astype(np.int16)) for lbl in lbl_list]
-    
+
     staple_out = staple_filter.Execute(sitk_moving_data)
     # staple_filter.SetConfidenceWeight(weightings.tolist())
     consensus = (torch.tensor(sitk.GetArrayFromImage(staple_out)) > .5).long()
@@ -494,7 +494,7 @@ for f_id, fixed_dict in tqdm(consensus_dicts.items()):
 
     dp_consensus = calc_dp_consensus(lbls, data_parameters)
     staaple_consensus = calc_staple_consensus(lbls, data_parameters)
-    
+
     # print()
     # print("Expert label W sum")
     # plt.imshow(expert_label.float().mean((-1)))
@@ -513,16 +513,16 @@ for f_id, fixed_dict in tqdm(consensus_dicts.items()):
     print(f"DP consensus dice:", dp_dsc)
     print(f"STAPLE consensus dice:", staple_dsc)
     print()
-    
+
     fixed_dict['dp_consensus'] = dp_consensus.to_sparse()
     fixed_dict['staple_consensus'] = staaple_consensus.to_sparse()
-    
+
     fixed_dict['dp_consensus_oracle_dice'] = dp_dsc
     fixed_dict['staple_consensus_oracle_dice'] = staple_dsc
 
     consensus_dicts[f_id] = fixed_dict
     # dp_consensus_dices.append(dp_dsc)
-    # staple_consensus_dices.append(staple_dsc) 
+    # staple_consensus_dices.append(staple_dsc)
 
 # %%
 torch.save(consensus_dicts, "consensus_dict_400_convex_adam.pth")
@@ -535,7 +535,7 @@ dp_consensus_dices = []
 staple_consensus_dices = []
 for f_id, fixed_dict in consensus_dicts.items():
     dp_consensus_dices.append(fixed_dict['dp_consensus_oracle_dice'])
-    staple_consensus_dices.append(fixed_dict['staple_consensus_oracle_dice']) 
+    staple_consensus_dices.append(fixed_dict['staple_consensus_oracle_dice'])
 
 dp_tumour_dices = torch.cat(dp_consensus_dices)[:,1]
 staple_tumour_dices = torch.cat(staple_consensus_dices)[:,1]
@@ -555,11 +555,11 @@ staple_consensus_counts, _ = np.histogram(torch.cat(staple_consensus_dices)[:,1]
 plt.bar(np.linspace(1/(2*bincount), 1-1/(2*bincount),bincount), staple_consensus_counts, align='center', color='red', label="STAPLE", alpha=0.4, width=1/bincount)
 plt.legend()
 # plt.hist(
-#     torch.cat(dp_consensus_dices)[:,1].tolist(), 
+#     torch.cat(dp_consensus_dices)[:,1].tolist(),
 #     );
-# plt.hist(torch.cat(staple_consensus_dices)[:,1].tolist(),  
-#     alpha=0.5, color='red', 
-#     bins=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], 
+# plt.hist(torch.cat(staple_consensus_dices)[:,1].tolist(),
+#     alpha=0.5, color='red',
+#     bins=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
 #     label="STAPLE");
 # plt.title("Label consensus DICE (expert GT vs. consensus)")
 plt.xlabel("Dice")
@@ -593,11 +593,11 @@ bplot = ax.boxplot(boxplot_data,
                     positions=[2,3],
                      vert=True,  # vertical box alignment
                      patch_artist=True,  # fill with color
-                    #  labels=['DP', 'STAPLE'], 
+                    #  labels=['DP', 'STAPLE'],
                      showmeans=True,
                      flierprops=flierprops, boxprops=boxprops,
                      whiskerprops=lineprops, capprops=lineprops,
-                     meanline=True, medianprops=lineprops, meanprops=lineprops, 
+                     meanline=True, medianprops=lineprops, meanprops=lineprops,
                     #  showfliers=False
                      )
 plt.rcParams.update({'font.size': 8})

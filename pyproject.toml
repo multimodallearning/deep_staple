@@ -1,17 +1,18 @@
 [tool.poetry]
-name = "curriculum-deeplab"
-version = "0.1.0"
+name = "deep-staple"
+version = "1.0.0"
 description = ""
-authors = ["Christian Weihsbach <christian.weihsbach@uni-luebeck.de>"]
+Christian Weihsbach, Alexander Bigalke, Christian N. Kruse, Hellena Hempe, Mattias P Heinrich
+authors = ["Christian Weihsbach <christian.weihsbach@uni-luebeck.de>", "Alexander Bigalke <alexander.bigalke@uni-luebeck.de>", "Christian N. Kruse <christian.kruse@uni-luebeck.de>", "Hellena Hempe <hellena.hempe@uni-luebeck.de>", "Mattias P. Heinrich <mattias.heinrich@uni-luebeck.de>"]
 readme = "README.md"
-packages = [{include = "curriculum_deeplab"}]
+packages = [{include = "deep_staple"}]
 
 [tool.poetry.dependencies]
 python = "^3.9"
 torch = "*"
 torchvision = "*"
-mdl-seg-class = {git = "git@github.com:MDL-UzL/SegmentationClassification.git", rev = "main"}
-meidic-vtach-utils = {git = "git@github.com:MDL-UzL/meidic_vtach_utils.git", rev = "main"}
+mdl-seg-class = {git = "git@github.com:MDL-UzL/SegmentationClassification.git", rev = "main"} # TODO clean
+meidic-vtach-utils = {git = "git@github.com:MDL-UzL/meidic_vtach_utils.git", rev = "main"} # TODO clean
 nibabel = "^3.2.1"
 scipy = "^1.6.0"
 scikit-image = "^0.18.3"

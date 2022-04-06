@@ -9,7 +9,7 @@ import numpy as np
 import os
 import torch.nn.functional as F
 import re
-import curriculum_deeplab.utils.nifti_sets as nsets
+import deep_staple.utils.nifti_sets as nsets
 
 REF_SPACING = 0.5*torch.ones(3,)
 REF_SHAPE = torch.tensor([420,420,360])
