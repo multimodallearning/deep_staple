@@ -2,7 +2,6 @@
 name = "deep-staple"
 version = "1.0.0"
 description = ""
-Christian Weihsbach, Alexander Bigalke, Christian N. Kruse, Hellena Hempe, Mattias P Heinrich
 authors = ["Christian Weihsbach <christian.weihsbach@uni-luebeck.de>", "Alexander Bigalke <alexander.bigalke@uni-luebeck.de>", "Christian N. Kruse <christian.kruse@uni-luebeck.de>", "Hellena Hempe <hellena.hempe@uni-luebeck.de>", "Mattias P. Heinrich <mattias.heinrich@uni-luebeck.de>"]
 readme = "README.md"
 packages = [{include = "deep_staple"}]
