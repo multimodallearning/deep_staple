@@ -139,7 +139,7 @@ def apply_fine_crop(ni_image, ni_label, is_target_domain, lr_id, bbox_ref_shape,
             center[2] += 40
 
         center = center.round()
-        bbox = torch.stack((center - (bbox_ref_shape/2).floor(), center + (bbox_ref_shape/2).floor())).long()
+        bbox = torch.stack((center - bbox_ref_shape//2, center + bbox_ref_shape//2)).long()
 
         spacing = ni_image.header.get_zooms()
 
@@ -163,7 +163,7 @@ def preprocess(base_dir, cochlea_centers_path, device='cpu'):
     ]
 
     print("Building L2 ...")
-    for s_dir in subdirs:
+    for s_dir in subdirs[0:0]:
         source_dir = Path(base_dir, s_dir)
         print(f"Processing {source_dir}")
         l1_nifti_paths = nsets.get_nifti_filepaths(
@@ -192,7 +192,7 @@ def preprocess(base_dir, cochlea_centers_path, device='cpu'):
             nib.save(ni_data, target_path)
 
     print("Building L3 ...")
-    for s_dir in subdirs:
+    for s_dir in subdirs[0:0]:
         source_dir = Path(base_dir, s_dir)
         print(f"Processing {source_dir}")
         l1_nifti_paths = nsets.get_nifti_filepaths(
