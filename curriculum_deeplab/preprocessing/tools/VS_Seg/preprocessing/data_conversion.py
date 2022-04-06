@@ -579,6 +579,7 @@ def main(argv):
             cleanup_node(ndd)
         for ndd in lm_node_in_T2_list:
             cleanup_node(ndd)
+        slicer.mrmlScene.Clear(0)
     sys.exit(0)
 
 

@@ -42,12 +42,6 @@ TARGET_VALIDATION_RANGE = range(211, 243) # hrT2
 
 SUBDIR = "L1_original"
 
-def get_cp_ren_closure(target_dir, new_name):
-    def copy_closure(file_path):
-        shutil.copy(file_path, Path(target_dir, new_name))
-
-    return copy_closure
-
 def format_lbl_types(lst):
     return [elem.rstrip('_ref').replace('.', '_') for elem in lst]
 
