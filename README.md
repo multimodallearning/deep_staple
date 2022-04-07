@@ -34,7 +34,16 @@ Configurations can be made inside the `config_dict`
 After network training a .pth data file is written to `./data/output/<run_name>/train_label_snapshot.pth`
 Open `.deep_staple/postprocessing/consensus/consensus.ipynb` to create consensi.
 View consensus data with `.deep_staple/postprocessing/consensus/visualize_consensus.ipynb`
+
+## Code
+
+### 
+<img src="https://render.githubusercontent.com/render/math?math={\mathbf{DP_{\sigma}} = sigmoid\left(\mathbf{DP_S}\right)}#gh-light-mode-only"> <img src="https://render.githubusercontent.com/render/math?math={\color{white}\mathbf{DP_{\sigma}} = sigmoid\left(\mathbf{DP_S}\right)}#gh-dark-mode-only">
+
+see [#L734](https://github.com/MDL-UzL/curriculum_deeplab/blob/992fbf228389c880c9312f1393e5bc0e0a7cea58/main_curriculum_deeplab.py#L734)
+
 # Paper
+
 Paper and authors pending.
 
 # Contact:
