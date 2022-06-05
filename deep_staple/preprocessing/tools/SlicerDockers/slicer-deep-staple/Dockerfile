@@ -11,9 +11,8 @@ RUN apt-get install -y libpulse-dev libnss3 libglu1-mesa
 RUN apt-get install -y libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1 libxkbcommon-x11-0
 RUN apt-get install -y libxcb-shape0 libxcb-xinerama0 libxcb-xinerama0-dev
 RUN apt-get install -y libxcb-icccm4-dev libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0 libxcb-xkb-dev libxkbcommon-x11-dev
-RUN apt-get install libgomp1
-RUN apt-get install xvfb
-RUN chmod -R a+w /usr/local/bin/start-xdummy
+RUN apt-get install -y libgomp1
+RUN apt-get install -y xvfb
 
 # Slicer 4.5: http://download.slicer.org/bitstream/461634
 # Slicer 4.8.1 http://download.slicer.org/bitstream/738960
@@ -41,6 +40,8 @@ ENV SLICER_RT_FILE=$SLICER_RT_FILE
 COPY /etc /etc
 COPY /opt /opt
 COPY /usr /usr
+
+RUN chmod +x /usr/local/bin/start-xdummy
 
 RUN chmod -R a+w /opt/slicer
 # See http://na-mic.org/Mantis/view.php?id=4015
