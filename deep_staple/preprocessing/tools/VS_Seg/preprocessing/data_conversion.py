@@ -52,6 +52,7 @@ import re
 import glob
 import json
 import numpy as np
+from pathlib import Path
 
 def override_warnings_at_load(widget):
 
@@ -437,7 +438,7 @@ def main(argv):
 
     DICOMUtils.openTemporaryDatabase()
 
-    patient_dirs = glob.glob(os.path.join(input_folder, "vs_gk_*"))
+    patient_dirs = sorted(glob.glob(os.path.join(input_folder, "vs_gk_*")))
 
     # create and compile a regex pattern
     pattern = re.compile(r"_([0-9]+)_t[1-2]$")
@@ -467,6 +468,11 @@ def main(argv):
         # get case number from folder name
         print(pattern.findall(patient_dirs[i]))
         case_number = pattern.findall(patient_dirs[i])[0]
+
+        done_flag_filepath = Path(output_folder, f"vs_gk_{case_number}", "DONE_FLAG")
+        if done_flag_filepath.is_file():
+            print("Output for this case has already been written. Continuing.")
+            continue
 
         # skip iteration if case has already been dealt with
         if case_number in case_numbers:
@@ -580,6 +586,8 @@ def main(argv):
         for ndd in lm_node_in_T2_list:
             cleanup_node(ndd)
         slicer.mrmlScene.Clear(0)
+
+        done_flag_filepath.touch()
     sys.exit(0)
 
 

@@ -13,6 +13,7 @@ RUN apt-get install -y libxcb-shape0 libxcb-xinerama0 libxcb-xinerama0-dev
 RUN apt-get install -y libxcb-icccm4-dev libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0 libxcb-xkb-dev libxkbcommon-x11-dev
 RUN apt-get install libgomp1
 RUN apt-get install xvfb
+RUN chmod -R a+w /usr/local/bin/start-xdummy
 
 # Slicer 4.5: http://download.slicer.org/bitstream/461634
 # Slicer 4.8.1 http://download.slicer.org/bitstream/738960

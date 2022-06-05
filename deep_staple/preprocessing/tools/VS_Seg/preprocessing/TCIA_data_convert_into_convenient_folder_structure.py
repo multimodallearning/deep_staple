@@ -20,6 +20,7 @@ if not os.path.isdir(output_path):
     os.makedirs(output_path, exist_ok=True)
 
 cases = natsorted(glob(os.path.join(input_path, '*')))
+cases = list(filter(lambda case: not "LICENSE" in case, cases))
 print(cases)
 
 for case in cases:
@@ -136,7 +137,7 @@ for case in cases:
     new_T2_path = os.path.join(output_path, 'vs_gk_' + str(case_idx) +'_t2')
 
     if os.path.isdir(new_T1_path) and os.path.isdir(new_T2_path): continue
-    
+
     if not os.path.isdir(new_T1_path):
         os.mkdir(new_T1_path)
     if not os.path.isdir(new_T2_path):
