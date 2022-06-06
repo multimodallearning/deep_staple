@@ -61,8 +61,11 @@ from deep_staple.utils.common_utils import DotDict, DataParamMode, LabelDisturba
 from deep_staple.utils.log_utils import get_global_idx, log_data_parameter_stats, log_class_dices
 
 print(torch.__version__)
-print(torch.backends.cudnn.version())
-print(torch.cuda.get_device_name(0))
+try:
+    print(torch.backends.cudnn.version())
+    print(torch.cuda.get_device_name(0))
+except AssertionError as err:
+    print(f"Cuda is not available. {err}")
 
 THIS_SCRIPT_DIR = get_script_dir(__file__)
 print(f"Running in: {THIS_SCRIPT_DIR}")
@@ -128,6 +131,8 @@ config_dict = DotDict({
     'disturbance_mode': None, # LabelDisturbanceMode.FLIP_ROLL, LabelDisturbanceMode.AFFINE
     'disturbance_strength': 0.,
     'disturbed_percentage': 0.,
+
+    'device': 'cpu'
 })
 
 
@@ -144,8 +149,8 @@ def prepare_data(config):
         if config.reg_state == "mix_combined_best":
             config.atlas_count = 1
             domain = 'source'
-            label_data_left = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_left.pth"))
-            label_data_right = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_right.pth"))
+            label_data_left = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_left.pth"), map_location=config.device)
+            label_data_right = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220113_crossmoda_optimal/optimal_reg_right.pth"), map_location=config.device)
             loaded_identifier = label_data_left['valid_left_t1'] + label_data_right['valid_right_t1']
 
             perm = np.random.permutation(len(loaded_identifier))
@@ -209,7 +214,7 @@ def prepare_data(config):
         elif config.reg_state == "acummulate_every_third_deeds_FT2_MT1":
             config.atlas_count = 10
             domain = 'target'
-            bare_data = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth"))
+            bare_data = torch.load(Path(THIS_SCRIPT_DIR, "./data_artifacts/20220114_crossmoda_multiple_registrations/crossmoda_deeds_registered.pth"), map_location=config.device)
             label_data = []
             loaded_identifier = []
             for fixed_id, moving_dict in bare_data.items():
@@ -270,6 +275,7 @@ def prepare_data(config):
             crop_2d_slices_gt_num_threshold=config.crop_2d_slices_gt_num_threshold,
             pre_interpolation_factor=pre_interpolation_factor,
             fixed_weight_file=config.fixed_weight_file, fixed_weight_min_quantile=config.fixed_weight_min_quantile, fixed_weight_min_value=config.fixed_weight_min_value,
+            device=config.device
         )
 
     return training_dataset
@@ -414,7 +420,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
         # Init embedding values
         #
         if config.override_embedding_weights:
-            fixed_weightdata = torch.load(config.fixed_weight_file)
+            fixed_weightdata = torch.load(config.fixed_weight_file, map_location=config.device)
             fixed_weights = fixed_weightdata['data_parameters']
             fixed_d_ids = fixed_weightdata['d_ids']
             if config.use_2d_normal_to is not None:
@@ -422,7 +428,7 @@ def get_model(config, dataset_len, num_classes, THIS_SCRIPT_DIR, _path=None, dev
             else:
                 corresp_dataset_idxs = [training_dataset.get_3d_ids().index(_id) for _id in fixed_d_ids]
             embedding_weight_tensor = torch.zeros_like(embedding.weight)
-            embedding_weight_tensor[corresp_dataset_idxs] = fixed_weights.view(-1,1).cuda()
+            embedding_weight_tensor[corresp_dataset_idxs] = fixed_weights.view(-1,1).to(device=config.device)
             embedding = nn.Embedding(len(training_dataset), 1, sparse=True, _weight=embedding_weight_tensor)
 
         elif _path and _path.is_dir():
@@ -610,7 +616,7 @@ def train_DL(run_name, config, training_dataset):
             _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx_start}"
 
         (lraspp, optimizer, scheduler, optimizer_dp, embedding, scaler, scaler_dp) = get_model(config, len(training_dataset), len(training_dataset.label_tags),
-            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device='cuda')
+            THIS_SCRIPT_DIR=THIS_SCRIPT_DIR, _path=_path, device=config.device)
 
         t_start = time.time()
 
@@ -627,8 +633,8 @@ def train_DL(run_name, config, training_dataset):
             for sample in tqdm((training_dataset[idx] for idx in train_idxs), desc="metric:", total=len(train_idxs)):
                 d_idxs = sample['dataset_idx']
                 wise_label, mod_label = sample['label'], sample['modified_label']
-                mod_label = mod_label.cuda()
-                wise_label = wise_label.cuda()
+                mod_label = mod_label.to(device=config.device)
+                wise_label = wise_label.to(device=config.device)
                 mod_label, _ = ensure_dense(mod_label)
 
                 dsc = dice_func(
@@ -645,8 +651,8 @@ def train_DL(run_name, config, training_dataset):
 
             fixed_weighting = (gt_num+np.exp(1)).log()+np.exp(1)
 
-        class_weights = class_weights.cuda()
-        fixed_weighting = fixed_weighting.cuda()
+        class_weights = class_weights.to(device=config.device)
+        fixed_weighting = fixed_weighting.to(device=config.device)
 
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
@@ -674,10 +680,10 @@ def train_DL(run_name, config, training_dataset):
                 b_idxs_dataset = batch['dataset_idx']
                 b_img = b_img.float()
 
-                b_img = b_img.cuda()
-                b_seg_modified = b_seg_modified.cuda()
-                b_idxs_dataset = b_idxs_dataset.cuda()
-                b_seg = b_seg.cuda()
+                b_img = b_img.to(device=config.device)
+                b_seg_modified = b_seg_modified.to(device=config.device)
+                b_idxs_dataset = b_idxs_dataset.to(device=config.device)
+                b_seg = b_seg.to(device=config.device)
 
                 if training_dataset.use_2d() and config.use_mind:
                     # MIND 2D, in Bx1x1xHxW, out BxMINDxHxW
@@ -861,7 +867,7 @@ def train_DL(run_name, config, training_dataset):
                         config, len(training_dataset),
                         len(training_dataset.label_tags),
                         THIS_SCRIPT_DIR=THIS_SCRIPT_DIR,
-                        _path=_path, device='cuda')
+                        _path=_path, device=config.device)
 
             print()
             print("### Validation")
@@ -882,8 +888,8 @@ def train_DL(run_name, config, training_dataset):
 
                         B = b_val_img.shape[0]
 
-                        b_val_img = b_val_img.unsqueeze(1).float().cuda()
-                        b_val_seg = b_val_seg.cuda()
+                        b_val_img = b_val_img.unsqueeze(1).float().to(device=config.device)
+                        b_val_seg = b_val_seg.to(device=config.device)
 
                         if training_dataset.use_2d():
                             b_val_img_2d = make_2d_stack_from_3d(b_val_img, stack_dim=training_dataset.use_2d_normal_to)
@@ -956,7 +962,7 @@ def train_DL(run_name, config, training_dataset):
             save_dict = {}
 
             training_dataset.eval(use_modified=True)
-            all_idxs = torch.tensor(range(len(training_dataset))).cuda()
+            all_idxs = torch.tensor(range(len(training_dataset))).to(device=config.device)
             train_label_snapshot_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/train_label_snapshot.pth")
             seg_viz_out_path = Path(THIS_SCRIPT_DIR).joinpath(f"data/output/{wandb.run.name}_fold{fold_idx}_epx{epx}/data_parameter_weighted_samples.png")
 
@@ -979,7 +985,7 @@ def train_DL(run_name, config, training_dataset):
                     # sample['image'],
                     sample['label'].to_sparse(),
                     sample['modified_label'].to_sparse(),
-                    inference_wrap(lraspp, sample['image'].cuda(), use_2d=training_dataset.use_2d(), use_mind=config.use_mind).to_sparse()
+                    inference_wrap(lraspp, sample['image'].to(device=config.device), use_2d=training_dataset.use_2d(), use_mind=config.use_mind).to_sparse()
                 )
                 save_data.append(data_tuple)
 

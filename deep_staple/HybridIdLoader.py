@@ -17,7 +17,8 @@ class HybridIdLoader(Dataset):
         max_load_3d_num=None, crop_3d_w_dim_range=None, modified_3d_label_override=None,
         prevent_disturbance=False,
         use_2d_normal_to=None, crop_2d_slices_gt_num_threshold=None, pre_interpolation_factor=2.,
-        fixed_weight_file = None, fixed_weight_min_quantile=None, fixed_weight_min_value=None
+        fixed_weight_file = None, fixed_weight_min_quantile=None, fixed_weight_min_value=None,
+        device='cpu'
     ):
 
         self.label_tags = []
@@ -29,6 +30,7 @@ class HybridIdLoader(Dataset):
         self.disturbed_idxs = []
         self.augment_at_collate = False
         self.pre_interpolation_factor = pre_interpolation_factor
+        self.device = device
 
         self.extract_3d_id = lambda _:_
         self.extract_short_3d_id = lambda _:_
@@ -315,10 +317,10 @@ class HybridIdLoader(Dataset):
         else:
             modified_label = label.detach().clone()
 
-        b_image = image.unsqueeze(0).cuda()
-        b_label = label.unsqueeze(0).cuda()
+        b_image = image.unsqueeze(0).to(device=self.device)
+        b_label = label.unsqueeze(0).to(device=self.device)
         modified_label, _ = ensure_dense(modified_label)
-        b_modified_label = modified_label.unsqueeze(0).cuda()
+        b_modified_label = modified_label.unsqueeze(0).to(device=self.device)
 
         if self.do_augment and not self.augment_at_collate:
             b_image, b_label, b_spat_augment_grid = self.augment(
@@ -426,7 +428,7 @@ class HybridIdLoader(Dataset):
                                 )
 
                     elif str(disturbance_mode)==str(LabelDisturbanceMode.AFFINE):
-                        b_modified_label = label.unsqueeze(0).cuda()
+                        b_modified_label = label.unsqueeze(0).to(device=self.device)
                         _, b_modified_label, _ = spatial_augment(b_label=b_modified_label, use_2d=use_2d,
                             bspline_num_ctl_points=6, bspline_strength=0., bspline_probability=0.,
                             affine_strength=0.09*disturbance_strength,
@@ -459,9 +461,9 @@ class HybridIdLoader(Dataset):
             batch = torch.utils.data._utils.collate.default_collate(batch)
             if self.augment_at_collate and self.do_augment:
                 # Augment the whole batch not just one sample
-                b_image = batch['image'].cuda()
-                b_label = batch['label'].cuda()
-                b_modified_label = batch['modified_label'].cuda()
+                b_image = batch['image'].to(device=self.device)
+                b_label = batch['label'].to(device=self.device)
+                b_modified_label = batch['modified_label'].to(device=self.device)
 
                 b_image, b_label, b_spat_augment_grid = self.augment(
                     b_image, b_label, use_2d, pre_interpolation_factor=self.pre_interpolation_factor
