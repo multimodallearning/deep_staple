@@ -2,6 +2,7 @@
 import os
 import re
 import collections.abc
+from pathlib import Path
 import nibabel
 import ants
 import numpy
