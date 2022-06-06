@@ -982,18 +982,27 @@ def train_DL(run_name, config, training_dataset):
                     bool(disturb_flg.item()),
                     sample['id'],
                     sample['dataset_idx'],
+                    sample['image_path'],
                     # sample['image'],
                     sample['label'].to_sparse(),
+                    sample['label_path'],
                     sample['modified_label'].to_sparse(),
                     inference_wrap(lraspp, sample['image'].to(device=config.device), use_2d=training_dataset.use_2d(), use_mind=config.use_mind).to_sparse()
                 )
                 save_data.append(data_tuple)
 
             save_data = sorted(save_data, key=lambda tpl: tpl[0])
-            (dp_weight, disturb_flags,
-                d_ids, dataset_idxs,
-            #  _imgs,
-                _labels, _modified_labels, _predictions) = zip(*save_data)
+            (
+                dp_weight,
+                disturb_flags,
+                d_ids,
+                dataset_idxs,
+                image_paths,
+                #  _imgs,
+                _labels,
+                label_paths,
+                _modified_labels,
+                _predictions) = zip(*save_data)
 
             dp_weight = torch.stack(dp_weight)
             dataset_idxs = torch.stack(dataset_idxs)
@@ -1004,6 +1013,8 @@ def train_DL(run_name, config, training_dataset):
                     'disturb_flags': disturb_flags,
                     'd_ids': d_ids,
                     'dataset_idxs': dataset_idxs.cpu(),
+                    'image_paths': image_paths,
+                    'label_paths': label_paths
                 }
             )
 
