@@ -654,6 +654,8 @@ def train_DL(run_name, config, training_dataset):
         class_weights = class_weights.to(device=config.device)
         fixed_weighting = fixed_weighting.to(device=config.device)
 
+        autocast_enabled = 'cuda' in config.device
+
         for epx in range(epx_start, config.epochs):
             global_idx = get_global_idx(fold_idx, epx, config.epochs)
 
@@ -695,7 +697,7 @@ def train_DL(run_name, config, training_dataset):
                     b_img = b_img.unsqueeze(1)
 
                 ### Forward pass ###
-                with amp.autocast(enabled=True):
+                with amp.autocast(enabled=autocast_enabled):
                     assert b_img.dim() == len(n_dims)+2, \
                         f"Input image for model must be {len(n_dims)+2}D: BxCxSPATIAL but is {b_img.shape}"
                     for param in lraspp.parameters():
@@ -850,11 +852,11 @@ def train_DL(run_name, config, training_dataset):
                 # Log stats of data parameters and figure
                 log_data_parameter_stats(f'data_parameters/iter_stats_fold{fold_idx}', global_idx, embedding.weight.data)
 
-            if (epx % config.save_every == 0 and epx != 0) \
+            if (epx % config.save_every == 0) \
                 or (epx+1 == config.epochs):
                 _path = f"{config.mdl_save_prefix}/{wandb.run.name}_fold{fold_idx}_epx{epx}"
                 save_model(
-                    _path,
+                    Path(THIS_SCRIPT_DIR, _path),
                     lraspp=lraspp,
                     optimizer=optimizer, optimizer_dp=optimizer_dp,
                     scheduler=scheduler,
@@ -862,7 +864,7 @@ def train_DL(run_name, config, training_dataset):
                     scaler=scaler,
                     scaler_dp=scaler_dp)
 
-                (lraspp, optimizer, optimizer_dp, embedding, scaler) = \
+                (lraspp, optimizer, scheduler, optimizer_dp, embedding, scaler, scaler_dp) = \
                     get_model(
                         config, len(training_dataset),
                         len(training_dataset.label_tags),
@@ -877,7 +879,7 @@ def train_DL(run_name, config, training_dataset):
             val_dices = []
             val_class_dices = []
 
-            with amp.autocast(enabled=True):
+            with amp.autocast(enabled=autocast_enabled):
                 with torch.no_grad():
                     for val_idx in val_3d_idxs:
                         val_sample = training_dataset.get_3d_item(val_idx)

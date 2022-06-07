@@ -4,6 +4,7 @@ import random
 import numpy as np
 import torch
 import torch.nn.functional as F
+from pathlib import Path
 
 MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, nn.Sequential) \
                                               else getattr(self, key)
@@ -351,7 +352,7 @@ def set_module(module, keychain, replacee):
 
 
 def save_model(_path, **statefuls):
-    _path = Path(THIS_SCRIPT_DIR).joinpath(_path).resolve()
+    _path = Path(_path).resolve()
     _path.mkdir(exist_ok=True, parents=True)
 
     for name, stful in statefuls.items():
