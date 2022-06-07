@@ -125,7 +125,7 @@ config_dict = DotDict({
 
     'do_plot': False,
     'save_dp_figures': False,
-    'save_labels': False,
+    'save_labels': True,
 
     # Disturbance settings
     'disturbance_mode': None, # LabelDisturbanceMode.FLIP_ROLL, LabelDisturbanceMode.AFFINE
