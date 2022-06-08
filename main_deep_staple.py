@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.13.7
+#       jupytext_version: 1.13.8
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -74,63 +74,64 @@ print(f"Running in: {THIS_SCRIPT_DIR}")
 
 config_dict = DotDict({
     'num_folds': 3,
-    'only_first_fold': True,
+    'only_first_fold': True,                # If true do not contiue with training after the first fold
     # 'fold_override': 0,
     # 'checkpoint_epx': 0,
 
-    'use_mind': False,
+    'use_mind': False,                      # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
     'epochs': 40,
 
     'batch_size': 8,
     'val_batch_size': 1,
-    'use_2d_normal_to': None,
+    'use_2d_normal_to': None,               # Can be None or 'D', 'H', 'W'. If not None 2D slices will be selected for training
 
     'num_val_images': 20,
-    'atlas_count': 1,
+    'atlas_count': 1,                       # If three (noisy) labels per image are used specify three
 
-    'dataset': 'crossmoda',
+    'dataset': 'crossmoda',                 # The dataset prepared with our preprocessing scripts
     'dataset_directory': Path(THIS_SCRIPT_DIR, "data/crossmoda_dataset"),
-    'reg_state': "acummulate_every_third_deeds_FT2_MT1",
-    'train_set_max_len': None,
-    'crop_3d_w_dim_range': (45, 95),
-    'crop_2d_slices_gt_num_threshold': 0,
+    'reg_state': "acummulate_every_third_deeds_FT2_MT1", # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
+    'train_set_max_len': None,              # Length to cut of dataloader sample count
+    'crop_3d_w_dim_range': (45, 95),        # W-dimension range in which 3D samples are cropped
+    'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
 
     'lr': 0.01,
     'use_scheduling': True,
 
     # Data parameter config
-    'data_param_mode': DataParamMode.INSTANCE_PARAMS, # DataParamMode.DISABLED
-    'init_inst_param': 0.0,
+    'data_param_mode': DataParamMode.INSTANCE_PARAMS, # or DataParamMode.DISABLED
+    'init_inst_param': 0.0,                           # Init value of data parameters
     'lr_inst_param': 0.1,
-    'use_risk_regularization': True,
-    'use_fixed_weighting': True,
-    'use_ool_dp_loss': True,
+    'use_risk_regularization': True,                  # See paper
+    'use_fixed_weighting': True,                      # See paper
+    'use_ool_dp_loss': True,                          # See paper
 
     # Extended config for loading pretrained data
-    'fixed_weight_file': None,
-    'fixed_weight_min_quantile': None,
-    'fixed_weight_min_value': None,
-    'override_embedding_weights': False,
+    'fixed_weight_file': None,                        # Specify path to a ./data/output/<training_run>/train_label_snapshot.pth to load pretrained data parameters
+    'fixed_weight_min_quantile': None,                # If .8 drop 80% of the noisiest samples
+    'fixed_weight_min_value': None,                   # If 2.3 drop every sample with a data parameter less than that value
+    'override_embedding_weights': False,              # Fix the data parameters values in training (do not optimize)
 
     'save_every': 200,
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'disabled', # e.g. online, disabled
-    'do_sweep': False,
+    'wandb_mode': 'disabled',                         # e.g. online, disabled. Use weights and biases online logging
+    'do_sweep': False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
-    'checkpoint_name': None,
-    'fold_override': None,
-    'checkpoint_epx': None,
+    # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
+    'checkpoint_name': None,                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
+    'fold_override': None,                            # Training fold, e.g. 0
+    'checkpoint_epx': None,                           # Training epx, e.g. 0
 
-    'do_plot': False,
-    'save_dp_figures': False,
-    'save_labels': True,
+    'do_plot': False,                                 # Generate plots (debugging purpose)
+    'save_dp_figures': False,                         # Plot data parameter value distribution
+    'save_labels': True,                              # Store training labels alongside data parameter values inside the training snapshot
 
     # Disturbance settings
-    'disturbance_mode': None, # LabelDisturbanceMode.FLIP_ROLL, LabelDisturbanceMode.AFFINE
-    'disturbance_strength': 0.,
-    'disturbed_percentage': 0.,
+    'disturbance_mode': None,                         # e.g. LabelDisturbanceMode.FLIP_ROLL, LabelDisturbanceMode.AFFINE
+    'disturbance_strength': 0.,                       # Strength of how a severe label is distorted if artificial disturbance is used
+    'disturbed_percentage': 0.,                       # Sercentage of the dataset labels to be disturbed
 
     'device': 'cpu'
 })
