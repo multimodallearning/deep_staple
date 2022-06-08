@@ -4,7 +4,7 @@ Estimating registration noise with semantic segmentation models.
 keywords: domain adaptation, multi-atlas registration, label noise, consensus, curriculum learning
 
 # Main contribution and results
-This code uses data parameters (https://github.com/apple/ml-data-parameters) to weight noisy atlas samples as a simple but effective extension of semantic segmentation models. During training the data parameters (scalar values assigned to each instance of a registered label) can estimate the label trustworthiness globally across all multi-atlas candidates of all images.
+This code uses data parameters (https://github.com/apple/ml-data-parameters) to weight noisy atlas samples as a simple but effective extension of semantic segmentation models. During training the data parameters (scalar values assigned to each instance of a registered label) can estimate the label trustworthiness globally across all multi-atlas candidates of all images. We optimized the base method according to the special characteristics of semantic segmentation tasks.
 
 # Setup
 Install pypoetry from https://python-poetry.org/
