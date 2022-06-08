@@ -37,23 +37,30 @@ View consensus data with `.deep_staple/postprocessing/consensus/visualize_consen
 
 ## Code
 
-<img src="https://render.githubusercontent.com/render/math?math={\mathbf{DP_{\sigma}} = sigmoid\left(\mathbf{DP_S}\right)}#gh-light-mode-only"> <img src="https://render.githubusercontent.com/render/math?math={\color{white}\mathbf{DP_{\sigma}} = sigmoid\left(\mathbf{DP_S}\right)}#gh-dark-mode-only">
-
+```math
+\mathbf{DP_{\sigma}} = sigmoid\left(\mathbf{DP_S}\right)
+```
 https://github.com/MDL-UzL/curriculum_deeplab/blob/992fbf228389c880c9312f1393e5bc0e0a7cea58/main_curriculum_deeplab.py#L734
 
 ```math
-e^{i\pi} + 1 = 0
+\ell_{DP}\left(f_\theta\left(\mathbf{x_B}\right), \mathbf{y_B}\right) 
+            = \sum_{b=1}^{\lvert B \rvert}\ell_{CE, spatial}\left(f_{\theta}\left(\mathbf{x_b}\right), \mathbf{y_b}\right) \cdot DP_{\sigma_{b}} \quad\textrm{with} \quad B \subseteq S
 ```
 
-<img src="https://render.githubusercontent.com/render/math?math={\ell_{DP}\left(f_\theta\left(\mathbf{x_B}\right), \mathbf{y_B}\right) 
-            = \sum_{b=1}^{\lvert B \rvert}\ell_{CE, spatial}\left(f_{\theta}\left(\mathbf{x_b}\right), \mathbf{y_b}\right) \cdot DP_{\sigma_{b}} \quad\textrm{with} \quad B \subseteq S}#gh-light-mode-only"> <img src="https://render.githubusercontent.com/render/math?math={\ell_{DP}\left(f_\theta\left(\mathbf{x_B}\right), \mathbf{y_B}\right) 
-            = \sum_{b=1}^{\lvert B \rvert}\ell_{CE, spatial}\left(f_{\theta}\left(\mathbf{x_b}\right), \mathbf{y_b}\right) \cdot DP_{\sigma_{b}} \quad\textrm{with} \quad B \subseteq S}#gh-dark-mode-only">
-            
-        
+```math
+\ell = \ell_{DP} - \sum_{b=1}^{\lvert B \rvert}
+            \frac{\#\left\{f_\theta\left(\mathbf{x_b}\right) = c\right\}}{\#\left\{f_\theta\left(\mathbf{x_b}\right) = c\right\} + \#\left\{f_\theta\left(\mathbf{x_b}\right) = \overline{c}\right\}} \cdot DP_{\sigma_{b}}
+```
 
-<img src="https://render.githubusercontent.com/render/math?math={}#gh-light-mode-only"> <img src="https://render.githubusercontent.com/render/math?math={}#gh-dark-mode-only">
 
-<img src="https://render.githubusercontent.com/render/math?math={}#gh-light-mode-only"> <img src="https://render.githubusercontent.com/render/math?math={}#gh-dark-mode-only">
+```math
+DP_{\tilde\sigma_b} = \frac{DP_{\sigma_b}}{log\left(\#\left\{(\mathbf{y_b} = c\right\}+e\right)+e}
+```
+
+
+```math
+\mathbf{C_M} = \left(\sum_{m=1}^{\lvert M \rvert} softmax(\mathbf{DP_{M}})_{m} \cdot \mathbf{y_m}\right) > 0.5 \quad \textrm{with} \quad M \subset S
+```
 
 # Paper
 
