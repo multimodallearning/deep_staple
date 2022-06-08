@@ -10,9 +10,9 @@ This code uses data parameters (https://github.com/apple/ml-data-parameters) to 
 Install pypoetry from https://python-poetry.org/
 Change into the directory containing the pyproject.toml file and nstall a virtual env with:
 ```bash
-  poetry init
-  poetry lock
-  poetry install
+poetry init
+poetry lock
+poetry install
 ```
 
 If you do not want to use poetry a list of dependencies is contained in the pyproject.toml file.
@@ -32,7 +32,7 @@ Pre-registered (noisy) labels for training can be downloaded with `data_artifact
 # Training
 Either run `main_deep_staple.py` or use the notebook `main_deep_staple.ipynb`
 
-Configurations can be made inside the `config_dict`
+Settings can be changed inside the `config_dict`
 
 # Label consensus creation
 After network training a .pth data file is written to `./data/output/<run_name>/train_label_snapshot.pth`
