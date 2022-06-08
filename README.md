@@ -55,7 +55,6 @@ https://github.com/multimodallearning/deep_staple/blob/0f701d22204d34ec76cc337cf
 
 ## Out-of-line backpropagation process
 https://github.com/multimodallearning/deep_staple/blob/0f701d22204d34ec76cc337cf3ad263cf8fd3046/main_deep_staple.py#L723
-![dp_backprop_twostep](https://user-images.githubusercontent.com/13519345/172660329-ad2b69b3-6fd2-4735-b8fd-9b32481349cc.svg)
 
 ## Consensus generation via weighted voting
 https://github.com/multimodallearning/deep_staple/blob/0f701d22204d34ec76cc337cf3ad263cf8fd3046/deep_staple/consensus/consensus.ipynb?short_path=c5aabb1#L87
