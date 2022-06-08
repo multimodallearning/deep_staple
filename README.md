@@ -6,6 +6,8 @@ keywords: domain adaptation, multi-atlas registration, label noise, consensus, c
 # Main contribution and results
 This code uses data parameters (https://github.com/apple/ml-data-parameters) to weight noisy atlas samples as a simple but effective extension of semantic segmentation models. During training the data parameters (scalar values assigned to each instance of a registered label) can estimate the label trustworthiness globally across all multi-atlas candidates of all images. We optimized the base method according to the special characteristics of semantic segmentation tasks.
 
+<img width="100%" alt="Noisy labels" src="https://user-images.githubusercontent.com/13519345/172662555-b5952643-3b4a-4bb0-9f62-90aeecf2bf6f.png">
+
 # Setup
 Install pypoetry from https://python-poetry.org/
 Change into the directory containing the pyproject.toml file and nstall a virtual env with:
@@ -53,6 +55,7 @@ https://github.com/multimodallearning/deep_staple/blob/0f701d22204d34ec76cc337cf
 
 ## Out-of-line backpropagation process
 https://github.com/multimodallearning/deep_staple/blob/0f701d22204d34ec76cc337cf3ad263cf8fd3046/main_deep_staple.py#L723
+![dp_backprop_twostep](https://user-images.githubusercontent.com/13519345/172660329-ad2b69b3-6fd2-4735-b8fd-9b32481349cc.svg)
 
 ## Consensus generation via weighted voting
 https://github.com/multimodallearning/deep_staple/blob/0f701d22204d34ec76cc337cf3ad263cf8fd3046/deep_staple/consensus/consensus.ipynb?short_path=c5aabb1#L87
