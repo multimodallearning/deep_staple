@@ -92,7 +92,7 @@ config_dict = DotDict({
     'atlas_count': 1,                       # If three (noisy) labels per image are used specify three
 
     'dataset': 'mmwhs',                 # The dataset prepared with our preprocessing scripts
-    'data_base_path': Path(THIS_SCRIPT_DIR, "data/mmwhs_dataset"),
+    'data_base_path': str(Path(THIS_SCRIPT_DIR, "data/mmwhs_dataset")),
     'reg_state': None, # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
     'train_set_max_len': None,              # Length to cut of dataloader sample count
     'crop_3d_region': None,        # W-dimension range in which 3D samples are cropped
@@ -119,8 +119,8 @@ config_dict = DotDict({
     'mdl_save_prefix': 'data/models',
 
     'debug': False,
-    'wandb_mode': 'disabled',                         # e.g. online, disabled. Use weights and biases online logging
-    'do_sweep': False,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
+    'wandb_mode': 'online',                         # e.g. online, disabled. Use weights and biases online logging
+    'do_sweep': True,                                # Run multiple trainings with varying config values defined in sweep_config_dict below
 
     # For a snapshot file: dummy-a2p2z76CxhCtwLJApfe8xD_fold0_epx0
     'checkpoint_name': None,                          # Training snapshot name, e.g. dummy-a2p2z76CxhCtwLJApfe8xD
@@ -133,7 +133,7 @@ config_dict = DotDict({
 
     # Disturbance settings
     'disturbance_mode': LabelDisturbanceMode.AFFINE,                         # e.g. LabelDisturbanceMode.FLIP_ROLL, LabelDisturbanceMode.AFFINE
-    'disturbance_strength': 0.5,                       # Strength of how a severe label is distorted if artificial disturbance is used
+    'disturbance_strength': 0.0,                       # Strength of how a severe label is distorted if artificial disturbance is used
     'disturbed_percentage': 0.3,                       # Sercentage of the dataset labels to be disturbed
 
     'device': 'cuda'
@@ -553,17 +553,17 @@ def train_DL(run_name, config, training_dataset):
                     val_2d_ids.append(_2d_id)
 
             train_2d_idxs = training_dataset.switch_2d_identifiers(train_2d_ids)
-            train_idxs = torch.tensor(train_2d_idxs)
+            train_idxs = torch.as_tensor(train_2d_idxs)
 
             val_2d_idxs = training_dataset.switch_2d_identifiers(val_2d_ids)
-            val_idxs = torch.tensor(val_2d_idxs)
+            val_idxs = torch.as_tensor(val_2d_idxs)
 
         else:
             train_3d_ids = training_dataset.switch_3d_identifiers(train_3d_idxs)
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
-            train_idxs = torch.tensor(train_3d_idxs)
-            val_idxs = torch.tensor(val_3d_idxs)
+            train_idxs = torch.as_tensor(train_3d_idxs)
+            val_idxs = torch.as_tensor(val_3d_idxs)
 
         print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
 
@@ -1106,16 +1106,16 @@ def train_DL(run_name, config, training_dataset):
 # Define sweep override dict
 sweep_config_dict = dict(
     method='grid',
-    metric=dict(goal='maximize', name='scores/val_dice_mean_tumour_fold0'),
+    metric=dict(goal='maximize', name='scores/val_dice_mean_left_ventricle_fold0'),
     parameters=dict(
         # disturbance_mode=dict(
         #     values=[
         #        'LabelDisturbanceMode.AFFINE',
         #     ]
         # ),
-        # disturbance_strength=dict(
-        #     values=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
-        # ),
+        disturbance_strength=dict(
+            values=[0.0, 0.5, 1.0, 2.0, 4.0]
+        ),
         # disturbed_percentage=dict(
         #     values=[0.3, 0.6]
         # ),
@@ -1125,12 +1125,12 @@ sweep_config_dict = dict(
         #         DataParamMode.DISABLED,
         #     ]
         # ),
-        use_risk_regularization=dict(
-            values=[False, True]
-        ),
-        use_fixed_weighting=dict(
-            values=[False, True]
-        ),
+        # use_risk_regularization=dict(
+        #     values=[False, True]
+        # ),
+        # use_fixed_weighting=dict(
+        #     values=[False, True]
+        # ),
         # fixed_weight_min_quantile=dict(
         #     values=[0.9, 0.8, 0.6, 0.4, 0.2, 0.0]
         # ),
@@ -1138,7 +1138,7 @@ sweep_config_dict = dict(
 )
 
 # %%
-def normal_run():
+def normal_run(config_dict):
     with wandb.init(project="deep_staple", group="training", job_type="train",
             config=config_dict, settings=wandb.Settings(start_method="thread"),
             mode=config_dict['wandb_mode']
@@ -1160,8 +1160,8 @@ def sweep_run():
 
         run_name = run.name
         print("Running", run_name)
-        training_dataset = prepare_data(config)
         config = wandb.config
+        training_dataset = prepare_data(config)
 
         train_DL(run_name, config, training_dataset)
 
