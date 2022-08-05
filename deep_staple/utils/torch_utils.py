@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from pathlib import Path
+import functools
 
 MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, nn.Sequential) \
                                               else getattr(self, key)
@@ -73,14 +74,14 @@ def interpolate_sample(b_image=None, b_label=None, scale_factor=1.,
         scale = [scale_factor]*3
         im_mode = 'trilinear'
 
-    if b_image is not None:
+    if b_image is not None and b_image.numel() > 0:
         b_image = F.interpolate(
             b_image.unsqueeze(1), scale_factor=scale, mode=im_mode, align_corners=True,
             recompute_scale_factor=False
         )
         b_image = b_image.squeeze(1)
 
-    if b_label is not None:
+    if b_label is not None and b_label.numel() > 0:
         b_label = F.interpolate(
             b_label.unsqueeze(1).float(), scale_factor=scale, mode='nearest',
             recompute_scale_factor=False
@@ -91,7 +92,7 @@ def interpolate_sample(b_image=None, b_label=None, scale_factor=1.,
 
 
 
-def augmentNoise(b_image, strength=0.05):
+def augment_noise(b_image, strength=0.05):
     return b_image + strength*torch.randn_like(b_image)
 
 
@@ -118,13 +119,14 @@ def spatial_augment(b_image=None, b_label=None,
 
     KERNEL_SIZE = 3
 
-    if b_image is None:
+    if b_image is None and b_label.numel() > 0:
         common_shape = b_label.shape
         common_device = b_label.device
 
-    elif b_label is None:
+    elif b_label is None and b_image.numel() > 0:
         common_shape = b_image.shape
         common_device = b_image.device
+        
     else:
         assert b_image.shape == b_label.shape, \
             f"Image and label shapes must match but are {b_image.shape} and {b_label.shape}."
@@ -339,14 +341,17 @@ def set_module(module, keychain, replacee):
        new_first_replacee = torch.nn.Conv1d(1,2,3)
        set_module(first_keychain, torch.nn.Conv1d(1,2,3))
     """
+    MOD_GET_FN = lambda self, key: self[int(key)] if isinstance(self, torch.nn.Sequential) \
+        else getattr(self, key)
 
     key_list = keychain.split('.')
     root = functools.reduce(MOD_GET_FN, key_list[:-1], module)
-    leaf = key_list[-1]
-    if isinstance(root, nn.Sequential):
-        root[int(leaf)] = replacee
+    leaf_id = key_list[-1]
+
+    if isinstance(root, torch.nn.Sequential) and leaf_id.isnumeric():
+        root[int(leaf_id)] = replacee
     else:
-        setattr(root, leaf, replacee)
+        setattr(root, leaf_id, replacee)
 
 
 
@@ -366,3 +371,13 @@ def reset_determinism():
     random.seed(0)
     np.random.seed(0)
     # torch.use_deterministic_algorithms(True)
+
+
+
+def save_model(_path, **statefuls):
+    _path = Path(_path).resolve()
+    _path.mkdir(exist_ok=True, parents=True)
+
+    for name, stful in statefuls.items():
+        if stful != None:
+            torch.save(stful.state_dict(), _path.joinpath(name+'.pth'))

@@ -9,7 +9,7 @@ import nibabel as nib
 from tqdm import tqdm
 from pathlib import Path
 
-from deep_staple.HybridIdLoader import HybridIdLoader
+from deep_staple.hybrid_id_dataset import HybridIdDataset
 from deep_staple.utils.torch_utils import ensure_dense, restore_sparsity
 
 

@@ -6,46 +6,60 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 
-from deep_staple.utils.torch_utils import interpolate_sample, augmentNoise, spatial_augment, torch_manual_seeded, ensure_dense
+from deep_staple.utils.torch_utils import interpolate_sample, augment_noise, spatial_augment, torch_manual_seeded, ensure_dense
 from deep_staple.utils.common_utils import LabelDisturbanceMode
 
-class HybridIdLoader(Dataset):
+class HybridIdDataset(Dataset):
     def __init__(self,
-        data_load_function,
-        ensure_labeled_pairs=True, use_additional_data=False, resample=True,
-        size:tuple=(96,96,60), normalize:bool=True,
-        max_load_3d_num=None, crop_3d_w_dim_range=None, modified_3d_label_override=None,
+        base_dir, load_func,
+        ensure_labeled_pairs=True, do_resample=True,
+        resample_size: tuple=(96,96,60), do_normalize:bool=True,
+        max_load_3d_num=None, crop_3d_region=None, modified_3d_label_override=None,
+        crop_2d_slices_gt_num_threshold=0,
         prevent_disturbance=False,
-        use_2d_normal_to=None, crop_2d_slices_gt_num_threshold=None, pre_interpolation_factor=2.,
-        fixed_weight_file = None, fixed_weight_min_quantile=None, fixed_weight_min_value=None,
-        device='cpu'
+        label_tags=(),
+        use_2d_normal_to=None, pre_interpolation_factor=2., device='cpu', debug=False,
+        **kwargs
     ):
 
-        self.label_tags = []
+        # Prepare an attribute dict to identify all dataset settings for joblib
+        self.self_attributes = locals().copy()
+        for arg_name, arg_value in kwargs.items():
+            self.self_attributes[arg_name] = arg_value
+
+        del self.self_attributes['load_func']
+        del self.self_attributes['kwargs']
+        del self.self_attributes['self']
+
+        self.base_dir = base_dir
+        self.ensure_labeled_pairs = ensure_labeled_pairs
+        self.do_resample = do_resample
+        self.resample_size = resample_size
+        self.do_normalize = do_normalize
+        self.max_load_3d_num = max_load_3d_num
+        self.crop_3d_region = crop_3d_region
         self.use_2d_normal_to = use_2d_normal_to
         self.crop_2d_slices_gt_num_threshold = crop_2d_slices_gt_num_threshold
         self.prevent_disturbance = prevent_disturbance
-        self.do_augment = False
-        self.use_modified = False
-        self.disturbed_idxs = []
-        self.augment_at_collate = False
         self.pre_interpolation_factor = pre_interpolation_factor
         self.device = device
+        self.debug = debug
 
-        self.extract_3d_id = lambda _:_
-        self.extract_short_3d_id = lambda _:_
-
-        self.img_paths = {}
-        self.label_paths = {}
-        self.img_data_3d = {}
-        self.label_data_3d = {}
-        self.modified_label_data_3d = {}
+        self.label_tags = label_tags
+        self.disturbed_idxs = []
+        self.do_augment = False
+        self.use_modified = False
+        self.augment_at_collate = False
 
         # Load base 3D data
-        (self.img_paths, self.label_paths,
-         self.img_data_3d, self.label_data_3d,
-         self.modified_label_data_3d,
-         self.extract_3d_id, self.extract_short_3d_id) = data_load_function()
+        all_data_dict = load_func(self.self_attributes)
+
+        self.img_paths = all_data_dict.pop('img_paths', {})
+        self.label_paths = all_data_dict.pop('label_paths', {})
+        self.img_data_3d = all_data_dict.pop('img_data_3d', {})
+        self.label_data_3d = all_data_dict.pop('label_data_3d', {})
+        self.modified_label_data_3d = all_data_dict.pop('modified_label_data_3d', {})
+        self.additional_data = all_data_dict.pop('additional_data_3d', {})
 
         # Retrieve slices and plugin modified data
         self.img_data_2d = {}
@@ -56,22 +70,22 @@ class HybridIdLoader(Dataset):
         print("Postprocessing 3D volumes")
         orig_3d_num = len(self.label_data_3d.keys())
 
-        if ensure_labeled_pairs:
-            labelled_keys = set(self.label_data_3d.keys())
-            unlabelled_imgs = set(self.img_data_3d.keys()) - labelled_keys
-            unlabelled_modified_labels = set([self.extract_3d_id(key) for key in self.modified_label_data_3d.keys()]) - labelled_keys
+        if self.ensure_labeled_pairs:
+            labeled_keys = set(self.label_data_3d.keys())
+            unlabelled_imgs = set(self.img_data_3d.keys()) - labeled_keys
+            unlabelled_modified_labels = set([self.extract_3d_id(key) for key in self.modified_label_data_3d.keys()]) - labeled_keys
 
             for del_key in unlabelled_imgs:
                 del self.img_data_3d[del_key]
             for del_key in unlabelled_modified_labels:
                 del self.modified_label_data_3d[del_key]
 
-        if max_load_3d_num:
-            for del_key in sorted(list(self.img_data_3d.keys()))[max_load_3d_num:]:
+        if self.max_load_3d_num:
+            for del_key in sorted(list(self.img_data_3d.keys()))[self.max_load_3d_num:]:
                 del self.img_data_3d[del_key]
-            for del_key in sorted(list(self.label_data_3d.keys()))[max_load_3d_num:]:
+            for del_key in sorted(list(self.label_data_3d.keys()))[self.max_load_3d_num:]:
                 del self.label_data_3d[del_key]
-            for del_key in sorted(list(self.modified_label_data_3d.keys()))[max_load_3d_num:]:
+            for del_key in sorted(list(self.modified_label_data_3d.keys()))[self.max_load_3d_num:]:
                 del self.modified_label_data_3d[del_key]
 
         postprocessed_3d_num = len(self.label_data_3d.keys())
@@ -100,23 +114,23 @@ class HybridIdLoader(Dataset):
                 for idx, img_slc in [(slice_idx, image.select(slice_dim, slice_idx)) \
                                      for slice_idx in range(image.shape[slice_dim])]:
                     # Set data view for id like "003rW100"
-                    self.img_data_2d[f"{_3d_id}{use_2d_normal_to}{idx:03d}"] = img_slc
+                    self.img_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = img_slc
 
             for _3d_id, label in self.label_data_3d.items():
                 for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
                                      for slice_idx in range(label.shape[slice_dim])]:
                     # Set data view for id like "003rW100"
-                    self.label_data_2d[f"{_3d_id}{use_2d_normal_to}{idx:03d}"] = lbl_slc
+                    self.label_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = lbl_slc
 
             for _3d_id, label in self.modified_label_data_3d.items():
                 for idx, lbl_slc in [(slice_idx, label.select(slice_dim, slice_idx)) \
                                      for slice_idx in range(label.shape[slice_dim])]:
                     # Set data view for id like "003rW100"
-                    self.modified_label_data_2d[f"{_3d_id}{use_2d_normal_to}{idx:03d}"] = lbl_slc
+                    self.modified_label_data_2d[f"{_3d_id}:{use_2d_normal_to}{idx:03d}"] = lbl_slc
 
             # Postprocessing of 2d slices
             print("Postprocessing 2D slices")
-            orig_2d_num = len(self.label_data_2d.keys())
+            orig_2d_num = len(self.img_data_2d.keys())
 
             if self.crop_2d_slices_gt_num_threshold > 0:
                 for key, label in list(self.label_data_2d.items()):
@@ -128,60 +142,36 @@ class HybridIdLoader(Dataset):
                         del self.label_data_2d[key]
                         del self.modified_label_data_2d[key]
 
-            postprocessed_2d_num = len(self.label_data_2d.keys())
+            postprocessed_2d_num = len(self.img_data_2d.keys())
             print(f"Removed {orig_2d_num - postprocessed_2d_num} of {orig_2d_num} 2D slices in postprocessing")
-
-        if fixed_weight_file is not None and any([fixed_weight_min_quantile, fixed_weight_min_value]):
-            fixed_weightdata = torch.load(fixed_weight_file)
-            fixed_weights = fixed_weightdata['data_parameters'].detach().cpu()
-            fixed_d_ids = fixed_weightdata['d_ids']
-
-            print(f"Fixed weight quantiles are: {np.quantile(fixed_weights, np.linspace(0.,1.,5))}")
-
-            if fixed_weight_min_quantile is not None:
-                fixed_weight_min_value = np.quantile(fixed_weights, fixed_weight_min_quantile)
-            elif fixed_weight_min_value is not None:
-                pass
-
-            fixed_del_counter = 0
-
-            for key, weight in zip(fixed_d_ids, fixed_weights):
-                if weight < fixed_weight_min_value:
-                    if use_2d_normal_to:
-                        del self.img_data_2d[key]
-                        del self.label_data_2d[key]
-                        del self.modified_label_data_2d[key]
-                    else:
-                        del self.img_data_3d[key]
-                        del self.label_data_3d[key]
-                        del self.modified_label_data_3d[key]
-
-                    fixed_del_counter+=1
-
-            print(f"Removed {fixed_del_counter} data samples by cropping data with fixed weight min value = {fixed_weight_min_value:.3f}")
-
-            # Now make sure dicts are ordered
-            self.img_paths = OrderedDict(sorted(self.img_paths.items()))
-            self.label_paths = OrderedDict(sorted(self.label_paths.items()))
-            self.img_data_3d = OrderedDict(sorted(self.img_data_3d.items()))
-            self.label_data_3d = OrderedDict(sorted(self.label_data_3d.items()))
-            self.modified_label_data_3d = OrderedDict(sorted(self.modified_label_data_3d.items()))
-            self.img_data_2d = OrderedDict(sorted(self.img_data_2d.items()))
-            self.label_data_2d = OrderedDict(sorted(self.label_data_2d.items()))
-            self.modified_label_data_2d = OrderedDict(sorted(self.modified_label_data_2d.items()))
 
             nonzero_lbl_percentage = torch.tensor([lbl.sum((-2,-1)) > 0 for lbl in self.label_data_2d.values()]).sum()
             nonzero_lbl_percentage = nonzero_lbl_percentage/len(self.label_data_2d)
-            print(f"Nonzero labels: " f"{nonzero_lbl_percentage*100:.2f}%")
+            print(f"Nonzero 2D labels: " f"{nonzero_lbl_percentage*100:.2f}%")
+
             nonzero_mod_lbl_percentage = torch.tensor([ensure_dense(lbl)[0].sum((-2,-1)) > 0 for lbl in self.modified_label_data_2d.values()]).sum()
             nonzero_mod_lbl_percentage = nonzero_mod_lbl_percentage/len(self.modified_label_data_2d)
-            print(f"Nonzero modified labels: " f"{nonzero_mod_lbl_percentage*100:.2f}%")
-
+            print(f"Nonzero modified 2D labels: " f"{nonzero_mod_lbl_percentage*100:.2f}%")
             print(f"Loader will use {postprocessed_2d_num} of {orig_2d_num} 2D slices.")
 
+        # Now make sure dicts are ordered
+        self.img_paths = OrderedDict(sorted(self.img_paths.items()))
+        self.label_paths = OrderedDict(sorted(self.label_paths.items()))
+        self.img_data_3d = OrderedDict(sorted(self.img_data_3d.items()))
+        self.label_data_3d = OrderedDict(sorted(self.label_data_3d.items()))
+        self.modified_label_data_3d = OrderedDict(sorted(self.modified_label_data_3d.items()))
+        self.img_data_2d = OrderedDict(sorted(self.img_data_2d.items()))
+        self.label_data_2d = OrderedDict(sorted(self.label_data_2d.items()))
+        self.modified_label_data_2d = OrderedDict(sorted(self.modified_label_data_2d.items()))
 
         print("Data import finished.")
         print(f"Dataloader will yield {'2D' if self.use_2d_normal_to else '3D'} samples")
+
+    def extract_3d_id(self, _input):
+        raise NotImplementedError()
+
+    def extract_short_3d_id(self, _input):
+        raise NotImplementedError()
 
     def get_short_3d_ids(self):
         return [self.extract_short_3d_id(_id) for _id in self.get_3d_ids()]
@@ -198,7 +188,7 @@ class HybridIdLoader(Dataset):
         id_dicts = []
         if self.use_2d(use_2d_override):
             for _2d_dataset_idx, _2d_id in enumerate(self.get_2d_ids()):
-                _3d_id = _2d_id[:-4]
+                _3d_id = self.get_3d_from_2d_identifiers(_2d_id)
                 id_dicts.append(
                     {
                         '2d_id': _2d_id,
@@ -295,8 +285,11 @@ class HybridIdLoader(Dataset):
 
             # For 2D id cut last 4 "003rW100"
             _3d_id = self.get_3d_from_2d_identifiers(_id)
-            image_path = self.img_paths[_3d_id]
-            label_path = self.label_paths[_3d_id]
+            image_path = self.img_paths.get(_3d_id)
+            label_path = self.label_paths.get(_3d_id, "")
+
+            # Additional data will only have ids for 3D samples
+            additional_data = self.additional_data.get(_3d_id, "")
 
         else:
             all_ids = self.get_3d_ids()
@@ -305,7 +298,9 @@ class HybridIdLoader(Dataset):
             label = self.label_data_3d.get(_id, torch.tensor([]))
 
             image_path = self.img_paths[_id]
-            label_path = self.label_paths[_id]
+            label_path = self.label_paths.get(_id, [])
+
+            additional_data = self.additional_data.get(_id, [])
 
         spat_augment_grid = []
 
@@ -333,13 +328,18 @@ class HybridIdLoader(Dataset):
             spat_augment_grid = b_spat_augment_grid.squeeze(0).detach().cpu().clone()
 
         elif not self.do_augment:
-            b_image, b_label = interpolate_sample(b_image, b_label, 2., use_2d)
-            _, b_modified_label = interpolate_sample(b_label=b_modified_label, scale_factor=2.,
+            b_image, b_label = interpolate_sample(b_image, b_label, self.pre_interpolation_factor, use_2d)
+            _, b_modified_label = interpolate_sample(b_label=b_modified_label, scale_factor=self.pre_interpolation_factor,
                 use_2d=use_2d)
 
         image = b_image.squeeze(0).cpu()
         label = b_label.squeeze(0).cpu()
         modified_label = b_modified_label.squeeze(0).cpu()
+
+        if label.numel() == 0:
+            label = torch.zeros_like(image)
+        if modified_label.numel() == 0:
+            modified_label = torch.zeros_like(image)
 
         if use_2d:
             assert image.dim() == label.dim() == 2
@@ -355,7 +355,8 @@ class HybridIdLoader(Dataset):
             'id': _id,
             'image_path': image_path,
             'label_path': label_path,
-            'spat_augment_grid': spat_augment_grid
+            'spat_augment_grid': spat_augment_grid,
+            'additional_data': additional_data
         }
 
     def get_3d_item(self, _3d_dataset_idx):
@@ -494,7 +495,7 @@ class HybridIdLoader(Dataset):
                 f"Augmenting 3D. Input batch of image and " \
                 f"label should be BxDxHxW but are {b_image.shape} and {b_label.shape}"
 
-        b_image = augmentNoise(b_image, strength=noise_strength)
+        b_image = augment_noise(b_image, strength=noise_strength)
         b_image, b_label, b_spat_augment_grid = spatial_augment(
             b_image, b_label,
             bspline_num_ctl_points=bspline_num_ctl_points, bspline_strength=bspline_strength, bspline_probability=bspline_probability,

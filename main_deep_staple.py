@@ -32,7 +32,7 @@ from enum import Enum, auto
 
 import numpy as np
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '2'
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 os.environ['MKL_THREADING_LAYER'] = 'GNU'
 
@@ -53,7 +53,9 @@ from sklearn.model_selection import KFold
 from deep_staple.metrics import dice3d, dice2d
 from deep_staple.visualization import visualize_seg
 from deep_staple.mindssc import mindssc
-from deep_staple.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader, get_crossmoda_data_load_closure
+
+# from deep_staple.CrossmodaHybridIdLoader import CrossmodaHybridIdLoader, get_crossmoda_data_load_closure
+
 from deep_staple.MobileNet_LR_ASPP_3D import MobileNet_LRASPP_3D, MobileNet_ASPP_3D
 from deep_staple.utils.torch_utils import get_batch_dice_per_class, get_batch_dice_over_all, get_2d_stack_batch_size, \
     make_2d_stack_from_3d, make_3d_from_2d_stack, interpolate_sample, dilate_label_class, ensure_dense, get_module, set_module, save_model, reset_determinism
@@ -70,10 +72,12 @@ except AssertionError as err:
 THIS_SCRIPT_DIR = get_script_dir(__file__)
 print(f"Running in: {THIS_SCRIPT_DIR}")
 
+os.environ['MMWHS_CACHE_PATH'] = str(Path(THIS_SCRIPT_DIR, ".cache"))
+from deep_staple.mmwhs_dataset import MMWHSDataset, load_data
 # %%
 
 config_dict = DotDict({
-    'num_folds': 3,
+    'num_folds': 5,
     'only_first_fold': True,                # If true do not contiue with training after the first fold
     # 'fold_override': 0,
     # 'checkpoint_epx': 0,
@@ -85,14 +89,13 @@ config_dict = DotDict({
     'val_batch_size': 1,
     'use_2d_normal_to': None,               # Can be None or 'D', 'H', 'W'. If not None 2D slices will be selected for training
 
-    'num_val_images': 20,
     'atlas_count': 1,                       # If three (noisy) labels per image are used specify three
 
-    'dataset': 'crossmoda',                 # The dataset prepared with our preprocessing scripts
-    'dataset_directory': Path(THIS_SCRIPT_DIR, "data/crossmoda_dataset"),
-    'reg_state': "acummulate_every_third_deeds_FT2_MT1", # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
+    'dataset': 'mmwhs',                 # The dataset prepared with our preprocessing scripts
+    'data_base_path': Path(THIS_SCRIPT_DIR, "data/mmwhs_dataset"),
+    'reg_state': None, # Registered (noisy) labels used in training. See prepare_data() for valid reg_states
     'train_set_max_len': None,              # Length to cut of dataloader sample count
-    'crop_3d_w_dim_range': (45, 95),        # W-dimension range in which 3D samples are cropped
+    'crop_3d_region': None,        # W-dimension range in which 3D samples are cropped
     'crop_2d_slices_gt_num_threshold': 0,   # Drop 2D slices if less than threshold pixels are positive
 
     'lr': 0.01,
@@ -129,11 +132,11 @@ config_dict = DotDict({
     'save_labels': True,                              # Store training labels alongside data parameter values inside the training snapshot
 
     # Disturbance settings
-    'disturbance_mode': None,                         # e.g. LabelDisturbanceMode.FLIP_ROLL, LabelDisturbanceMode.AFFINE
-    'disturbance_strength': 0.,                       # Strength of how a severe label is distorted if artificial disturbance is used
-    'disturbed_percentage': 0.,                       # Sercentage of the dataset labels to be disturbed
+    'disturbance_mode': LabelDisturbanceMode.AFFINE,                         # e.g. LabelDisturbanceMode.FLIP_ROLL, LabelDisturbanceMode.AFFINE
+    'disturbance_strength': 0.5,                       # Strength of how a severe label is distorted if artificial disturbance is used
+    'disturbed_percentage': 0.3,                       # Sercentage of the dataset labels to be disturbed
 
-    'device': 'cpu'
+    'device': 'cuda'
 })
 
 
@@ -141,7 +144,7 @@ config_dict = DotDict({
 # %%
 def prepare_data(config):
 
-    assert os.path.isdir(config.dataset_directory), "Dataset directory does not exist."
+    assert os.path.isdir(config.data_base_path), "Dataset directory does not exist."
 
     reset_determinism()
     if config.reg_state:
@@ -262,13 +265,13 @@ def prepare_data(config):
         clsre = get_crossmoda_data_load_closure(
             base_dir=str(config.dataset_directory),
             domain=domain, state='l4', use_additional_data=False,
-            size=(128,128,128), resample=True, normalize=True, crop_3d_w_dim_range=config.crop_3d_w_dim_range,
+            size=(128,128,128), resample=True, normalize=True, crop_3d_region=config.crop_3d_region,
             ensure_labeled_pairs=True, modified_3d_label_override=modified_3d_label_override,
             debug=config.debug
         )
         training_dataset = CrossmodaHybridIdLoader(
             clsre,
-            size=(128,128,128), resample=True, normalize=True, crop_3d_w_dim_range=config.crop_3d_w_dim_range,
+            size=(128,128,128), resample=True, normalize=True, crop_3d_region=config.crop_3d_region,
             ensure_labeled_pairs=True,
             max_load_3d_num=config.train_set_max_len,
             prevent_disturbance=prevent_disturbance,
@@ -278,6 +281,19 @@ def prepare_data(config):
             fixed_weight_file=config.fixed_weight_file, fixed_weight_min_quantile=config.fixed_weight_min_quantile, fixed_weight_min_value=config.fixed_weight_min_value,
             device=config.device
         )
+    elif config.dataset == 'mmwhs':
+        training_dataset = MMWHSDataset(
+            config.data_base_path,
+            state="training",
+            load_func=load_data,
+            use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
+            do_resample=False, # Prior to cropping, resample image?
+            crop_3d_region=np.array([[0,128], [0,128], [0,128]]), # Crop or pad the images to these dimensions
+            pre_interpolation_factor=1., # When getting the data, resize the data by this factor
+            ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
+            device=config.device,
+            debug=config.debug
+    )
 
     return training_dataset
 
@@ -517,45 +533,37 @@ def train_DL(run_name, config, training_dataset):
 
     fold_means_no_bg = []
 
-    for fold_idx, (train_idxs, val_idxs) in fold_iter:
-        train_idxs = torch.tensor(train_idxs)
-        val_idxs = torch.tensor(val_idxs)
+    for fold_idx, (train_3d_idxs, val_3d_idxs) in fold_iter:
+        train_3d_idxs = torch.as_tensor(train_3d_idxs)
+        val_3d_idxs = torch.as_tensor(val_3d_idxs)
         all_3d_ids = training_dataset.get_3d_ids()
-
-        if config.debug:
-            num_val_images = 2
-            atlas_count = 1
-        else:
-            num_val_images = config.num_val_images
-            atlas_count = config.atlas_count
 
         if config.use_2d_normal_to is not None:
             # Override idxs
-            all_3d_ids = training_dataset.get_3d_ids()
-
-            val_3d_idxs = torch.tensor(list(range(0, num_val_images*atlas_count, atlas_count)))
-            val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
-
-            train_3d_idxs = list(range(num_val_images*atlas_count, len(all_3d_ids)))
-
             # Get corresponding 2D idxs
             train_2d_ids = []
+            val_2d_ids = []
             dcts = training_dataset.get_id_dicts()
             for id_dict in dcts:
                 _2d_id = id_dict['2d_id']
                 _3d_idx = id_dict['3d_dataset_idx']
-                if _2d_id in training_dataset.label_data_2d.keys() and _3d_idx in train_3d_idxs:
+                if _2d_id in training_dataset.img_data_2d.keys() and _3d_idx in train_3d_idxs:
                     train_2d_ids.append(_2d_id)
+                if _2d_id in training_dataset.img_data_2d.keys() and _3d_idx in val_3d_idxs:
+                    val_2d_ids.append(_2d_id)
 
             train_2d_idxs = training_dataset.switch_2d_identifiers(train_2d_ids)
             train_idxs = torch.tensor(train_2d_idxs)
 
+            val_2d_idxs = training_dataset.switch_2d_identifiers(val_2d_ids)
+            val_idxs = torch.tensor(val_2d_idxs)
+
         else:
-            val_3d_idxs = torch.tensor(list(range(0, num_val_images*atlas_count, atlas_count)))
+            train_3d_ids = training_dataset.switch_3d_identifiers(train_3d_idxs)
             val_3d_ids = training_dataset.switch_3d_identifiers(val_3d_idxs)
 
-            train_3d_idxs = list(range(num_val_images*atlas_count, len(all_3d_ids)))
             train_idxs = torch.tensor(train_3d_idxs)
+            val_idxs = torch.tensor(val_3d_idxs)
 
         print(f"Will run validation with these 3D samples (#{len(val_3d_ids)}):", sorted(val_3d_ids))
 
@@ -563,11 +571,11 @@ def train_DL(run_name, config, training_dataset):
 
         if config.disturbed_percentage > 0.:
             with torch.no_grad():
-                non_empty_train_idxs = [(all_modified_segs[train_idxs].sum(dim=n_dims) > 0)]
+                non_empty_train_idxs = train_idxs[all_modified_segs[train_idxs].sum(dim=n_dims) > 0]
 
             ### Disturb dataset (only non-emtpy idxs)###
-            proposed_disturbed_idxs = np.random.choice(non_empty_train_idxs, size=int(len(non_empty_train_idxs)*config.disturbed_percentage), replace=False)
-            proposed_disturbed_idxs = torch.tensor(proposed_disturbed_idxs)
+            proposed_disturbed_idxs = np.random.choice(non_empty_train_idxs, size=int(non_empty_train_idxs.numel()*config.disturbed_percentage), replace=False)
+            proposed_disturbed_idxs = torch.as_tensor(proposed_disturbed_idxs)
             training_dataset.disturb_idxs(proposed_disturbed_idxs,
                 disturbance_mode=config.disturbance_mode,
                 disturbance_strength=config.disturbance_strength
@@ -791,7 +799,7 @@ def train_DL(run_name, config, training_dataset):
                     b_dice, training_dataset.label_tags, exclude_bg=True))
 
                 ###  Scheduler management ###
-                if config.use_scheduling and epx % atlas_count == 0:
+                if config.use_scheduling and epx % config.atlas_count == 0:
                     scheduler.step()
 
                 if str(config.data_param_mode) != str(DataParamMode.DISABLED) and batch_idx % 10 == 0 and config.save_dp_figures:
