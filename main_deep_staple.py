@@ -32,7 +32,7 @@ from enum import Enum, auto
 
 import numpy as np
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '2'
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 os.environ['MKL_THREADING_LAYER'] = 'GNU'
 
@@ -83,9 +83,9 @@ config_dict = DotDict({
     # 'checkpoint_epx': 0,
 
     'use_mind': False,                      # If true use MIND features (https://pubmed.ncbi.nlm.nih.gov/22722056/)
-    'epochs': 40,
+    'epochs': 100,
 
-    'batch_size': 8,
+    'batch_size': 4,
     'val_batch_size': 1,
     'use_2d_normal_to': None,               # Can be None or 'D', 'H', 'W'. If not None 2D slices will be selected for training
 
@@ -287,7 +287,8 @@ def prepare_data(config):
             state="training",
             load_func=load_data,
             use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
-            do_resample=False, # Prior to cropping, resample image?
+            # do_resample=True, # Prior to cropping, resample image?
+            # resample_size=(128,128,128),
             crop_3d_region=None, # Crop or pad the images to these dimensions
             pre_interpolation_factor=1., # When getting the data, resize the data by this factor
             ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
@@ -1119,12 +1120,12 @@ sweep_config_dict = dict(
         # disturbed_percentage=dict(
         #     values=[0.3, 0.6]
         # ),
-        # data_param_mode=dict(
-        #     values=[
-        #         DataParamMode.INSTANCE_PARAMS,
-        #         DataParamMode.DISABLED,
-        #     ]
-        # ),
+        data_param_mode=dict(
+            values=[
+                DataParamMode.INSTANCE_PARAMS,
+                DataParamMode.DISABLED,
+            ]
+        ),
         # use_risk_regularization=dict(
         #     values=[False, True]
         # ),
