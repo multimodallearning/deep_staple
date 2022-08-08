@@ -22,7 +22,6 @@ pydicom = "^2.3.0"
 natsort = "^8.1.0"
 paramiko = "^2.10.3"
 SimpleITK = "^2.1.1"
-antspyx = "^0.3.2"
 Pillow = "^9.1.1"
 opencv-python = "^4.6.0.66"
 
