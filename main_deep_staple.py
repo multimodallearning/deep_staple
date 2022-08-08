@@ -32,7 +32,7 @@ from enum import Enum, auto
 
 import numpy as np
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 os.environ['MKL_THREADING_LAYER'] = 'GNU'
 
@@ -288,7 +288,7 @@ def prepare_data(config):
             load_func=load_data,
             use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
             do_resample=False, # Prior to cropping, resample image?
-            crop_3d_region=np.array([[0,200], [0,200], [0,200]]), # Crop or pad the images to these dimensions
+            crop_3d_region=None, # Crop or pad the images to these dimensions
             pre_interpolation_factor=1., # When getting the data, resize the data by this factor
             ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
             device=config.device,
