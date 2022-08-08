@@ -32,7 +32,7 @@ from enum import Enum, auto
 
 import numpy as np
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '2'
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 os.environ['MKL_THREADING_LAYER'] = 'GNU'
 
