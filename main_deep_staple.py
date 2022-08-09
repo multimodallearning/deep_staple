@@ -107,7 +107,7 @@ config_dict = DotDict({
     'lr_inst_param': 0.1,
     'use_risk_regularization': True,                  # See paper
     'use_fixed_weighting': True,                      # See paper
-    'use_ool_dp_loss': True,                          # See paper
+    'use_ool_dp_loss': False,                          # See paper
 
     # Extended config for loading pretrained data
     'fixed_weight_file': None,                        # Specify path to a ./data/output/<training_run>/train_label_snapshot.pth to load pretrained data parameters
@@ -287,10 +287,10 @@ def prepare_data(config):
             state="training",
             load_func=load_data,
             use_2d_normal_to=config.use_2d_normal_to, # Use 2D slices cut normal to D,H,>W< dimensions
-            # do_resample=True, # Prior to cropping, resample image?
-            # resample_size=(128,128,128),
+            do_resample=False, # Prior to cropping, resample image?
+            resample_size=None,
             crop_3d_region=None, # Crop or pad the images to these dimensions
-            pre_interpolation_factor=1., # When getting the data, resize the data by this factor
+            pre_interpolation_factor=.5, # When getting the data, resize the data by this factor
             ensure_labeled_pairs=True, # Only use fully labelled images (segmentation label available)
             device=config.device,
             debug=config.debug
@@ -1120,12 +1120,12 @@ sweep_config_dict = dict(
         # disturbed_percentage=dict(
         #     values=[0.3, 0.6]
         # ),
-        data_param_mode=dict(
-            values=[
-                DataParamMode.INSTANCE_PARAMS,
-                DataParamMode.DISABLED,
-            ]
-        ),
+        # data_param_mode=dict(
+        #     values=[
+        #         DataParamMode.INSTANCE_PARAMS,
+        #         DataParamMode.DISABLED,
+        #     ]
+        # ),
         # use_risk_regularization=dict(
         #     values=[False, True]
         # ),
