@@ -59,8 +59,20 @@ https://github.com/multimodallearning/deep_staple/blob/0f701d22204d34ec76cc337cf
 ## Consensus generation via weighted voting
 https://github.com/multimodallearning/deep_staple/blob/0f701d22204d34ec76cc337cf3ad263cf8fd3046/deep_staple/consensus/consensus.ipynb?short_path=c5aabb1#L87
 
-# Citation
-DeepSTAPLE: Learning to predict multimodal registration quality for unsupervised domain adaptation. By Christian Weihsbach, Alexander Bigalke, Christian N. Kruse, Hellena Hempe, Mattias P Heinrich. WBIR 2022
 
 # Contact:
 For any problems or questions please [open an issue](https://github.com/multimodallearning/deep_staple/issues/new/choose).
+
+# Citation
+DeepSTAPLE: Learning to predict multimodal registration quality for unsupervised domain adaptation. By Christian Weihsbach, Alexander Bigalke, Christian N. Kruse, Hellena Hempe, Mattias P Heinrich. WBIR 2022
+
+```
+@inproceedings{weihsbach2022deepstaple,
+  title={DeepSTAPLE: Learning to predict multimodal registration quality for unsupervised domain adaptation},
+  author={Weihsbach, Christian and Bigalke, Alexander and Kruse, Christian N and Hempe, Hellena and Heinrich, Mattias P},
+  booktitle={International Workshop on Biomedical Image Registration},
+  pages={37--46},
+  year={2022},
+  organization={Springer}
+}
+```
